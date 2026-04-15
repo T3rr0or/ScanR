@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ScanR Report — {{ scan.name }}</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Segoe UI', Arial, sans-serif; font-size: 13px; color: #1a1a2e; background: #fff; }
+  .header { background: #0f3460; color: #fff; padding: 32px 48px; }
+  .header h1 { font-size: 28px; font-weight: 700; }
+  .header .meta { margin-top: 8px; opacity: 0.8; font-size: 12px; }
+  .container { padding: 32px 48px; max-width: 1200px; }
+  h2 { font-size: 18px; font-weight: 600; margin: 32px 0 16px; border-bottom: 2px solid #e2e8f0; padding-bottom: 8px; color: #0f3460; }
+  h3 { font-size: 14px; font-weight: 600; margin: 16px 0 8px; }
+  .summary-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; margin: 16px 0; }
+  .summary-card { border-radius: 8px; padding: 16px; text-align: center; }
+  .summary-card .count { font-size: 32px; font-weight: 700; }
+  .summary-card .label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; margin-top: 4px; }
+  .critical-card { background: #fee2e2; color: #991b1b; }
+  .high-card { background: #fef3c7; color: #92400e; }
+  .medium-card { background: #fef9c3; color: #854d0e; }
+  .low-card { background: #dcfce7; color: #166534; }
+  .info-card { background: #eff6ff; color: #1e40af; }
+
+  /* Finding cards */
+  .finding { border: 1px solid #e2e8f0; border-radius: 8px; margin: 10px 0; overflow: hidden; page-break-inside: avoid; }
+  .finding-header { padding: 11px 16px; display: flex; align-items: center; gap: 10px; }
+  .finding-body { padding: 14px 16px; border-top: 1px solid #e2e8f0; background: #f8fafc; }
+  .badge { display: inline-block; padding: 3px 10px; border-radius: 12px; font-size: 11px; font-weight: 600; text-transform: uppercase; flex-shrink: 0; }
+  .badge-critical { background: #fee2e2; color: #991b1b; }
+  .badge-high { background: #fef3c7; color: #92400e; }
+  .badge-medium { background: #fef9c3; color: #854d0e; }
+  .badge-low { background: #dcfce7; color: #166534; }
+  .badge-info { background: #eff6ff; color: #1e40af; }
+  .finding-title { font-weight: 600; font-size: 13px; flex: 1; }
+  .finding-count { font-size: 11px; background: #e2e8f0; color: #475569; padding: 2px 8px; border-radius: 10px; flex-shrink: 0; }
+  .finding-plugin { font-size: 10px; color: #94a3b8; flex-shrink: 0; font-family: monospace; }
+  .section-label { font-size: 10px; font-weight: 600; color: #64748b; text-transform: uppercase; letter-spacing: 0.05em; margin: 10px 0 4px; }
+  .evidence { background: #1e293b; color: #e2e8f0; padding: 10px 14px; border-radius: 6px; font-family: monospace; font-size: 11px; white-space: pre-wrap; word-break: break-all; margin: 4px 0; max-height: 200px; overflow: hidden; }
+  .remediation { background: #f0fdf4; border-left: 4px solid #22c55e; padding: 10px 14px; border-radius: 0 6px 6px 0; font-size: 12px; margin-top: 8px; }
+  .cve-tag { display: inline-block; background: #fef3c7; color: #92400e; border-radius: 4px; padding: 2px 6px; font-size: 10px; margin: 2px; font-family: monospace; }
+
+  /* Instances table for grouped findings */
+  .instances-table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 11px; }
+  .instances-table th { background: #334155; color: #fff; padding: 6px 10px; text-align: left; font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; }
+  .instances-table td { padding: 5px 10px; border-bottom: 1px solid #e2e8f0; vertical-align: top; }
+  .instances-table tr:nth-child(even) td { background: #f1f5f9; }
+  .instances-table td.mono { font-family: monospace; font-size: 10px; color: #475569; }
+  .instances-table td.evidence-cell { max-width: 380px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: monospace; font-size: 10px; color: #475569; }
+
+  /* Host table */
+  .host-table { width: 100%; border-collapse: collapse; margin: 12px 0; }
+  .host-table th { background: #0f3460; color: #fff; padding: 8px 12px; text-align: left; font-size: 11px; text-transform: uppercase; }
+  .host-table td { padding: 8px 12px; border-bottom: 1px solid #e2e8f0; font-size: 12px; }
+  .host-table tr:nth-child(even) td { background: #f8fafc; }
+
+  /* Screenshots */
+  .screenshots-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px; margin-top: 16px; }
+  .screenshot-card { border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden; background: #fff; page-break-inside: avoid; }
+  .screenshot-img { width: 100%; display: block; height: 185px; object-fit: cover; object-position: top; border-bottom: 1px solid #e2e8f0; }
+  .screenshot-placeholder { width: 100%; height: 185px; background: #f8fafc; display: flex; align-items: center; justify-content: center; color: #94a3b8; font-size: 12px; border-bottom: 1px solid #e2e8f0; }
+  .screenshot-info { padding: 10px 12px; }
+  .screenshot-title { font-size: 12px; font-weight: 600; color: #1e293b; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .screenshot-url { font-size: 11px; color: #64748b; margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-family: monospace; }
+
+  .footer { margin-top: 48px; padding: 24px 48px; background: #f1f5f9; border-top: 1px solid #e2e8f0; font-size: 11px; color: #64748b; text-align: center; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>ScanR Vulnerability Report</h1>
+  <div class="meta">
+    Scan: <strong>{{ scan.name }}</strong> &nbsp;|&nbsp;
+    Profile: {{ scan.profile }} &nbsp;|&nbsp;
+    Status: {{ scan.status }} &nbsp;|&nbsp;
+    {% if scan.finished_at %}Completed: {{ scan.finished_at.strftime('%Y-%m-%d %H:%M UTC') }}{% endif %}
+  </div>
+</div>
+
+<div class="container">
+
+{{ executive_summary | safe }}
+
+<h2>Findings Summary</h2>
+<div class="summary-grid">
+  <div class="summary-card critical-card">
+    <div class="count">{{ findings_by_severity.critical | length }}</div>
+    <div class="label">Critical</div>
+  </div>
+  <div class="summary-card high-card">
+    <div class="count">{{ findings_by_severity.high | length }}</div>
+    <div class="label">High</div>
+  </div>
+  <div class="summary-card medium-card">
+    <div class="count">{{ findings_by_severity.medium | length }}</div>
+    <div class="label">Medium</div>
+  </div>
+  <div class="summary-card low-card">
+    <div class="count">{{ findings_by_severity.low | length }}</div>
+    <div class="label">Low</div>
+  </div>
+  <div class="summary-card info-card">
+    <div class="count">{{ findings_by_severity.info | length }}</div>
+    <div class="label">Info</div>
+  </div>
+</div>
+<p style="margin-top:8px;color:#64748b;font-size:12px;">
+  {{ hosts | length }} host(s) scanned &nbsp;|&nbsp;
+  {{ total_findings }} finding(s) across {{ findings_by_plugin | length }} plugin(s)
+</p>
+
+<h2>Hosts Discovered</h2>
+<table class="host-table">
+  <thead><tr><th>IP</th><th>Hostname</th><th>OS</th><th>Open Ports</th><th>Status</th></tr></thead>
+  <tbody>
+  {% for host in hosts %}
+  <tr>
+    <td><strong>{{ host.ip }}</strong></td>
+    <td>{{ host.hostname or '—' }}</td>
+    <td>{{ host.os_name or '—' }}</td>
+    <td>{{ host.ports | selectattr('state', 'equalto', 'open') | list | length }}</td>
+    <td>{{ host.status }}</td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+
+{# ── Findings — grouped by plugin, ordered by severity ── #}
+{% for severity in ['critical', 'high', 'medium', 'low', 'info'] %}
+{% set sev_groups = findings_by_plugin | selectattr('severity', 'equalto', severity) | list %}
+{% if sev_groups %}
+<h2>{{ severity | capitalize }} Findings
+  ({{ sev_groups | sum(attribute='count') }} instance{{ 's' if sev_groups | sum(attribute='count') != 1 else '' }},
+   {{ sev_groups | length }} plugin{{ 's' if sev_groups | length != 1 else '' }})</h2>
+
+{% for group in sev_groups %}
+<div class="finding">
+  <div class="finding-header">
+    <span class="badge badge-{{ group.severity }}">{{ group.severity }}</span>
+    <span class="finding-title">{{ group.title }}</span>
+    {% if group.count > 1 %}
+    <span class="finding-count">{{ group.count }} instances</span>
+    {% endif %}
+    {% if group.cvss_score %}<span style="font-size:11px;color:#64748b;">CVSS {{ "%.1f" | format(group.cvss_score) }}</span>{% endif %}
+    <span class="finding-plugin">{{ group.plugin_id }}</span>
+  </div>
+  <div class="finding-body">
+    {% if group.cve_ids %}
+    <div style="margin-bottom:8px;">
+      {% for cve in group.cve_ids | from_json %}
+      <span class="cve-tag">{{ cve }}</span>
+      {% endfor %}
+    </div>
+    {% endif %}
+
+    {% if group.description %}
+    <div class="section-label">Description</div>
+    <p style="font-size:12px;line-height:1.6;margin-bottom:8px;">{{ group.description }}</p>
+    {% endif %}
+
+    {% if group.count == 1 %}
+    {# ── Single instance: show full detail ── #}
+    {% set f = group.findings[0] %}
+    {% if f.evidence %}
+    <div class="section-label">Evidence</div>
+    <div class="evidence">{{ f.evidence }}</div>
+    {% endif %}
+    <p style="margin-top:8px;font-size:11px;color:#64748b;">
+      {% if f.host_ip %}Host: <strong>{{ f.host_ip }}</strong>{% endif %}
+      {% if f.port_number %} &nbsp;|&nbsp; Port: {{ f.port_number }}/{{ f.protocol or 'tcp' }}{% endif %}
+    </p>
+
+    {% else %}
+    {# ── Multiple instances: compact table ── #}
+    <table class="instances-table">
+      <thead>
+        <tr>
+          <th>Host</th>
+          <th>Port</th>
+          <th>Detail / Evidence</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for f in group.findings %}
+      <tr>
+        <td class="mono">{{ f.host_ip or '—' }}</td>
+        <td class="mono">{% if f.port_number %}{{ f.port_number }}/{{ f.protocol or 'tcp' }}{% else %}—{% endif %}</td>
+        <td class="evidence-cell" title="{{ f.evidence or f.title }}">{{ f.evidence or f.title }}</td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+
+    {% if group.remediation %}
+    <div class="section-label" style="margin-top:10px;">Remediation</div>
+    <div class="remediation">{{ group.remediation }}</div>
+    {% endif %}
+
+    {% if group.compliance_tags %}
+    <div style="margin-top:8px;">
+      {% for tag in group.compliance_tags | from_json %}
+      <span style="display:inline-block;background:#eff6ff;color:#1e40af;border-radius:4px;padding:2px 6px;font-size:10px;margin:2px;">{{ tag }}</span>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endfor %}
+{% endif %}
+{% endfor %}
+
+{# ── Web Screenshots ── #}
+{% if screenshots %}
+<h2>Web Screenshots ({{ screenshots | length }})</h2>
+<div class="screenshots-grid">
+  {% for shot in screenshots %}
+  <div class="screenshot-card">
+    {% if shot.data_uri %}
+    <img class="screenshot-img" src="{{ shot.data_uri }}" alt="{{ shot.url }}">
+    {% else %}
+    <div class="screenshot-placeholder">
+      {% if shot.error %}{{ shot.error[:80] }}{% else %}No image captured{% endif %}
+    </div>
+    {% endif %}
+    <div class="screenshot-info">
+      <div class="screenshot-title" title="{{ shot.title }}">{{ shot.title }}</div>
+      <div class="screenshot-url" title="{{ shot.url }}">{{ shot.url }}</div>
+      {% if shot.status_code %}
+      <span style="display:inline-block;margin-top:6px;padding:1px 7px;border-radius:3px;font-size:10px;font-weight:600;{% if shot.status_code < 300 %}background:#dcfce7;color:#166534{% elif shot.status_code < 400 %}background:#fef3c7;color:#92400e{% else %}background:#fee2e2;color:#991b1b{% endif %};">{{ shot.status_code }}</span>
+      {% endif %}
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+</div>{# end .container #}
+
+<div class="footer">
+  Generated by <strong>ScanR</strong> — For authorized use on systems you own or have explicit written permission to test.
+</div>
+
+</body>
+</html>

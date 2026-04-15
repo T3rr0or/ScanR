@@ -1,0 +1,46 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+env/
+*.egg-info/
+dist/
+build/
+.eggs/
+*.pyc
+
+# Database
+*.db
+*.db-shm
+*.db-wal
+
+# Secrets
+.env
+*.pem
+*.key
+
+# Reports / cache
+reports/
+nvd_cache/
+
+# Node
+node_modules/
+frontend/dist/
+frontend/.vite/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+test_scanr.db
+
+# Docker
+.docker/

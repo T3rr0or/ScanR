@@ -1,0 +1,104 @@
+from __future__ import annotations
+
+import logging
+from typing import TYPE_CHECKING
+
+import httpx
+
+from scanr.core.plugin_base import FindingData, PluginBase, PluginCategory, Severity
+
+if TYPE_CHECKING:
+    from scanr.core.context import ScanContext
+    from scanr.models import Host
+
+logger = logging.getLogger(__name__)
+
+HTTP_PORTS = [80, 443, 8080, 8443, 8000, 8888, 3000, 5000, 9000]
+
+TRAVERSAL_PAYLOADS = [
+    "../../../../etc/passwd",
+    "..%2F..%2F..%2F..%2Fetc%2Fpasswd",
+    "....//....//....//....//etc/passwd",
+    "%2e%2e%2f%2e%2e%2f%2e%2e%2fetc%2fpasswd",
+    "..\\..\\..\\..\\windows\\win.ini",
+    "..%5C..%5C..%5C..%5Cwindows%5Cwin.ini",
+]
+
+UNIX_SIGNATURE = "root:x:0:0"
+WINDOWS_SIGNATURE = "[fonts]"
+
+
+class PathTraversalPlugin(PluginBase):
+    id = "web.path_traversal"
+    name = "Path Traversal / LFI"
+    description = "Test for path traversal and local file inclusion vulnerabilities"
+    category = PluginCategory.web
+    severity = Severity.high
+    ports = HTTP_PORTS
+
+    async def check(self, context: "ScanContext", host: "Host") -> list[FindingData]:
+        findings = []
+        for port in host.ports:
+            if port.number not in HTTP_PORTS or port.state != "open":
+                continue
+            scheme = "https" if port.number in (443, 8443) else "http"
+            finding = await self._test(host.ip, port.number, scheme)
+            if finding:
+                findings.append(finding)
+        return findings
+
+    async def _test(self, ip: str, port: int, scheme: str) -> FindingData | None:
+        # Common file param names
+        params = ["file", "path", "page", "include", "doc", "document", "template", "load"]
+        try:
+            async with httpx.AsyncClient(verify=False, timeout=5.0, follow_redirects=True) as client:
+                for payload in TRAVERSAL_PAYLOADS:
+                    for param in params:
+                        url = f"{scheme}://{ip}:{port}/?{param}={payload}"
+                        try:
+                            resp = await client.get(url)
+                            body = resp.text
+                            if UNIX_SIGNATURE in body:
+                                return FindingData(
+                                    plugin_id=self.id,
+                                    severity=Severity.high,
+                                    title="Path Traversal — /etc/passwd Readable",
+                                    description=(
+                                        f"The '{param}' parameter allows reading arbitrary files from the server. "
+                                        "An attacker can read sensitive configuration and credential files."
+                                    ),
+                                    evidence=f"GET {url} → contains '{UNIX_SIGNATURE}'",
+                                    remediation=(
+                                        "Validate and sanitize all file path inputs. Use an allowlist of permitted "
+                                        "files. Do not pass user input directly to filesystem functions."
+                                    ),
+                                    references=[
+                                        "https://owasp.org/www-community/attacks/Path_Traversal",
+                                        "https://cwe.mitre.org/data/definitions/22.html",
+                                    ],
+                                    port_number=port,
+                                    protocol="tcp",
+                                )
+                            if WINDOWS_SIGNATURE in body:
+                                return FindingData(
+                                    plugin_id=self.id,
+                                    severity=Severity.high,
+                                    title="Path Traversal — win.ini Readable",
+                                    description=(
+                                        f"The '{param}' parameter allows reading arbitrary files from the server. "
+                                        "Windows system files are accessible."
+                                    ),
+                                    evidence=f"GET {url} → contains '{WINDOWS_SIGNATURE}'",
+                                    remediation=(
+                                        "Validate and sanitize all file path inputs. Use an allowlist of permitted "
+                                        "files. Do not pass user input directly to filesystem functions."
+                                    ),
+                                    references=["https://owasp.org/www-community/attacks/Path_Traversal"],
+                                    port_number=port,
+                                    protocol="tcp",
+                                )
+                        except Exception:
+                            continue
+        except Exception:
+            pass
+        return None

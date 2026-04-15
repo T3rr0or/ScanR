@@ -1,0 +1,37 @@
+FROM python:3.12-slim
+
+# System deps
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    nmap \
+    masscan \
+    libpango-1.0-0 \
+    libpangocairo-1.0-0 \
+    libgdk-pixbuf-xlib-2.0-0 \
+    libffi-dev \
+    libcairo2 \
+    gcc \
+    perl \
+    wget \
+    unzip \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Nuclei (separate layer — cached unless version changes)
+RUN wget -q https://github.com/projectdiscovery/nuclei/releases/download/v3.3.9/nuclei_3.3.9_linux_amd64.zip \
+    && unzip nuclei_3.3.9_linux_amd64.zip -d /usr/local/bin/ \
+    && rm nuclei_3.3.9_linux_amd64.zip \
+    && nuclei -update-templates -silent 2>/dev/null || true
+
+WORKDIR /app
+
+# Install Python deps first (cached layer)
+COPY pyproject.toml .
+RUN pip install --no-cache-dir -e .
+
+# Install Playwright + Chromium (separate layer so code changes don't re-download browser)
+RUN playwright install --with-deps chromium
+
+# Copy source
+COPY scanr/ ./scanr/
+
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1

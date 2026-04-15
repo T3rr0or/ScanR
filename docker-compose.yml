@@ -1,0 +1,95 @@
+version: "3.9"
+
+services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    volumes:
+      - redis_data:/data
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: scanr
+      POSTGRES_PASSWORD: scanr_password
+      POSTGRES_DB: scanr
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U scanr -d scanr"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+asyncpg://scanr:scanr_password@postgres/scanr
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      SECRET_KEY: ${SECRET_KEY:-change_me_in_production_32chars_min}
+      VAULT_KEY: ${VAULT_KEY:-}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@scanr.local}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-changeme}
+    ports:
+      - "8000:8000"
+    volumes:
+      - reports_data:/app/reports
+      - nvd_data:/app/nvd_cache
+    command: uvicorn scanr.main:app --host 0.0.0.0 --port 8000
+
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+asyncpg://scanr:scanr_password@postgres/scanr
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      SECRET_KEY: ${SECRET_KEY:-change_me_in_production_32chars_min}
+      VAULT_KEY: ${VAULT_KEY:-}
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    volumes:
+      - reports_data:/app/reports
+      - nvd_data:/app/nvd_cache
+    command: celery -A scanr.tasks.celery_app worker --beat --loglevel=info --concurrency=4
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - api
+    ports:
+      - "80:80"
+
+volumes:
+  redis_data:
+  postgres_data:
+  reports_data:
+  nvd_data:
