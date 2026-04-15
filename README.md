@@ -1,4 +1,4 @@
-# ScanR
+# ScanR (Alpha)
 
 A self-hosted network vulnerability scanner. Point it at a subnet, get a structured report of open ports, misconfigurations, and CVEs — with a live console, network topology map, and PDF export.
 
