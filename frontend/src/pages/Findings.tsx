@@ -12,7 +12,7 @@ export default function Findings() {
   const [selected, setSelected] = useState<Finding | null>(null)
   const qc = useQueryClient()
 
-  const { data: scans = [] } = useQuery({ queryKey: ['scans'], queryFn: scansApi.list })
+  const { data: scans = [] } = useQuery({ queryKey: ['scans', 0], queryFn: () => scansApi.list({ limit: 200 }) })
 
   const params: Record<string, string> = {}
   if (severity) params.severity = severity

@@ -10,11 +10,18 @@ interface Props {
   onOpenScan?: (id: string) => void
 }
 
+const PAGE_SIZE = 50
+
 export default function Scans({ onOpenScan }: Props) {
   const qc = useQueryClient()
   const [showForm, setShowForm] = useState(false)
   const [deltaScan, setDeltaScan] = useState<{ id: string; name: string } | null>(null)
-  const { data: scans = [] } = useQuery({ queryKey: ['scans'], queryFn: scansApi.list, refetchInterval: 5000 })
+  const [page, setPage] = useState(0)
+  const { data: scans = [] } = useQuery({
+    queryKey: ['scans', page],
+    queryFn: () => scansApi.list({ limit: PAGE_SIZE, offset: page * PAGE_SIZE }),
+    refetchInterval: 5000,
+  })
 
   const createMut = useMutation({
     mutationFn: (body: ScanCreate) => scansApi.create(body),
@@ -110,6 +117,27 @@ export default function Scans({ onOpenScan }: Props) {
           </tbody>
         </table>
       </div>
+
+      {/* Pagination */}
+      {(page > 0 || scans.length === PAGE_SIZE) && (
+        <div className="flex items-center gap-3 mt-4 justify-end">
+          <button
+            onClick={() => setPage(p => Math.max(0, p - 1))}
+            disabled={page === 0}
+            className="px-3 py-1.5 text-sm rounded border border-gray-300 disabled:opacity-40 hover:bg-gray-50"
+          >
+            Previous
+          </button>
+          <span className="text-sm text-gray-500">Page {page + 1}</span>
+          <button
+            onClick={() => setPage(p => p + 1)}
+            disabled={scans.length < PAGE_SIZE}
+            className="px-3 py-1.5 text-sm rounded border border-gray-300 disabled:opacity-40 hover:bg-gray-50"
+          >
+            Next
+          </button>
+        </div>
+      )}
     </div>
   )
 }

@@ -103,8 +103,9 @@ async def update_finding(
         finding.analyst_notes = body.analyst_notes
     if body.remediation_status is not None:
         finding.remediation_status = body.remediation_status
-        finding.triaged_at = datetime.now(timezone.utc)
-        finding.triaged_by = current_user.email
+        if body.remediation_status != "open":
+            finding.triaged_at = datetime.now(timezone.utc)
+            finding.triaged_by = current_user.email
 
     await db.commit()
     await db.refresh(finding)
@@ -126,6 +127,10 @@ async def bulk_update_findings(
     )
     findings = result.scalars().all()
     now = datetime.now(timezone.utc)
+    is_triage_action = (
+        body.false_positive is not None
+        or (body.remediation_status is not None and body.remediation_status != "open")
+    )
     for finding in findings:
         if body.false_positive is not None:
             finding.false_positive = body.false_positive
@@ -133,7 +138,8 @@ async def bulk_update_findings(
             finding.analyst_notes = body.analyst_notes
         if body.remediation_status is not None:
             finding.remediation_status = body.remediation_status
-        finding.triaged_at = now
-        finding.triaged_by = current_user.email
+        if is_triage_action:
+            finding.triaged_at = now
+            finding.triaged_by = current_user.email
     await db.commit()
     return {"updated": len(findings)}

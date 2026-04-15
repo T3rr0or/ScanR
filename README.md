@@ -58,19 +58,24 @@ cd ScanR
 cp .env.example .env
 ```
 
-Edit `.env` and set at minimum:
+Edit `.env` and fill in the required values:
 
 ```env
 # Generate with: python3 -c "import secrets; print(secrets.token_urlsafe(32))"
-SECRET_KEY=your_random_32_char_secret
+SECRET_KEY=
 
 # Generate with: python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
-VAULT_KEY=your_fernet_key
+VAULT_KEY=
+
+# PostgreSQL password
+POSTGRES_PASSWORD=
 
 # Admin account (created on first boot)
 ADMIN_EMAIL=admin@example.com
-ADMIN_PASSWORD=a_strong_password
+ADMIN_PASSWORD=
 ```
+
+The application will refuse to start if `SECRET_KEY`, `ADMIN_PASSWORD`, or `POSTGRES_PASSWORD` are not set.
 
 ### 3. Start all services
 
@@ -172,10 +177,12 @@ All options can be set via `.env` or environment variables:
 
 | Variable | Default | Description |
 |---|---|---|
-| `SECRET_KEY` | *(required)* | JWT signing secret — use a random 32+ char string |
-| `VAULT_KEY` | *(optional)* | Fernet key for credential vault encryption |
-| `ADMIN_EMAIL` | `admin@scanr.local` | Bootstrap admin account email |
-| `ADMIN_PASSWORD` | `changeme` | Bootstrap admin account password |
+| `SECRET_KEY` | *(required)* | JWT signing secret — generate with `python3 -c "import secrets; print(secrets.token_urlsafe(32))"` |
+| `VAULT_KEY` | *(optional)* | Fernet key for credential vault — generate with `python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` |
+| `POSTGRES_PASSWORD` | *(required)* | Password for the PostgreSQL `scanr` database user |
+| `ADMIN_EMAIL` | `admin@scanr.local` | Bootstrap admin account email (first boot only) |
+| `ADMIN_PASSWORD` | *(required)* | Bootstrap admin account password (first boot only) |
+| `ALLOWED_ORIGINS` | `http://localhost` | Comma-separated CORS origins allowed to call the API |
 | `DATABASE_URL` | *(set in compose)* | PostgreSQL connection string |
 | `REDIS_URL` | *(set in compose)* | Redis connection URL |
 | `MAX_CONCURRENT_HOSTS` | `50` | Max hosts scanned in parallel per scan |
@@ -237,9 +244,11 @@ docker compose down -v
 ## Security considerations
 
 - The worker container requires `NET_ADMIN` and `NET_RAW` Linux capabilities for nmap raw-socket scanning. Do not expose it to untrusted networks.
-- Change `SECRET_KEY` and `ADMIN_PASSWORD` before any deployment outside localhost.
+- `SECRET_KEY`, `POSTGRES_PASSWORD`, and `ADMIN_PASSWORD` are required — the application will not start without them.
+- For deployments beyond localhost, put ScanR behind a reverse proxy (nginx, Caddy) with TLS and set `ALLOWED_ORIGINS` to your domain.
 - The API is rate-limited (10 req/min on login, 20 req/min on scan creation, 300 req/min global).
 - All scan data is scoped per user — users cannot access each other's scans.
+- Failed login attempts are logged server-side with IP address.
 
 ---
 

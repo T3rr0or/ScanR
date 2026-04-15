@@ -53,7 +53,7 @@ async def get_current_user(
             return user
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API key")
 
-    if token and token.startswith("sk_") and not token.startswith("sk_agent_"):
+    if token and token.startswith("sk_") and len(token) > 20:
         from scanr.auth.api_key_auth import get_user_from_api_key
         user, scopes = await get_user_from_api_key(token, db)
         if user:
@@ -83,7 +83,7 @@ async def get_current_user(
 def require_scope(scope: str):
     """Return a FastAPI dependency that enforces a specific scope on API key auth."""
     async def _check(request: Request, user: User = Depends(get_current_user)) -> User:
-        scopes: list[str] = getattr(request.state, "scopes", ["*"])
+        scopes: list[str] = getattr(request.state, "scopes", [])
         if not _has_scope(scopes, scope):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,

@@ -43,9 +43,9 @@ async def get_user_from_api_key(raw_key: str, db: AsyncSession) -> tuple[User | 
 
     scopes: list[str] = json.loads(api_key.scopes) if api_key.scopes else []
 
-    # Update last_used_at without committing — the request's normal session lifecycle handles that
     api_key.last_used_at = now
     await db.flush()
+    await db.commit()
 
     user_result = await db.execute(select(User).where(User.id == api_key.user_id, User.is_active == True))
     user = user_result.scalar_one_or_none()

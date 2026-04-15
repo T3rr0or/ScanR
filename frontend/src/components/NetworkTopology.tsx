@@ -13,7 +13,7 @@ interface HostNode {
   ip: string
   hostname?: string
   os_name?: string
-  ports: { number: number; state: string }[]
+  ports?: { number: number; state: string }[]
   status: string
 }
 
@@ -69,7 +69,7 @@ export default function NetworkTopology({ hosts, findingsByHost, onSelectHost }:
     // Build nodes
     const nodes = hosts.map(h => ({
       ...h,
-      openPorts: h.ports.filter(p => p.state === 'open').length,
+      openPorts: (h.ports ?? []).filter(p => p.state === 'open').length,
       severity: hostSeverity(h.ip, findingsByHost),
       subnet: subnet24(h.ip),
     }))
@@ -241,12 +241,12 @@ export default function NetworkTopology({ hosts, findingsByHost, onSelectHost }:
           {tooltip.host.hostname && <div className="text-gray-400">{tooltip.host.hostname}</div>}
           {tooltip.host.os_name && <div className="text-gray-500 truncate">{tooltip.host.os_name}</div>}
           <div className="text-gray-400 mt-1">
-            {tooltip.host.ports.filter(p => p.state === 'open').length} open port(s)
+            {(tooltip.host.ports ?? []).filter(p => p.state === 'open').length} open port(s)
           </div>
-          {tooltip.host.ports.filter(p => p.state === 'open').length > 0 && (
+          {(tooltip.host.ports ?? []).filter(p => p.state === 'open').length > 0 && (
             <div className="text-gray-500 mt-0.5 font-mono">
-              {tooltip.host.ports.filter(p => p.state === 'open').slice(0, 8).map(p => p.number).join(', ')}
-              {tooltip.host.ports.filter(p => p.state === 'open').length > 8 && '…'}
+              {(tooltip.host.ports ?? []).filter(p => p.state === 'open').slice(0, 8).map(p => p.number).join(', ')}
+              {(tooltip.host.ports ?? []).filter(p => p.state === 'open').length > 8 && '…'}
             </div>
           )}
         </div>

@@ -14,20 +14,16 @@ settings = get_settings()
 
 
 def _get_fernet() -> Fernet:
-    import logging as _logging
-    _log = _logging.getLogger(__name__)
     key = settings.vault_key
     if not key:
-        _log.critical(
-            "VAULT_KEY is not set — generating a random key. "
-            "Credentials encrypted now CANNOT be decrypted after restart. "
-            "Set the VAULT_KEY environment variable in production."
+        raise VaultError(
+            "VAULT_KEY is not set. Generate one with: "
+            "python3 -c \"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())\""
         )
-        key = Fernet.generate_key().decode()
     try:
         return Fernet(key.encode() if isinstance(key, str) else key)
     except Exception as exc:
-        raise VaultError("Invalid vault key") from exc
+        raise VaultError("Invalid vault key — must be a valid Fernet key") from exc
 
 
 def encrypt(data: dict) -> str:

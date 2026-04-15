@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { persist } from 'zustand/middleware'
+import { persist, createJSONStorage } from 'zustand/middleware'
 
 interface AuthState {
   token: string | null
@@ -16,6 +16,9 @@ export const useAuthStore = create<AuthState>()(
       setTokens: (access, refresh) => set({ token: access, refreshToken: refresh }),
       logout: () => set({ token: null, refreshToken: null }),
     }),
-    { name: 'scanr-auth' }
+    {
+      name: 'scanr-auth',
+      storage: createJSONStorage(() => sessionStorage),
+    }
   )
 )

@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-import secrets
 from functools import lru_cache
 from pathlib import Path
+from typing import Annotated
 
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -12,15 +13,18 @@ class Settings(BaseSettings):
 
     # Application
     app_name: str = "ScanR"
-    app_version: str = "0.1.0"
+    app_version: str = "0.6.0"
     debug: bool = False
     base_dir: Path = Path(__file__).parent.parent
 
     # Security
-    secret_key: str = secrets.token_urlsafe(32)
+    secret_key: str  # Required — no default; must be set in environment
     algorithm: str = "HS256"
     access_token_expire_minutes: int = 60
     refresh_token_expire_days: int = 7
+
+    # CORS — comma-separated origins allowed to call the API
+    allowed_origins: str = "http://localhost"
 
     # Database
     database_url: str = "sqlite+aiosqlite:///./scanr.db"
@@ -32,7 +36,7 @@ class Settings(BaseSettings):
     celery_result_backend: str = "redis://localhost:6379/1"
 
     # Credential vault encryption key (Fernet) — 32-byte URL-safe base64
-    vault_key: str = ""  # generated on first run if empty
+    vault_key: str = ""
 
     # Scan defaults
     max_concurrent_hosts: int = 50
@@ -47,7 +51,19 @@ class Settings(BaseSettings):
 
     # Admin bootstrap (first-run seed)
     admin_email: str = "admin@scanr.local"
-    admin_password: str = "changeme"
+    admin_password: str  # Required — no default; must be set in environment
+
+    @property
+    def cors_origins(self) -> list[str]:
+        return [o.strip() for o in self.allowed_origins.split(",") if o.strip()]
+
+    @model_validator(mode="after")
+    def _check_required_secrets(self) -> "Settings":
+        if not self.secret_key:
+            raise ValueError("SECRET_KEY must be set in the environment (generate with: python3 -c \"import secrets; print(secrets.token_urlsafe(32))\")")
+        if len(self.secret_key) < 32:
+            raise ValueError("SECRET_KEY must be at least 32 characters")
+        return self
 
 
 @lru_cache

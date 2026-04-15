@@ -9,7 +9,7 @@ const FORMATS = ['html', 'pdf', 'json', 'csv']
 export default function Reports() {
   const qc = useQueryClient()
   const { data: reports = [] } = useQuery({ queryKey: ['reports'], queryFn: () => reportsApi.list(), refetchInterval: 5000 })
-  const { data: scans = [] } = useQuery({ queryKey: ['scans'], queryFn: scansApi.list })
+  const { data: scans = [] } = useQuery({ queryKey: ['scans', 0], queryFn: () => scansApi.list({ limit: 200 }) })
 
   const [scanId, setScanId] = useState('')
   const [format, setFormat] = useState('html')

@@ -15,7 +15,8 @@ export interface ScanCreate {
 }
 
 export const scansApi = {
-  list: () => api.get<ScanSummary[]>('/scans').then(r => r.data),
+  list: (params?: { limit?: number; offset?: number }) =>
+    api.get<ScanSummary[]>('/scans', { params }).then(r => r.data),
   get: (id: string) => api.get<ScanSummary>(`/scans/${id}`).then(r => r.data),
   create: (body: ScanCreate) => api.post<ScanSummary>('/scans', body).then(r => r.data),
   launch: (id: string) => api.post(`/scans/${id}/launch`).then(r => r.data),

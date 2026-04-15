@@ -13,8 +13,8 @@ export default function Dashboard() {
     refetchInterval: 10_000,
   })
   const { data: scans = [] } = useQuery({
-    queryKey: ['scans'],
-    queryFn: scansApi.list,
+    queryKey: ['scans', 0],
+    queryFn: () => scansApi.list({ limit: 200 }),
     refetchInterval: 5_000,
   })
   const { data: severityDist = {} } = useQuery({

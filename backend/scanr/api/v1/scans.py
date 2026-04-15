@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import re
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -54,6 +54,8 @@ async def _get_own_scan(scan_id: str, user_id: str, db: AsyncSession) -> Scan:
 
 @router.get("", response_model=list[ScanSummary])
 async def list_scans(
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -61,7 +63,8 @@ async def list_scans(
         select(Scan)
         .where(Scan.user_id == current_user.id)
         .order_by(Scan.created_at.desc())
-        .limit(100)
+        .offset(offset)
+        .limit(limit)
     )
     return result.scalars().all()
 

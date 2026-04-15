@@ -18,7 +18,7 @@ export default function ScanDelta({ scanId, scanName, onClose }: Props) {
   const [baselineId, setBaselineId] = useState<string>('')
   const [tab, setTab] = useState<'new' | 'resolved' | 'persisting' | 'hosts' | 'ports'>('new')
 
-  const { data: scans = [] } = useQuery({ queryKey: ['scans'], queryFn: scansApi.list })
+  const { data: scans = [] } = useQuery({ queryKey: ['scans', 0], queryFn: () => scansApi.list({ limit: 200, offset: 0 }) })
   const candidates = scans.filter(s =>
     s.id !== scanId && (s.status === 'completed' || s.status === 'failed')
   )

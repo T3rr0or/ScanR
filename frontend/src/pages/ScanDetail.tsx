@@ -24,6 +24,30 @@ interface Props {
 
 type Tab = 'console' | 'findings' | 'hosts' | 'topology' | 'screenshots' | 'exclusions'
 
+interface PortService {
+  name?: string
+  product?: string
+  version?: string
+  extra_info?: string
+}
+
+interface ScannedPort {
+  id: string
+  number: number
+  protocol: string
+  state: string
+  service?: PortService
+}
+
+interface ScannedHost {
+  id: string
+  ip: string
+  hostname?: string
+  os_name?: string
+  status: string
+  ports?: ScannedPort[]
+}
+
 export default function ScanDetail({ scanId, onBack }: Props) {
   const [tab, setTab] = useState<Tab>('console')
   const [highlightHostIp, setHighlightHostIp] = useState<string | null>(null)
@@ -47,7 +71,7 @@ export default function ScanDetail({ scanId, onBack }: Props) {
     enabled: scan?.status === 'completed' || scan?.status === 'failed' || scan?.status === 'running',
   })
 
-  const { data: hosts = [], isLoading: hostsLoading } = useQuery({
+  const { data: hosts = [], isLoading: hostsLoading } = useQuery<ScannedHost[]>({
     queryKey: ['hosts', scanId],
     queryFn: () => scansApi.hosts(scanId),
     enabled: !!scan,
@@ -140,7 +164,7 @@ export default function ScanDetail({ scanId, onBack }: Props) {
                 : <NetworkTopology
                     hosts={hosts}
                     findingsByHost={Object.fromEntries(
-                      hosts.map((h: any) => [h.ip, findings.filter(f => f.host_ip === h.ip)])
+                      hosts.map((h) => [h.ip, findings.filter(f => f.host_ip === h.ip)])
                     )}
                   />}
             </div>
@@ -333,7 +357,7 @@ function FindingsList({ findings, scanId, onGoToHost }: { findings: Finding[]; s
   )
 }
 
-function HostsList({ hosts, highlightIp }: { hosts: any[]; highlightIp?: string | null }) {
+function HostsList({ hosts, highlightIp }: { hosts: ScannedHost[]; highlightIp?: string | null }) {
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const highlightRef = useRef<HTMLTableRowElement | null>(null)
 
@@ -371,7 +395,7 @@ function HostsList({ hosts, highlightIp }: { hosts: any[]; highlightIp?: string 
               <td className="px-4 py-2 text-gray-400 text-xs">{host.hostname ?? '—'}</td>
               <td className="px-4 py-2 text-gray-500 text-xs truncate max-w-xs">{host.os_name ?? '—'}</td>
               <td className="px-4 py-2 text-gray-300 font-mono text-xs">
-                {host.ports?.filter((p: any) => p.state === 'open').length ?? 0}
+                {host.ports?.filter((p) => p.state === 'open').length ?? 0}
               </td>
               <td className="px-4 py-2">
                 <span className={`text-xs px-1.5 py-0.5 rounded ${host.status === 'up' ? 'bg-green-500/20 text-green-400' : 'bg-gray-700 text-gray-400'}`}>
@@ -379,14 +403,14 @@ function HostsList({ hosts, highlightIp }: { hosts: any[]; highlightIp?: string 
                 </span>
               </td>
             </tr>
-            {expandedId === host.id && host.ports?.length > 0 && (
+            {expandedId === host.id && (host.ports?.length ?? 0) > 0 && (
               <tr key={`${host.id}-ports`} className="bg-gray-900/50 border-b border-gray-800">
                 <td colSpan={5} className="px-6 py-3">
                   <div className="text-xs text-gray-500 mb-2 font-medium">Open Ports</div>
                   <div className="flex flex-wrap gap-2">
-                    {host.ports
-                      .filter((p: any) => p.state === 'open')
-                      .map((p: any) => (
+                    {(host.ports ?? [])
+                      .filter((p) => p.state === 'open')
+                      .map((p) => (
                         <div key={p.id} className="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs">
                           <span className="text-blue-400 font-mono">{p.number}/{p.protocol}</span>
                           {p.service && (
@@ -413,7 +437,8 @@ function ExclusionsPanel({ scanId }: { scanId: string }) {
   const [value, setValue] = useState('')
   const [reason, setReason] = useState('')
 
-  const { data: exclusions = [] } = useQuery({
+  interface Exclusion { id: string; type: string; value: string; reason?: string }
+  const { data: exclusions = [] } = useQuery<Exclusion[]>({
     queryKey: ['exclusions', scanId],
     queryFn: () => api.get(`/scans/${scanId}/exclusions`).then(r => r.data),
   })
@@ -462,7 +487,7 @@ function ExclusionsPanel({ scanId }: { scanId: string }) {
         <p className="text-gray-600 text-xs text-center py-4">No exclusions — all targets will be scanned</p>
       ) : (
         <div className="space-y-1">
-          {exclusions.map((e: any) => (
+          {exclusions.map((e) => (
             <div key={e.id} className="flex items-center gap-3 bg-gray-800/50 border border-gray-700 rounded px-3 py-2">
               <span className="text-xs bg-gray-700 text-gray-300 rounded px-1.5 py-0.5">{e.type}</span>
               <span className="text-xs font-mono text-gray-200 flex-1">{e.value}</span>

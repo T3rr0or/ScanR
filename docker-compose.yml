@@ -1,5 +1,3 @@
-version: "3.9"
-
 services:
   redis:
     image: redis:7-alpine
@@ -17,7 +15,7 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: scanr
-      POSTGRES_PASSWORD: scanr_password
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}
       POSTGRES_DB: scanr
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U scanr -d scanr"]
@@ -38,14 +36,15 @@ services:
       redis:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgresql+asyncpg://scanr:scanr_password@postgres/scanr
+      DATABASE_URL: postgresql+asyncpg://scanr:${POSTGRES_PASSWORD}@postgres/scanr
       REDIS_URL: redis://redis:6379/0
       CELERY_BROKER_URL: redis://redis:6379/0
       CELERY_RESULT_BACKEND: redis://redis:6379/1
-      SECRET_KEY: ${SECRET_KEY:-change_me_in_production_32chars_min}
+      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY must be set in .env}
       VAULT_KEY: ${VAULT_KEY:-}
       ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@scanr.local}
-      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-changeme}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?ADMIN_PASSWORD must be set in .env}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost}
     ports:
       - "8000:8000"
     volumes:
@@ -64,12 +63,14 @@ services:
       redis:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgresql+asyncpg://scanr:scanr_password@postgres/scanr
+      DATABASE_URL: postgresql+asyncpg://scanr:${POSTGRES_PASSWORD}@postgres/scanr
       REDIS_URL: redis://redis:6379/0
       CELERY_BROKER_URL: redis://redis:6379/0
       CELERY_RESULT_BACKEND: redis://redis:6379/1
-      SECRET_KEY: ${SECRET_KEY:-change_me_in_production_32chars_min}
+      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY must be set in .env}
       VAULT_KEY: ${VAULT_KEY:-}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@scanr.local}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?ADMIN_PASSWORD must be set in .env}
     cap_add:
       - NET_ADMIN
       - NET_RAW
