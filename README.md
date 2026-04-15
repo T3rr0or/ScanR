@@ -6,6 +6,10 @@ A self-hosted network vulnerability scanner. Point it at a subnet, get a structu
 
 ---
 
+<img width="1704" height="971" alt="image" src="https://github.com/user-attachments/assets/c8008403-e68d-473d-8e22-24447b95dc95" />
+
+
+
 ## Features
 
 - **Nmap-based host discovery** and port scanning
@@ -22,6 +26,10 @@ A self-hosted network vulnerability scanner. Point it at a subnet, get a structu
 - **Webhooks** — notify external systems on scan completion or critical findings
 - **Distributed agents** — run scans from multiple network vantage points
 - **Nuclei integration** — runs Nuclei templates alongside native plugins
+
+
+<img width="1469" height="1221" alt="image" src="https://github.com/user-attachments/assets/5807b225-ed60-470f-adb9-d65d5652d4b5" />
+
 
 ### Plugin categories
 
