@@ -1,3 +1,6 @@
+
+> This project was built with the assistance of [Claude](https://claude.ai) (Anthropic AI).
+
 # ScanR (Alpha)
 
 A self-hosted network vulnerability scanner. Point it at a subnet, get a structured report of open ports, misconfigurations, and CVEs — with a live console, network topology map, and PDF export.
@@ -265,5 +268,3 @@ docker compose down -v
 MIT
 
 ---
-
-> This project was built with the assistance of [Claude](https://claude.ai) (Anthropic AI).
