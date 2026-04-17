@@ -38,6 +38,8 @@ MITRE_MAP: dict[str, list[str]] = {
     "web.sensitive_files":          ["T1552.001", "T1530"],  # Unsecured Creds + Data from Cloud Storage
     # Lateral Movement / Remote Services
     "services.smb_signing":         ["T1557.001"],  # Adversary-in-the-Middle: LLMNR/NBT-NS
+    "services.smb_null_session":    ["T1135", "T1078.001"],  # Network Share Discovery + Default Accounts
+    "services.smb_share_enum":      ["T1135", "T1039"],      # Network Share Discovery + Data from Shared Drive
     "services.telnet_detect":       ["T1021.004"],  # Remote Services (clear-text)
     "services.smtp_open_relay":     ["T1534"],      # Internal Spearphishing
     # Defense Evasion / Phishing support
@@ -50,6 +52,11 @@ MITRE_MAP: dict[str, list[str]] = {
     "ssl_tls.poodle_beast":         ["T1040"],
     # Impact
     "services.ntp_monlist":         ["T1498.002"],  # Network DoS: Reflection Amplification
+    # Active Directory / Windows enumeration
+    "services.ldap_anon_bind":      ["T1087.002", "T1069.002"],  # Account Discovery + Permission Groups: Domain
+    "services.ad_password_policy":  ["T1201"],      # Password Policy Discovery
+    "services.rdp_info":            ["T1046", "T1018"],  # Network Service Discovery + Remote System Discovery
+    "services.ike_aggressive_mode": ["T1110.002"],  # Brute Force: Password Cracking (PSK hash)
     # Information Disclosure
     "web.http_headers":             ["T1592.002"],  # Gather Victim Host Information
     "web.http_methods":             ["T1592.002"],
@@ -78,8 +85,20 @@ TECHNIQUE_NAMES: dict[str, str] = {
     "T1592.002":"Gather Victim Host Information",
     "T1596.003":"Search: Digital Certificates",
     "T1598.003":"Phishing for Information",
+    "T1018":    "Remote System Discovery",
     "T1021.004":"Remote Services",
     "T1021.005":"Remote Services: VNC",
+    "T1033":    "System Owner/User Discovery",
+    "T1039":    "Data from Network Shared Drive",
+    "T1069.002":"Permission Groups Discovery: Domain Groups",
+    "T1082":    "System Information Discovery",
+    "T1087.002":"Account Discovery: Domain Account",
+    "T1110.002":"Brute Force: Password Cracking",
+    "T1110.003":"Brute Force: Password Spraying",
+    "T1135":    "Network Share Discovery",
+    "T1201":    "Password Policy Discovery",
+    "T1595.001":"Active Scanning: Scanning IP Blocks",
+    "T1649":    "Steal or Forge Authentication Certificates",
 }
 
 
