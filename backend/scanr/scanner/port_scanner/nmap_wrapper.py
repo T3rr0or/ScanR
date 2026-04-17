@@ -31,6 +31,8 @@ class NmapWrapper:
         args = f"-sV -O --osscan-guess -T4 {port_arg} --host-timeout 60s"
 
         # Try SYN scan first (needs root), fallback to TCP connect
+        syn_cmd = f"nmap -sS {args} {ip}"
+        await context.log.info(f"$ {syn_cmd}", phase="portscan", host=ip)
         try:
             return await self._run_nmap(ip, f"-sS {args}")
         except asyncio.TimeoutError:
@@ -39,6 +41,8 @@ class NmapWrapper:
         except Exception:
             pass
 
+        tcp_cmd = f"nmap -sT {args} {ip}"
+        await context.log.info(f"$ {tcp_cmd} (TCP fallback)", phase="portscan", host=ip)
         try:
             return await self._run_nmap(ip, f"-sT {args}")
         except asyncio.TimeoutError:

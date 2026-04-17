@@ -61,6 +61,7 @@ class MasscanWrapper:
             "--wait", "3",
         ]
 
+        await context.log.info(f"$ {' '.join(cmd)}", phase="portscan")
         try:
             proc = await asyncio.create_subprocess_exec(
                 *cmd,

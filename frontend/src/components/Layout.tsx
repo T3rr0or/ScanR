@@ -1,6 +1,8 @@
 import { useState } from 'react'
-import { Shield, Scan, AlertTriangle, Puzzle, FileText, LogOut, Settings as SettingsIcon, LayoutTemplate, Clock, Bot, Key } from 'lucide-react'
+import { useQuery } from '@tanstack/react-query'
+import { Shield, Scan, AlertTriangle, Puzzle, FileText, LogOut, Settings as SettingsIcon, LayoutTemplate, Clock, Bot, Key, ArrowUpCircle } from 'lucide-react'
 import { useAuthStore } from '@/store/auth'
+import api from '@/api/client'
 import Dashboard from '@/pages/Dashboard'
 import Scans from '@/pages/Scans'
 import Findings from '@/pages/Findings'
@@ -30,6 +32,13 @@ export default function Layout() {
   const [page, setPage] = useState('dashboard')
   const [activeScanId, setActiveScanId] = useState<string | null>(null)
   const logout = useAuthStore((s) => s.logout)
+
+  const { data: versionData } = useQuery({
+    queryKey: ['version'],
+    queryFn: () => api.get('/system/version').then(r => r.data),
+    refetchInterval: 60 * 60 * 1000, // re-check every hour
+    staleTime: 60 * 60 * 1000,
+  })
 
   const PageComponent = {
     dashboard: Dashboard,
@@ -88,11 +97,24 @@ export default function Layout() {
       </aside>
 
       {/* Main */}
-      <main className="flex-1 overflow-auto min-h-0">
-        {activeScanId
-          ? <ScanDetail scanId={activeScanId} onBack={closeScan} />
-          : <PageComponent onOpenScan={page === 'scans' ? openScan : undefined} />
-        }
+      <main className="flex-1 overflow-auto min-h-0 flex flex-col">
+        {versionData?.update_available && (
+          <a
+            href={versionData.release_url ?? '#'}
+            target="_blank"
+            rel="noreferrer"
+            className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white text-sm flex-shrink-0 hover:bg-blue-700 transition-colors"
+          >
+            <ArrowUpCircle size={15} />
+            <span>ScanR v{versionData.latest} is available — you're running v{versionData.current}. Click to view release notes.</span>
+          </a>
+        )}
+        <div className="flex-1 overflow-auto min-h-0">
+          {activeScanId
+            ? <ScanDetail scanId={activeScanId} onBack={closeScan} />
+            : <PageComponent onOpenScan={page === 'scans' ? openScan : undefined} />
+          }
+        </div>
       </main>
     </div>
   )

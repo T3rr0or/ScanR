@@ -24,10 +24,14 @@ NVD_FEEDS = [
     "https://nvd.nist.gov/feeds/json/cve/1.1/nvdcve-1.1-modified.json.gz",
 ] + [
     f"https://nvd.nist.gov/feeds/json/cve/1.1/nvdcve-1.1-{year}.json.gz"
-    for year in range(2020, 2025)
+    for year in range(2020, 2026)
 ]
 
+CISA_KEV_URL = "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json"
+
 DB_PATH = settings.nvd_cache_dir / "nvd.db"
+KEV_DB_PATH = settings.nvd_cache_dir / "kev.db"
+LAST_UPDATED_PATH = settings.nvd_cache_dir / "last_updated.txt"
 
 
 def _get_conn() -> sqlite3.Connection:
@@ -49,7 +53,7 @@ def _get_conn() -> sqlite3.Connection:
 
 
 def download_feeds() -> None:
-    """Download and index NVD feeds into local SQLite DB."""
+    """Download and index NVD feeds + CISA KEV into local SQLite DBs."""
     conn = _get_conn()
     cache_dir = settings.nvd_cache_dir
 
@@ -71,6 +75,68 @@ def download_feeds() -> None:
             logger.warning("Failed to process feed %s: %s", url, exc)
 
     conn.close()
+    download_cisa_kev()
+    LAST_UPDATED_PATH.write_text(__import__("datetime").datetime.utcnow().isoformat())
+
+
+def download_cisa_kev() -> None:
+    """Download CISA Known Exploited Vulnerabilities catalog."""
+    try:
+        settings.nvd_cache_dir.mkdir(parents=True, exist_ok=True)
+        logger.info("Downloading CISA KEV catalog...")
+        with httpx.Client(timeout=30) as client:
+            resp = client.get(CISA_KEV_URL)
+            resp.raise_for_status()
+        data = resp.json()
+        vulns = data.get("vulnerabilities", [])
+
+        conn = sqlite3.connect(str(KEV_DB_PATH))
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS kev (
+                cve_id TEXT PRIMARY KEY,
+                vendor_project TEXT,
+                product TEXT,
+                vulnerability_name TEXT,
+                date_added TEXT,
+                short_description TEXT,
+                required_action TEXT
+            )
+        """)
+        for v in vulns:
+            conn.execute(
+                "INSERT OR REPLACE INTO kev VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    v.get("cveID"), v.get("vendorProject"), v.get("product"),
+                    v.get("vulnerabilityName"), v.get("dateAdded"),
+                    v.get("shortDescription"), v.get("requiredAction"),
+                ),
+            )
+        conn.commit()
+        conn.close()
+        logger.info("CISA KEV: indexed %d known exploited CVEs", len(vulns))
+    except Exception as exc:
+        logger.warning("Failed to download CISA KEV: %s", exc)
+
+
+def get_kev_cve_ids() -> set[str]:
+    """Return set of CVE IDs that are actively exploited per CISA KEV."""
+    if not KEV_DB_PATH.exists():
+        return set()
+    try:
+        conn = sqlite3.connect(str(KEV_DB_PATH))
+        rows = conn.execute("SELECT cve_id FROM kev").fetchall()
+        conn.close()
+        return {r[0] for r in rows}
+    except Exception:
+        return set()
+
+
+def get_last_updated() -> str | None:
+    """Return ISO timestamp of last CVE feed refresh, or None."""
+    try:
+        return LAST_UPDATED_PATH.read_text().strip() if LAST_UPDATED_PATH.exists() else None
+    except Exception:
+        return None
 
 
 def _index_feed(conn: sqlite3.Connection, data: dict) -> None:

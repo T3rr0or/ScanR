@@ -1,11 +1,12 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Key, Webhook, Copy, Check, Trash2, Plus, Send } from 'lucide-react'
+import { Key, Webhook, Copy, Check, Trash2, Plus, Send, Database, RefreshCw } from 'lucide-react'
 import { apiKeysApi, type APIKeyCreated } from '@/api/apiKeys'
 import { webhooksApi } from '@/api/webhooks'
+import api from '@/api/client'
 
 export default function Settings() {
-  const [activeTab, setActiveTab] = useState<'api-keys' | 'webhooks'>('api-keys')
+  const [activeTab, setActiveTab] = useState<'api-keys' | 'webhooks' | 'cve'>('api-keys')
 
   return (
     <div className="p-6 max-w-4xl mx-auto">
@@ -14,10 +15,66 @@ export default function Settings() {
       <div className="flex gap-1 border-b border-gray-200 mb-6">
         <TabBtn active={activeTab === 'api-keys'} onClick={() => setActiveTab('api-keys')} icon={<Key size={14} />} label="API Keys" />
         <TabBtn active={activeTab === 'webhooks'} onClick={() => setActiveTab('webhooks')} icon={<Webhook size={14} />} label="Webhooks" />
+        <TabBtn active={activeTab === 'cve'} onClick={() => setActiveTab('cve')} icon={<Database size={14} />} label="CVE Database" />
       </div>
 
       {activeTab === 'api-keys' && <ApiKeysSection />}
       {activeTab === 'webhooks' && <WebhooksSection />}
+      {activeTab === 'cve' && <CveDatabaseSection />}
+    </div>
+  )
+}
+
+function CveDatabaseSection() {
+  const qc = useQueryClient()
+  const { data: status } = useQuery({
+    queryKey: ['cve-status'],
+    queryFn: () => api.get('/system/cve-status').then(r => r.data),
+    refetchInterval: 5000,
+  })
+
+  const refreshMut = useMutation({
+    mutationFn: () => api.post('/system/cve-refresh'),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['cve-status'] }),
+  })
+
+  return (
+    <div className="space-y-4">
+      <div className="bg-white border border-gray-200 rounded-xl p-5">
+        <h2 className="font-semibold text-gray-900 mb-4">CVE Feed Status</h2>
+        <div className="grid grid-cols-2 gap-4 mb-5 text-sm">
+          <div>
+            <div className="text-xs text-gray-500 mb-1">NVD Database</div>
+            <div className={`font-medium ${status?.nvd_db_exists ? 'text-green-600' : 'text-red-500'}`}>
+              {status?.nvd_db_exists ? 'Loaded' : 'Not downloaded'}
+            </div>
+          </div>
+          <div>
+            <div className="text-xs text-gray-500 mb-1">CISA KEV Entries</div>
+            <div className="font-medium text-gray-900">{status?.kev_count ?? '—'}</div>
+          </div>
+          <div className="col-span-2">
+            <div className="text-xs text-gray-500 mb-1">Last Updated</div>
+            <div className="font-mono text-xs text-gray-700">
+              {status?.last_updated
+                ? new Date(status.last_updated).toLocaleString()
+                : 'Never'}
+            </div>
+          </div>
+        </div>
+        <button
+          onClick={() => refreshMut.mutate()}
+          disabled={refreshMut.isPending}
+          className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white px-4 py-2 rounded-lg text-sm font-medium"
+        >
+          <RefreshCw size={14} className={refreshMut.isPending ? 'animate-spin' : ''} />
+          {refreshMut.isPending ? 'Refreshing...' : 'Refresh CVE Feeds'}
+        </button>
+        <p className="text-xs text-gray-400 mt-2">
+          Downloads NVD feeds (2020–present) and CISA Known Exploited Vulnerabilities catalog.
+          Takes a few minutes. Runs automatically on first worker boot.
+        </p>
+      </div>
     </div>
   )
 }

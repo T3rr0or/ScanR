@@ -55,11 +55,11 @@ class NucleiRunnerPlugin(PluginBase):
                 continue
             scheme = "https" if port.number in (443, 8443) else "http"
             url = f"{scheme}://{host.ip}:{port.number}"
-            port_findings = await self._run_nuclei(url, port.number)
+            port_findings = await self._run_nuclei(url, port.number, context)
             findings.extend(port_findings)
         return findings
 
-    async def _run_nuclei(self, url: str, port: int) -> list[FindingData]:
+    async def _run_nuclei(self, url: str, port: int, context: "ScanContext") -> list[FindingData]:
         cmd = [
             "nuclei",
             "-u", url,
@@ -71,6 +71,7 @@ class NucleiRunnerPlugin(PluginBase):
             "-rate-limit", "50",
         ]
 
+        await context.log.info(f"$ {' '.join(cmd)}", phase="plugin")
         try:
             proc = await asyncio.create_subprocess_exec(
                 *cmd,

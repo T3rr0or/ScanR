@@ -29,19 +29,31 @@ class CveMatcherPlugin(PluginBase):
             if not svc.product or not svc.version:
                 continue
 
+            from scanr.plugins.cve.nvd_loader import get_kev_cve_ids
+            kev_ids = get_kev_cve_ids()
+
             matches = await self._match_cves(svc.product, svc.version)
             for cve in matches[:5]:  # cap at 5 CVEs per service
-                sev = _map_severity(cve.get("severity", "info"))
+                cve_id = cve["cve_id"]
+                is_kev = cve_id in kev_ids
+                sev = Severity.critical if is_kev else _map_severity(cve.get("severity", "info"))
+                kev_note = " ⚠️ CISA KEV — actively exploited in the wild" if is_kev else ""
                 findings.append(FindingData(
                     plugin_id=self.id,
                     severity=sev,
-                    title=f"{cve['cve_id']}: {svc.product} {svc.version}",
-                    description=cve.get("description", ""),
+                    title=f"{cve_id}: {svc.product} {svc.version}{kev_note}",
+                    description=cve.get("description", "") + (
+                        f"\n\nThis CVE is listed in the CISA Known Exploited Vulnerabilities catalog. "
+                        "Immediate patching is required." if is_kev else ""
+                    ),
                     evidence=f"Detected: {svc.product} {svc.version} on port {port.number}",
-                    remediation=f"Update {svc.product} to a patched version. See https://nvd.nist.gov/vuln/detail/{cve['cve_id']}",
-                    references=[f"https://nvd.nist.gov/vuln/detail/{cve['cve_id']}"],
+                    remediation=f"Update {svc.product} to a patched version. See https://nvd.nist.gov/vuln/detail/{cve_id}",
+                    references=[
+                        f"https://nvd.nist.gov/vuln/detail/{cve_id}",
+                        *([f"https://www.cisa.gov/known-exploited-vulnerabilities-catalog"] if is_kev else []),
+                    ],
                     cvss_vector=cve.get("cvss_vector"),
-                    cve_ids=[cve["cve_id"]],
+                    cve_ids=[cve_id],
                     port_number=port.number,
                     protocol=port.protocol,
                 ))
