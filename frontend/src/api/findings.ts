@@ -10,6 +10,8 @@ export interface Finding {
   false_positive: boolean; analyst_notes: string | null
   triaged_at: string | null; triaged_by: string | null
   compliance_tags: string | null
+  mitre_tags: string | null
+  references: string | null
   remediation_status: string
   created_at: string
 }

@@ -113,6 +113,8 @@ async def seed_plugins(session: AsyncSession) -> None:
         dict(id="services.adb_unauth", name="ADB Unauthenticated Access", category="services", default_severity="critical", description="Detect Android Debug Bridge (ADB) exposed without authentication"),
         dict(id="services.firebird_default_creds", name="Firebird Default Credentials", category="services", default_severity="critical", description="Test Firebird database for default SYSDBA/masterkey credentials"),
         dict(id="services.ftp_cleartext", name="FTP Cleartext Protocol", category="services", default_severity="medium", description="Detect FTP services that transmit credentials without TLS encryption"),
+        # Authenticated
+        dict(id="authenticated.ssh_audit", name="Authenticated SSH System Audit", category="authenticated", default_severity="info", description="SSH into target and audit OS configuration and security posture", requires_auth=True),
     ]
 
     for p in BUILTIN_PLUGINS:

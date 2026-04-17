@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Shield, Scan, AlertTriangle, Puzzle, FileText, LogOut, Settings as SettingsIcon, LayoutTemplate, Clock, Bot } from 'lucide-react'
+import { Shield, Scan, AlertTriangle, Puzzle, FileText, LogOut, Settings as SettingsIcon, LayoutTemplate, Clock, Bot, Key } from 'lucide-react'
 import { useAuthStore } from '@/store/auth'
 import Dashboard from '@/pages/Dashboard'
 import Scans from '@/pages/Scans'
@@ -10,6 +10,7 @@ import SettingsPage from '@/pages/Settings'
 import Templates from '@/pages/Templates'
 import Schedules from '@/pages/Schedules'
 import Agents from '@/pages/Agents'
+import Credentials from '@/pages/Credentials'
 import ScanDetail from '@/pages/ScanDetail'
 
 const NAV = [
@@ -19,6 +20,7 @@ const NAV = [
   { id: 'templates', label: 'Templates', icon: LayoutTemplate },
   { id: 'schedules', label: 'Schedules', icon: Clock },
   { id: 'agents', label: 'Agents', icon: Bot },
+  { id: 'credentials', label: 'Credentials', icon: Key },
   { id: 'plugins', label: 'Plugins', icon: Puzzle },
   { id: 'reports', label: 'Reports', icon: FileText },
   { id: 'settings', label: 'Settings', icon: SettingsIcon },
@@ -39,6 +41,7 @@ export default function Layout() {
     templates: Templates,
     schedules: Schedules,
     agents: Agents,
+    credentials: Credentials,
   }[page] ?? Dashboard
 
   function openScan(id: string) {

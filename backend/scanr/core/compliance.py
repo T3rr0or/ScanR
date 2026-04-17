@@ -201,6 +201,50 @@ COMPLIANCE_MAP: dict[str, list[str]] = {
         "CIS:5.2",
         "NIST:IA-5",
     ],
+    # Authenticated
+    "authenticated.ssh_audit": [
+        "PCI-DSS:2.2.1", "ISO27001:A.8.5", "CIS:5.2", "NIST:CM-7",
+    ],
+    # New service plugins
+    "services.smb_null_session": [
+        "PCI-DSS:2.2.1", "ISO27001:A.8.20", "CIS:9.1",
+    ],
+    "services.smb_share_enum": [
+        "PCI-DSS:7.1.1", "ISO27001:A.8.3", "CIS:3.3",
+    ],
+    "services.ldap_anon_bind": [
+        "PCI-DSS:2.2.1", "ISO27001:A.8.5", "CIS:16.2", "NIST:AC-3",
+    ],
+    "services.ad_password_policy": [
+        "PCI-DSS:8.3.6", "ISO27001:A.8.5", "CIS:5.2", "NIST:IA-5",
+    ],
+    "services.rdp_info": [
+        "PCI-DSS:2.2.7", "ISO27001:A.8.20",
+    ],
+    "services.ike_aggressive_mode": [
+        "PCI-DSS:4.2.1", "ISO27001:A.8.24", "CIS:12.6", "NIST:SC-8",
+    ],
+    "services.nfs_shares": [
+        "PCI-DSS:7.1.1", "ISO27001:A.8.3", "CIS:3.3", "NIST:AC-3",
+    ],
+    "services.zerologon": [
+        "PCI-DSS:6.3.3", "ISO27001:A.8.8", "CIS:7.4", "NIST:SI-2",
+    ],
+    "services.java_rmi_jmx": [
+        "PCI-DSS:2.2.1", "ISO27001:A.8.20", "CIS:4.8", "NIST:CM-7",
+    ],
+    "services.cisco_smart_install": [
+        "PCI-DSS:6.3.3", "ISO27001:A.8.8", "CIS:7.4", "NIST:SI-2",
+    ],
+    "services.adb_unauth": [
+        "PCI-DSS:2.2.1", "ISO27001:A.8.5", "CIS:4.6", "NIST:AC-3",
+    ],
+    "services.firebird_default_creds": [
+        "PCI-DSS:2.2.1", "ISO27001:A.8.5", "CIS:5.2", "NIST:IA-5",
+    ],
+    "services.ftp_cleartext": [
+        "PCI-DSS:4.2.1", "ISO27001:A.8.24", "CIS:4.8", "NIST:SC-8",
+    ],
 }
 
 
