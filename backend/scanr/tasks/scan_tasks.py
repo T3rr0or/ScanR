@@ -4,6 +4,8 @@ import asyncio
 import logging
 from datetime import datetime, timezone
 
+from celery.exceptions import SoftTimeLimitExceeded
+
 from .celery_app import celery_app
 
 logger = logging.getLogger(__name__)
@@ -38,8 +40,35 @@ def run_scan_task(self, scan_id: str) -> dict:
     asyncio.set_event_loop(loop)
     try:
         return loop.run_until_complete(_run_scan_async(self, scan_id))
-    finally:
+    except SoftTimeLimitExceeded:
+        logger.warning("Scan %s hit soft time limit — marking as failed", scan_id)
         loop.close()
+        cleanup_loop = asyncio.new_event_loop()
+        try:
+            cleanup_loop.run_until_complete(
+                _mark_scan_terminal(scan_id, "Task exceeded time limit")
+            )
+        finally:
+            cleanup_loop.close()
+        raise
+    finally:
+        if not loop.is_closed():
+            loop.close()
+
+
+async def _mark_scan_terminal(scan_id: str, reason: str) -> None:
+    from scanr.models import Scan, ScanStatus
+    from sqlalchemy import select
+
+    SessionLocal = _make_session()
+    async with SessionLocal() as db:
+        result = await db.execute(select(Scan).where(Scan.id == scan_id))
+        scan = result.scalar_one_or_none()
+        if scan and scan.status == ScanStatus.running:
+            scan.status = ScanStatus.failed
+            scan.error_message = reason
+            scan.finished_at = datetime.now(tz=timezone.utc)
+            await db.commit()
 
 
 async def _run_scan_async(task, scan_id: str) -> dict:
