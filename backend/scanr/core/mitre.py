@@ -57,6 +57,12 @@ MITRE_MAP: dict[str, list[str]] = {
     "services.ad_password_policy":  ["T1201"],      # Password Policy Discovery
     "services.rdp_info":            ["T1046", "T1018"],  # Network Service Discovery + Remote System Discovery
     "services.ike_aggressive_mode": ["T1110.002"],  # Brute Force: Password Cracking (PSK hash)
+    "services.zerologon":           ["T1210", "T1649"],  # Exploitation of Remote Services + Forge Certs
+    "services.nfs_shares":          ["T1135", "T1039"],  # Network Share Discovery + Data from Shared Drive
+    "services.java_rmi_jmx":        ["T1203"],      # Exploitation for Client Execution
+    "services.cisco_smart_install": ["T1190", "T1565.001"],  # Exploit Public App + Stored Data Manipulation
+    "services.adb_unauth":          ["T1219", "T1078.001"],  # Remote Access Software + Default Accounts
+    "services.firebird_default_creds": ["T1078.001"],  # Valid Accounts: Default Accounts
     # Information Disclosure
     "web.http_headers":             ["T1592.002"],  # Gather Victim Host Information
     "web.http_methods":             ["T1592.002"],
@@ -97,6 +103,8 @@ TECHNIQUE_NAMES: dict[str, str] = {
     "T1110.003":"Brute Force: Password Spraying",
     "T1135":    "Network Share Discovery",
     "T1201":    "Password Policy Discovery",
+    "T1219":    "Remote Access Software",
+    "T1565.001":"Stored Data Manipulation",
     "T1595.001":"Active Scanning: Scanning IP Blocks",
     "T1649":    "Steal or Forge Authentication Certificates",
 }
