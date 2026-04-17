@@ -70,6 +70,8 @@ MITRE_MAP: dict[str, list[str]] = {
     "web.path_traversal":           ["T1083"],      # File and Directory Discovery
     # Multi-technique (nuclei covers many)
     "nuclei.runner":                ["T1190", "T1203"],
+    # Authenticated checks
+    "authenticated.ssh_audit":      ["T1078.001", "T1552.001", "T1201"],
 }
 
 # Human-readable technique names (for display)

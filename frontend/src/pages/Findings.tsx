@@ -6,6 +6,11 @@ import SeverityBadge from '@/components/SeverityBadge'
 
 const SEVERITIES = ['', 'critical', 'high', 'medium', 'low', 'info']
 
+function safeParse(s: string | null): string[] {
+  if (!s) return []
+  try { return JSON.parse(s) } catch { return [] }
+}
+
 export default function Findings() {
   const [severity, setSeverity] = useState('')
   const [scanId, setScanId] = useState('')
@@ -92,6 +97,39 @@ export default function Findings() {
             <pre className="bg-gray-900 text-gray-100 rounded p-3 text-xs overflow-auto mb-3 whitespace-pre-wrap">{selected.evidence}</pre></>}
           {selected.remediation && <><p className="text-xs font-semibold text-gray-500 uppercase mb-1">Remediation</p>
             <div className="bg-green-50 border-l-4 border-green-500 px-3 py-2 text-sm text-green-800 mb-3">{selected.remediation}</div></>}
+          {safeParse(selected.cve_ids).length > 0 && (
+            <><p className="text-xs font-semibold text-gray-500 uppercase mb-1">CVE IDs</p>
+            <div className="flex flex-wrap gap-1 mb-3">
+              {safeParse(selected.cve_ids).map(id => (
+                <span key={id} className="text-xs font-mono bg-red-50 text-red-700 px-1.5 py-0.5 rounded">{id}</span>
+              ))}
+            </div></>
+          )}
+          {safeParse(selected.mitre_tags).length > 0 && (
+            <><p className="text-xs font-semibold text-gray-500 uppercase mb-1">MITRE ATT&amp;CK</p>
+            <div className="flex flex-wrap gap-1 mb-3">
+              {safeParse(selected.mitre_tags).map(t => (
+                <span key={t} className="text-xs font-mono bg-orange-50 text-orange-700 px-1.5 py-0.5 rounded">{t}</span>
+              ))}
+            </div></>
+          )}
+          {safeParse(selected.compliance_tags).length > 0 && (
+            <><p className="text-xs font-semibold text-gray-500 uppercase mb-1">Compliance</p>
+            <div className="flex flex-wrap gap-1 mb-3">
+              {safeParse(selected.compliance_tags).map(t => (
+                <span key={t} className="text-xs font-mono bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded">{t}</span>
+              ))}
+            </div></>
+          )}
+          {safeParse(selected.references).length > 0 && (
+            <><p className="text-xs font-semibold text-gray-500 uppercase mb-1">References</p>
+            <div className="space-y-1 mb-3">
+              {safeParse(selected.references).map(url => (
+                <a key={url} href={url} target="_blank" rel="noreferrer"
+                  className="text-xs text-blue-600 hover:underline block truncate">{url}</a>
+              ))}
+            </div></>
+          )}
           <div className="flex gap-2 mt-4">
             <button
               onClick={() => updateMut.mutate({ id: selected.id, body: { false_positive: !selected.false_positive } })}

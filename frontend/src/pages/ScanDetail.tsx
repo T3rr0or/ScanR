@@ -228,9 +228,15 @@ function StatusPill({ status }: { status: string }) {
   )
 }
 
+function sdSafeParse(s: string | null): string[] {
+  if (!s) return []
+  try { return JSON.parse(s) } catch { return [] }
+}
+
 function FindingsList({ findings, scanId, onGoToHost }: { findings: Finding[]; scanId: string; onGoToHost: (ip: string) => void }) {
   const qc = useQueryClient()
   const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [detailFinding, setDetailFinding] = useState<Finding | null>(null)
   const [filter, setFilter] = useState<'all' | 'open' | 'false_positive' | 'accepted_risk'>('all')
 
   const updateMut = useMutation({
@@ -320,7 +326,8 @@ function FindingsList({ findings, scanId, onGoToHost }: { findings: Finding[]; s
           {filteredFindings.map((f, i) => (
             <tr
               key={f.id ?? i}
-              className={`border-b border-gray-800 hover:bg-gray-900/50 ${f.false_positive ? 'opacity-50' : ''}`}
+              onClick={() => setDetailFinding(f)}
+              className={`border-b border-gray-800 hover:bg-gray-900/50 cursor-pointer ${f.false_positive ? 'opacity-50' : ''}`}
             >
               <td className="px-2 py-2 text-center">
                 <button onClick={() => toggleSelect(f.id)} className="text-gray-600 hover:text-gray-300">
@@ -332,13 +339,13 @@ function FindingsList({ findings, scanId, onGoToHost }: { findings: Finding[]; s
                 <div className="truncate">{f.title}</div>
                 {f.false_positive && <span className="text-xs text-orange-400">FP</span>}
               </td>
-              <td className="px-4 py-2 font-mono text-xs">
+              <td className="px-4 py-2 font-mono text-xs" onClick={e => e.stopPropagation()}>
                 {f.host_ip
                   ? <button onClick={() => onGoToHost(f.host_ip!)} className="text-blue-400 hover:text-blue-300 hover:underline">{f.host_ip}</button>
                   : <span className="text-gray-500">—</span>}
               </td>
               <td className="px-4 py-2 text-gray-400 font-mono text-xs">{f.port_number ?? '—'}</td>
-              <td className="px-4 py-2">
+              <td className="px-4 py-2" onClick={e => e.stopPropagation()}>
                 <select
                   value={f.remediation_status}
                   onChange={e => updateMut.mutate({ id: f.id, data: { remediation_status: e.target.value } })}
@@ -353,6 +360,65 @@ function FindingsList({ findings, scanId, onGoToHost }: { findings: Finding[]; s
           ))}
         </tbody>
       </table>
+
+      {detailFinding && (
+        <div className="fixed right-0 top-0 h-full w-96 bg-gray-800 border-l border-gray-700 overflow-y-auto z-50 p-5 shadow-2xl">
+          <div className="flex items-center gap-2 mb-3">
+            <SeverityBadge severity={detailFinding.severity} />
+            <button onClick={() => setDetailFinding(null)} className="ml-auto text-gray-400 hover:text-gray-200 text-xl leading-none">×</button>
+          </div>
+          <h2 className="font-semibold text-white text-sm mb-1">{detailFinding.title}</h2>
+          <p className="text-xs text-gray-500 font-mono mb-3">{detailFinding.plugin_id}</p>
+          {detailFinding.cvss_score != null && (
+            <p className="text-xs text-gray-400 mb-3">CVSS: {detailFinding.cvss_score.toFixed(1)}</p>
+          )}
+          {detailFinding.description && (
+            <><p className="text-xs font-semibold text-gray-500 uppercase mb-1">Description</p>
+            <p className="text-sm text-gray-300 mb-3">{detailFinding.description}</p></>
+          )}
+          {detailFinding.evidence && (
+            <><p className="text-xs font-semibold text-gray-500 uppercase mb-1">Evidence</p>
+            <pre className="bg-gray-900 text-gray-100 rounded p-3 text-xs overflow-auto mb-3 whitespace-pre-wrap">{detailFinding.evidence}</pre></>
+          )}
+          {detailFinding.remediation && (
+            <><p className="text-xs font-semibold text-gray-500 uppercase mb-1">Remediation</p>
+            <div className="bg-green-900/30 border-l-4 border-green-600 px-3 py-2 text-sm text-green-300 mb-3">{detailFinding.remediation}</div></>
+          )}
+          {sdSafeParse(detailFinding.cve_ids).length > 0 && (
+            <><p className="text-xs font-semibold text-gray-500 uppercase mb-1">CVE IDs</p>
+            <div className="flex flex-wrap gap-1 mb-3">
+              {sdSafeParse(detailFinding.cve_ids).map(id => (
+                <span key={id} className="text-xs font-mono bg-red-900/40 text-red-300 px-1.5 py-0.5 rounded">{id}</span>
+              ))}
+            </div></>
+          )}
+          {sdSafeParse(detailFinding.mitre_tags).length > 0 && (
+            <><p className="text-xs font-semibold text-gray-500 uppercase mb-1">MITRE ATT&amp;CK</p>
+            <div className="flex flex-wrap gap-1 mb-3">
+              {sdSafeParse(detailFinding.mitre_tags).map(t => (
+                <span key={t} className="text-xs font-mono bg-orange-900/40 text-orange-300 px-1.5 py-0.5 rounded">{t}</span>
+              ))}
+            </div></>
+          )}
+          {sdSafeParse(detailFinding.compliance_tags).length > 0 && (
+            <><p className="text-xs font-semibold text-gray-500 uppercase mb-1">Compliance</p>
+            <div className="flex flex-wrap gap-1 mb-3">
+              {sdSafeParse(detailFinding.compliance_tags).map(t => (
+                <span key={t} className="text-xs font-mono bg-blue-900/40 text-blue-300 px-1.5 py-0.5 rounded">{t}</span>
+              ))}
+            </div></>
+          )}
+          {sdSafeParse(detailFinding.references).length > 0 && (
+            <><p className="text-xs font-semibold text-gray-500 uppercase mb-1">References</p>
+            <div className="space-y-1 mb-3">
+              {sdSafeParse(detailFinding.references).map(url => (
+                <a key={url} href={url} target="_blank" rel="noreferrer"
+                  className="text-xs text-blue-400 hover:underline block truncate">{url}</a>
+              ))}
+            </div></>
+          )}
+        </div>
+      )}
     </div>
   )
 }

@@ -31,7 +31,7 @@ class SmbShareEnumPlugin(PluginBase):
         if not any(p.number == 445 and p.state == "open" for p in host.ports):
             return []
 
-        creds = context.credentials
+        creds = context.credential_data
         if not creds or not creds.get("username"):
             return []
 
@@ -104,7 +104,10 @@ class SmbShareEnumPlugin(PluginBase):
             try:
                 fid = conn.createFile(share_name, test_name)
                 conn.closeFile(share_name, fid)
-                conn.deleteFiles(share_name, test_name)
+                try:
+                    conn.deleteFiles(share_name, test_name)
+                except Exception:
+                    pass
                 return "READ,WRITE"
             except Exception:
                 return "READ"
