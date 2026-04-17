@@ -92,7 +92,7 @@ class LdapAnonBindPlugin(PluginBase):
                 if nc:
                     info["naming_context"] = nc[0] if isinstance(nc, list) else nc
                     # Extract domain from DC= components
-                    parts = [p.split("=")[1] for p in str(info["naming_context"]).split(",") if p.upper().startswith("DC=")]
+                    parts = [p.split("=", 1)[1] for p in str(info["naming_context"]).split(",") if p.upper().startswith("DC=") and len(p.split("=", 1)) > 1]
                     if parts:
                         info["domain"] = ".".join(parts)
                 dcf = server.info.other.get("domainControllerFunctionality")

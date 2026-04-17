@@ -97,11 +97,21 @@ class MasscanWrapper:
                 content = f.read().strip()
             if not content:
                 return result
-            # masscan JSON is a list of records (may have trailing comma making it invalid JSON)
+            # masscan outputs JSONL (one object per line) or a JSON array with trailing comma
+            # Try array parse first, then fall back to JSONL
             content = content.rstrip(",").strip()
-            if not content.startswith("["):
-                content = "[" + content + "]"
-            records = json.loads(content)
+            if content.startswith("["):
+                records = json.loads(content)
+            else:
+                # JSONL: parse each non-empty line as a separate JSON object
+                records = []
+                for line in content.splitlines():
+                    line = line.strip().rstrip(",")
+                    if line:
+                        try:
+                            records.append(json.loads(line))
+                        except json.JSONDecodeError:
+                            continue
             for rec in records:
                 ip = rec.get("ip")
                 for port_info in rec.get("ports", []):

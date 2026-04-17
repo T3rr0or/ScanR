@@ -98,14 +98,14 @@ class SmbShareEnumPlugin(PluginBase):
 
     def _probe_share_access(self, conn, share_name: str) -> str:
         try:
-            conn.connectTree(share_name)
+            tid = conn.connectTree(share_name)
             # Try creating a test file to verify write access
             test_name = "_scanr_write_test.tmp"
             try:
-                fid = conn.createFile(share_name, test_name)
-                conn.closeFile(share_name, fid)
+                fid = conn.createFile(tid, test_name)
+                conn.closeFile(tid, fid)
                 try:
-                    conn.deleteFiles(share_name, test_name)
+                    conn.deleteFiles(tid, test_name)
                 except Exception:
                     pass
                 return "READ,WRITE"

@@ -147,8 +147,8 @@ class AdPasswordPolicyPlugin(PluginBase):
                 "Minimum password length": pwd_info["MinPasswordLength"],
                 "Password history length": pwd_info["PasswordHistoryLength"],
                 "Account Lockout Threshold": lockout["LockoutThreshold"],
-                "Lockout Duration (mins)": to_mins(lockout["LockoutDuration"]["LowPart"] | (lockout["LockoutDuration"]["HighPart"] << 32)),
-                "Lockout Observation Window (mins)": to_mins(lockout["LockoutObservationWindow"]["LowPart"] | (lockout["LockoutObservationWindow"]["HighPart"] << 32)),
+                "Lockout Duration (mins)": to_mins((lockout["LockoutDuration"].get("LowPart", 0) & 0xFFFFFFFF) | (lockout["LockoutDuration"].get("HighPart", 0) << 32)),
+                "Lockout Observation Window (mins)": to_mins((lockout["LockoutObservationWindow"].get("LowPart", 0) & 0xFFFFFFFF) | (lockout["LockoutObservationWindow"].get("HighPart", 0) << 32)),
             }
             dce.disconnect()
             return policy
