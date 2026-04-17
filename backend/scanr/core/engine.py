@@ -140,10 +140,32 @@ class ScanEngine:
             f"Port scanning {len(live_targets)} host(s) ...",
         )
 
+        # Optional fast pre-scan with masscan: discovers open ports in bulk
+        # before nmap runs per-host service detection only on known-open ports.
+        masscan_results: dict[str, list[int]] = {}
+        from scanr.scanner.port_scanner.masscan_wrapper import MasscanWrapper
+        if MasscanWrapper.is_available():
+            await scan_log.info(
+                f"masscan available — running bulk port discovery on {len(live_targets)} hosts",
+                phase="portscan",
+            )
+            ms = MasscanWrapper()
+            masscan_results = await ms.scan(live_targets, context.get_port_range(), context)
+            await scan_log.info(
+                f"masscan complete: {sum(len(v) for v in masscan_results.values())} open ports across "
+                f"{len(masscan_results)} hosts",
+                phase="portscan",
+            )
+        else:
+            await scan_log.info(
+                "masscan not found — using nmap for port discovery (install masscan for faster scans)",
+                phase="portscan",
+            )
+
         # Phase 2+3+4: Per-host port scan + service fingerprint + plugin dispatch
         sem = rate_limiter.host_slot()
         tasks = [
-            self._scan_host(ip, context, plugins, collector, sem)
+            self._scan_host(ip, context, plugins, collector, sem, masscan_results.get(ip))
             for ip in live_targets
         ]
         results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -165,6 +187,7 @@ class ScanEngine:
         plugins: list,
         collector: ResultCollector,
         sem: asyncio.Semaphore,
+        known_ports: list[int] | None = None,
     ) -> None:
         async with sem:
             context.check_cancelled()
@@ -174,7 +197,7 @@ class ScanEngine:
             from scanr.scanner.port_scanner.nmap_wrapper import NmapWrapper
 
             nmap = NmapWrapper()
-            host_data = await nmap.scan_host(ip, context)
+            host_data = await nmap.scan_host(ip, context, known_ports=known_ports)
             if not host_data:
                 await context.log.warn(f"{ip} — no response from nmap", phase="portscan", host=ip)
                 return

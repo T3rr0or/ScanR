@@ -13,9 +13,21 @@ logger = logging.getLogger(__name__)
 class NmapWrapper:
     """Async wrapper around nmap for port scanning and service detection."""
 
-    async def scan_host(self, ip: str, context: "ScanContext") -> dict[str, Any] | None:
-        """Run nmap on one host, return structured host data or None if down."""
-        port_arg = context.get_port_range()
+    async def scan_host(
+        self,
+        ip: str,
+        context: "ScanContext",
+        known_ports: list[int] | None = None,
+    ) -> dict[str, Any] | None:
+        """Run nmap on one host, return structured host data or None if down.
+
+        If known_ports is provided (from a prior masscan run), nmap only scans
+        those specific ports, which is significantly faster.
+        """
+        if known_ports:
+            port_arg = "-p " + ",".join(str(p) for p in sorted(set(known_ports)))
+        else:
+            port_arg = context.get_port_range()
         args = f"-sV -O --osscan-guess -T4 {port_arg} --host-timeout 60s"
 
         # Try SYN scan first (needs root), fallback to TCP connect
