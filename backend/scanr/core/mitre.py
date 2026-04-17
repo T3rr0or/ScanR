@@ -50,6 +50,7 @@ MITRE_MAP: dict[str, list[str]] = {
     "ssl_tls.cipher_audit":         ["T1040"],      # Network Sniffing
     "ssl_tls.protocol_check":       ["T1040"],
     "ssl_tls.poodle_beast":         ["T1040"],
+    "services.ftp_cleartext":       ["T1040"],      # Network Sniffing (cleartext protocol)
     # Impact
     "services.ntp_monlist":         ["T1498.002"],  # Network DoS: Reflection Amplification
     # Active Directory / Windows enumeration
