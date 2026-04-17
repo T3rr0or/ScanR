@@ -56,8 +56,8 @@ class SubdomainEnumPlugin(PluginBase):
         if not hostname or _is_ip(hostname):
             return []
 
-        # Strip leading wildcard or www prefix to get base domain
-        base = hostname.lstrip("*.")
+        # Strip leading wildcard prefix to get base domain
+        base = hostname.removeprefix("*.")
         if base.count(".") < 1:
             return []
 
@@ -89,10 +89,9 @@ class SubdomainEnumPlugin(PluginBase):
 
     async def _brute_force(self, base_domain: str) -> list[tuple[str, str]]:
         sem = asyncio.Semaphore(_MAX_CONCURRENT)
-        loop = asyncio.get_event_loop()
-        results: list[tuple[str, str]] = []
+        loop = asyncio.get_running_loop()
 
-        async def resolve(prefix: str) -> None:
+        async def resolve(prefix: str) -> tuple[str, str] | None:
             fqdn = f"{prefix}.{base_domain}"
             async with sem:
                 try:
@@ -100,12 +99,12 @@ class SubdomainEnumPlugin(PluginBase):
                         loop.run_in_executor(None, socket.gethostbyname, fqdn),
                         timeout=_DNS_TIMEOUT,
                     )
-                    results.append((fqdn, ip))
+                    return (fqdn, ip)
                 except Exception:
-                    pass
+                    return None
 
-        await asyncio.gather(*[resolve(p) for p in _WORDLIST])
-        return results
+        raw = await asyncio.gather(*[resolve(p) for p in _WORDLIST])
+        return [r for r in raw if r is not None]
 
 
 def _is_ip(s: str) -> bool:

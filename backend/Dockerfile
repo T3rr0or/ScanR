@@ -15,6 +15,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     unzip \
     && rm -rf /var/lib/apt/lists/*
 
+# SecLists wordlists for web content discovery
+RUN mkdir -p /usr/share/seclists/Discovery/Web-Content && \
+    wget -q -O /usr/share/seclists/Discovery/Web-Content/common.txt \
+      https://raw.githubusercontent.com/danielmiessler/SecLists/master/Discovery/Web-Content/common.txt && \
+    wget -q -O /usr/share/seclists/Discovery/Web-Content/big.txt \
+      https://raw.githubusercontent.com/danielmiessler/SecLists/master/Discovery/Web-Content/big.txt && \
+    wget -q -O /usr/share/seclists/Discovery/Web-Content/directory-list-2.3-medium.txt \
+      https://raw.githubusercontent.com/danielmiessler/SecLists/master/Discovery/Web-Content/directory-list-2.3-medium.txt
+
 # Install Nuclei (separate layer — cached unless version changes)
 RUN wget -q https://github.com/projectdiscovery/nuclei/releases/download/v3.3.9/nuclei_3.3.9_linux_amd64.zip \
     && unzip nuclei_3.3.9_linux_amd64.zip -d /usr/local/bin/ \

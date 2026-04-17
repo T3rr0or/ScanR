@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import httpx
@@ -16,10 +17,28 @@ logger = logging.getLogger(__name__)
 
 HTTP_PORTS = [80, 443, 8080, 8443, 8000, 8888, 3000, 5000, 9000]
 
-# Common paths wordlist (200 entries, no external dependency needed)
+_SECLISTS_BASE = Path("/usr/share/seclists/Discovery/Web-Content")
+_WORDLIST_SMALL  = _SECLISTS_BASE / "common.txt"          # ~4600 entries
+_WORDLIST_MEDIUM = _SECLISTS_BASE / "big.txt"             # ~20k entries
+_WORDLIST_LARGE  = _SECLISTS_BASE / "directory-list-2.3-medium.txt"  # ~220k entries
+
+
+def _load_wordlist(path: Path) -> list[str]:
+    try:
+        lines = path.read_text(errors="ignore").splitlines()
+        return [l.strip().lstrip("/") for l in lines if l.strip() and not l.startswith("#")]
+    except Exception:
+        return []
+
+
+# Fallback embedded wordlist (used when SecLists not available)
 COMMON_PATHS = [
-    "admin", "administrator", "login", "wp-admin", "wp-login.php",
+    "admin", "admin.php", "administrator", "administrator.php",
+    "login", "login.php", "login2.php", "wp-admin", "wp-login.php",
+    "admindash.php", "admin_dashboard.php", "dashboard.php",
     "phpmyadmin", "pma", "mysql", "adminer", "dbadmin",
+    "user.php", "users.php", "profile.php", "account.php",
+    "panel.php", "control.php", "manage.php", "portal.php",
     "api", "api/v1", "api/v2", "api/v3",
     "swagger", "swagger-ui", "swagger-ui.html", "api-docs",
     "actuator", "actuator/health", "actuator/env", "actuator/beans",
@@ -102,8 +121,9 @@ COMMON_PATHS = [
 MANAGEMENT_INDICATORS = [
     "actuator", "h2-console", "jmx-console", "web-console",
     "manager", "management", "jenkins", "grafana", "kibana",
-    "console", "admin", "administrator", "phpmyadmin", "adminer",
-    "wp-admin",
+    "console", "admin", "admin.php", "administrator", "administrator.php",
+    "admindash", "admindash.php", "phpmyadmin", "adminer",
+    "dashboard", "dashboard.php", "panel", "panel.php", "wp-admin",
 ]
 
 
@@ -116,16 +136,34 @@ class DirBruteforcePlugin(PluginBase):
     ports = HTTP_PORTS
 
     async def check(self, context: "ScanContext", host: "Host") -> list[FindingData]:
+        profile = getattr(context, "profile", "standard")
+        wordlist = self._pick_wordlist(profile)
         findings = []
         for port in host.ports:
             if port.number not in HTTP_PORTS or port.state != "open":
                 continue
             scheme = "https" if port.number in (443, 8443) else "http"
-            port_findings = await self._scan(host.ip, port.number, scheme)
+            port_findings = await self._scan(host.ip, port.number, scheme, wordlist)
             findings.extend(port_findings)
         return findings
 
-    async def _scan(self, ip: str, port: int, scheme: str) -> list[FindingData]:
+    def _pick_wordlist(self, profile: str) -> list[str]:
+        if profile == "full" and _WORDLIST_LARGE.exists():
+            paths = _load_wordlist(_WORDLIST_LARGE)
+            logger.debug("dir_bruteforce: using large SecLists wordlist (%d entries)", len(paths))
+            return paths
+        if profile in ("standard", "full") and _WORDLIST_MEDIUM.exists():
+            paths = _load_wordlist(_WORDLIST_MEDIUM)
+            logger.debug("dir_bruteforce: using medium SecLists wordlist (%d entries)", len(paths))
+            return paths
+        if _WORDLIST_SMALL.exists():
+            paths = _load_wordlist(_WORDLIST_SMALL)
+            logger.debug("dir_bruteforce: using small SecLists wordlist (%d entries)", len(paths))
+            return paths
+        logger.debug("dir_bruteforce: SecLists not found, using embedded wordlist")
+        return COMMON_PATHS
+
+    async def _scan(self, ip: str, port: int, scheme: str, wordlist: list[str]) -> list[FindingData]:
         base = f"{scheme}://{ip}:{port}/"
         found: list[tuple[str, int, int]] = []  # (path, status, size)
         sem = asyncio.Semaphore(20)
@@ -141,7 +179,7 @@ class DirBruteforcePlugin(PluginBase):
             except Exception:
                 pass
 
-        await asyncio.gather(*[probe(p) for p in COMMON_PATHS])
+        await asyncio.gather(*[probe(p) for p in wordlist])
 
         findings = []
         for path, status, size in found:

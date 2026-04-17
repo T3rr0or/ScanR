@@ -46,8 +46,8 @@ _WAF_SIGNATURES: list[tuple[str, str, str]] = [
     ("Cloudfront", "via: cloudfront", "header"),
 ]
 
-# Probe payload designed to trigger WAF rules
-_WAF_PROBE = "/?id=1'+AND+1=1--&q=<script>alert(1)</script>&cmd=cat+/etc/passwd"
+# Probe payload designed to trigger WAF rules — XSS portion URL-encoded
+_WAF_PROBE = "/?id=1%27+AND+1%3D1--&q=%3Cscript%3Ealert%281%29%3C%2Fscript%3E&cmd=cat+%2Fetc%2Fpasswd"
 
 
 class WafDetectPlugin(PluginBase):
@@ -102,8 +102,9 @@ class WafDetectPlugin(PluginBase):
                     elif match_type == "body_403" and resp.status_code == 403 and pattern in body_lower:
                         detected.append(waf_name)
 
-                # Generic: 403/406 on probe with no specific match = likely WAF
-                if not detected and resp.status_code in (403, 406, 429, 503):
+                # Generic: 403 or 406 on attack probe with no specific match = likely WAF
+                # 429/503 excluded — could be rate limiting or downtime unrelated to WAF
+                if not detected and resp.status_code in (403, 406):
                     detected.append("Unknown WAF")
 
                 if not detected:
