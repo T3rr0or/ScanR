@@ -55,7 +55,7 @@ export default function Layout() {
       <aside className="w-56 bg-gray-900 flex flex-col flex-shrink-0">
         <div className="px-6 py-5 border-b border-gray-700">
           <span className="text-white font-bold text-xl">ScanR</span>
-          <span className="text-blue-400 text-xs ml-2">v0.1</span>
+          <span className="text-blue-400 text-xs ml-2">v0.6.0</span>
         </div>
         <nav className="flex-1 py-4 px-3 space-y-1 overflow-y-auto">
           {NAV.map(({ id, label, icon: Icon }) => (
