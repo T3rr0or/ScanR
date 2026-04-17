@@ -10,6 +10,7 @@ export default function Reports() {
   const qc = useQueryClient()
   const { data: reports = [] } = useQuery({ queryKey: ['reports'], queryFn: () => reportsApi.list(), refetchInterval: 5000 })
   const { data: scans = [] } = useQuery({ queryKey: ['scans', 0], queryFn: () => scansApi.list({ limit: 200 }) })
+  const scanMap = Object.fromEntries(scans.map(s => [s.id, s.name]))
 
   const [scanId, setScanId] = useState('')
   const [format, setFormat] = useState('html')
@@ -58,7 +59,7 @@ export default function Reports() {
             {reports.map(r => (
               <tr key={r.id} className="border-b border-gray-100 hover:bg-gray-50">
                 <td className="px-4 py-3 font-mono text-xs text-gray-400">{r.id.slice(0, 8)}</td>
-                <td className="px-4 py-3 text-gray-500">{r.scan_id.slice(0, 8)}</td>
+                <td className="px-4 py-3 text-gray-700">{scanMap[r.scan_id] ?? r.scan_id.slice(0, 8)}</td>
                 <td className="px-4 py-3 font-medium uppercase">{r.format}</td>
                 <td className="px-4 py-3">
                   <span className={`px-2 py-0.5 rounded text-xs font-medium ${r.status === 'completed' ? 'bg-green-100 text-green-700' : r.status === 'failed' ? 'bg-red-100 text-red-700' : 'bg-yellow-100 text-yellow-700'}`}>

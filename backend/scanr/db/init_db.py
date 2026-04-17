@@ -99,6 +99,22 @@ async def seed_plugins(session: AsyncSession) -> None:
         dict(id="services.ipmi_cipher_zero", name="IPMI Cipher Suite 0 Auth Bypass", category="services", default_severity="critical", cve_ids='["CVE-2013-4786"]', description="Detect IPMI 2.0 BMCs vulnerable to Cipher 0 auth bypass"),
         # Nuclei
         dict(id="nuclei.runner", name="Nuclei Template Scanner", category="web", default_severity="info", description="Run Nuclei vulnerability scanner templates against HTTP/HTTPS services"),
+        # New service plugins
+        dict(id="services.smb_null_session", name="SMB NULL Session", category="services", default_severity="medium", description="Test SMB for unauthenticated NULL session access and share enumeration"),
+        dict(id="services.smb_share_enum", name="SMB Share Enumeration", category="services", default_severity="medium", description="Enumerate SMB shares and test for writable access", requires_auth=True),
+        dict(id="services.ldap_anon_bind", name="LDAP Anonymous Bind", category="services", default_severity="medium", description="Test LDAP server for anonymous bind access and naming context exposure"),
+        dict(id="services.ad_password_policy", name="AD Password Policy", category="services", default_severity="medium", description="Retrieve Active Directory domain password policy via SAMR and flag weak settings", requires_auth=True),
+        dict(id="services.rdp_info", name="RDP Certificate Info", category="services", default_severity="info", description="Read RDP TLS certificate to extract hostname, domain, and FQDN"),
+        dict(id="services.ike_aggressive_mode", name="IKEv1 Aggressive Mode", category="services", default_severity="high", description="Detect IKEv1 Aggressive Mode which exposes the PSK hash to offline cracking"),
+        dict(id="services.nfs_shares", name="NFS Share Enumeration", category="services", default_severity="medium", description="List NFS exports accessible without authentication"),
+        dict(id="services.zerologon", name="ZeroLogon (CVE-2020-1472)", category="services", default_severity="critical", cve_ids='["CVE-2020-1472"]', description="Non-destructive ZeroLogon detection via Netlogon authentication attempt with zero credentials"),
+        dict(id="services.java_rmi_jmx", name="Java RMI/JMX Registry Exposed", category="services", default_severity="high", description="Detect unauthenticated Java RMI/JMX registries that allow remote code execution"),
+        dict(id="services.cisco_smart_install", name="Cisco Smart Install Exposed", category="services", default_severity="high", cve_ids='["CVE-2018-0171"]', description="Detect Cisco Smart Install service exposed on port 4786 (CVE-2018-0171)"),
+        dict(id="services.adb_unauth", name="ADB Unauthenticated Access", category="services", default_severity="critical", description="Detect Android Debug Bridge (ADB) exposed without authentication"),
+        dict(id="services.firebird_default_creds", name="Firebird Default Credentials", category="services", default_severity="critical", description="Test Firebird database for default SYSDBA/masterkey credentials"),
+        dict(id="services.ftp_cleartext", name="FTP Cleartext Protocol", category="services", default_severity="medium", description="Detect FTP services that transmit credentials without TLS encryption"),
+        # Authenticated
+        dict(id="authenticated.ssh_audit", name="Authenticated SSH System Audit", category="authenticated", default_severity="info", description="SSH into target and audit OS configuration and security posture", requires_auth=True),
     ]
 
     for p in BUILTIN_PLUGINS:
@@ -113,7 +129,7 @@ async def seed_plugins(session: AsyncSession) -> None:
             description=p.get("description"),
             cve_ids=p.get("cve_ids"),
             enabled=True,
-            requires_auth=False,
+            requires_auth=p.get("requires_auth", False),
         )
         session.add(plugin)
 

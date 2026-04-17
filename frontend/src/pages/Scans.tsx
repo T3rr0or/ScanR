@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Plus, Play, StopCircle, Trash2, Terminal, GitCompare } from 'lucide-react'
 import { scansApi, type ScanCreate } from '@/api/scans'
 import { templatesApi, type ScanTemplate } from '@/api/templates'
+import { credentialsApi } from '@/api/credentials'
 import { ProfileEditor, ALL_CATEGORIES, PORT_RANGES, configToJson, jsonToConfig, type ProfileConfig } from '@/components/ProfileEditor'
 import ScanDelta from './ScanDelta'
 
@@ -158,6 +159,7 @@ function ScanForm({ onSubmit, onCancel, loading }: {
 }) {
   const [name, setName] = useState('')
   const [targets, setTargets] = useState('')
+  const [credentialId, setCredentialId] = useState('')
   const [selectedTemplate, setSelectedTemplate] = useState<ScanTemplate | null>(null)
   const [profileConfig, setProfileConfig] = useState<ProfileConfig>({
     port_range: 'top-10000',
@@ -165,6 +167,7 @@ function ScanForm({ onSubmit, onCancel, loading }: {
   })
 
   const { data: templates = [] } = useQuery({ queryKey: ['templates'], queryFn: templatesApi.list })
+  const { data: credentials = [] } = useQuery({ queryKey: ['credentials'], queryFn: credentialsApi.list })
   const systemTemplates = templates.filter(t => t.is_system)
 
   function applyTemplate(t: ScanTemplate) {
@@ -180,6 +183,7 @@ function ScanForm({ onSubmit, onCancel, loading }: {
       targets: targets.split('\n').map(t => t.trim()).filter(Boolean),
       profile: 'custom',
       profile_json: JSON.stringify(pj),
+      credential_id: credentialId || undefined,
     })
   }
 
@@ -232,6 +236,21 @@ function ScanForm({ onSubmit, onCancel, loading }: {
           <textarea value={targets} onChange={e => setTargets(e.target.value)} rows={3}
             className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono"
             placeholder={"192.168.1.0/24\n10.0.0.1-10.0.0.50\nexample.com"} />
+        </div>
+
+        <div>
+          <label className="block text-xs font-medium text-gray-600 mb-1.5">
+            Credential <span className="text-gray-400 font-normal">(optional — required for authenticated plugins)</span>
+          </label>
+          <select value={credentialId} onChange={e => setCredentialId(e.target.value)}
+            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
+            <option value="">None</option>
+            {credentials.map(c => (
+              <option key={c.id} value={c.id}>
+                {c.name} ({c.type}{c.username ? ` — ${c.username}` : ''})
+              </option>
+            ))}
+          </select>
         </div>
 
         {/* Port Range — locked to template or manually selectable */}

@@ -13,20 +13,44 @@ logger = logging.getLogger(__name__)
 class NmapWrapper:
     """Async wrapper around nmap for port scanning and service detection."""
 
-    async def scan_host(self, ip: str, context: "ScanContext") -> dict[str, Any] | None:
-        """Run nmap on one host, return structured host data or None if down."""
-        port_arg = context.get_port_range()
-        args = f"-sV -O --osscan-guess -T4 {port_arg} --host-timeout 300s"
+    async def scan_host(
+        self,
+        ip: str,
+        context: "ScanContext",
+        known_ports: list[int] | None = None,
+    ) -> dict[str, Any] | None:
+        """Run nmap on one host, return structured host data or None if down.
+
+        If known_ports is provided (from a prior masscan run), nmap only scans
+        those specific ports, which is significantly faster.
+        """
+        if known_ports:
+            port_arg = "-p " + ",".join(str(p) for p in sorted(set(known_ports)))
+        else:
+            port_arg = context.get_port_range()
+        args = f"-sV -O --osscan-guess -T4 {port_arg} --host-timeout 60s"
 
         # Try SYN scan first (needs root), fallback to TCP connect
         try:
             return await self._run_nmap(ip, f"-sS {args}")
+        except asyncio.TimeoutError:
+            logger.warning("nmap SYN scan timed out for %s", ip)
+            return None
         except Exception:
+            pass
+
+        try:
             return await self._run_nmap(ip, f"-sT {args}")
+        except asyncio.TimeoutError:
+            logger.warning("nmap TCP scan timed out for %s", ip)
+            return None
 
     async def _run_nmap(self, ip: str, args: str) -> dict[str, Any] | None:
         loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, self._nmap_sync, ip, args)
+        return await asyncio.wait_for(
+            loop.run_in_executor(None, self._nmap_sync, ip, args),
+            timeout=90.0,
+        )
 
     def _nmap_sync(self, ip: str, args: str) -> dict[str, Any] | None:
         import nmap
