@@ -245,6 +245,29 @@ COMPLIANCE_MAP: dict[str, list[str]] = {
     "services.ftp_cleartext": [
         "PCI-DSS:4.2.1", "ISO27001:A.8.24", "CIS:4.8", "NIST:SC-8",
     ],
+    # Web attack surface
+    "web.sqli_detect": [
+        "PCI-DSS:6.4.1", "ISO27001:A.8.9", "CIS:16.1", "NIST:SI-10",
+    ],
+    "web.xss_detect": [
+        "PCI-DSS:6.4.1", "ISO27001:A.8.9", "CIS:16.1", "NIST:SI-10",
+    ],
+    "web.waf_detect": [
+        "PCI-DSS:6.4.1", "ISO27001:A.8.9",
+    ],
+    "web.ssrf_detect": [
+        "PCI-DSS:6.4.1", "ISO27001:A.8.9", "CIS:16.1", "NIST:SI-10",
+    ],
+    "web.broken_access_control": [
+        "PCI-DSS:7.1.1", "ISO27001:A.8.3", "CIS:6.1", "NIST:AC-3",
+    ],
+    "web.graphql_introspection": [
+        "PCI-DSS:6.4.1", "ISO27001:A.8.9",
+    ],
+    # Network
+    "network.subdomain_enum": [
+        "ISO27001:A.8.9", "CIS:4.8",
+    ],
 }
 
 

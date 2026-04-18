@@ -41,6 +41,8 @@ class Scan(Base, TimestampMixin):
     user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id"), nullable=False, index=True)
     credential_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("credentials.id"), nullable=True)
     template_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("scan_templates.id"), nullable=True)
+    compare_scan_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("scans.id"), nullable=True)
+    webhook_sent: Mapped[bool] = mapped_column(default=False)
     agent_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("scan_agents.id"), nullable=True)
 
     # stats (denormalized for dashboard speed)

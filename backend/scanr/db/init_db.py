@@ -115,6 +115,14 @@ async def seed_plugins(session: AsyncSession) -> None:
         dict(id="services.ftp_cleartext", name="FTP Cleartext Protocol", category="services", default_severity="medium", description="Detect FTP services that transmit credentials without TLS encryption"),
         # Authenticated
         dict(id="authenticated.ssh_audit", name="Authenticated SSH System Audit", category="authenticated", default_severity="info", description="SSH into target and audit OS configuration and security posture", requires_auth=True),
+        # Web — attack surface plugins
+        dict(id="web.sqli_detect", name="SQL Injection (Error-Based)", category="web", default_severity="critical", description="Detect error-based SQL injection in URL parameters and login forms"),
+        dict(id="web.xss_detect", name="Reflected XSS", category="web", default_severity="high", description="Detect reflected cross-site scripting in URL parameters"),
+        dict(id="web.waf_detect", name="WAF / CDN Detection", category="web", default_severity="info", description="Detect web application firewalls and CDN proxies"),
+        dict(id="web.ssrf_detect", name="SSRF Detection", category="web", default_severity="high", description="Detect server-side request forgery via common URL-valued parameters"),
+        dict(id="web.broken_access_control", name="Broken Access Control", category="web", default_severity="high", description="Detect admin/management pages accessible without authentication"),
+        # Network
+        dict(id="network.subdomain_enum", name="Subdomain Enumeration", category="network", default_severity="info", description="Brute-force DNS subdomains for the target hostname"),
     ]
 
     for p in BUILTIN_PLUGINS:

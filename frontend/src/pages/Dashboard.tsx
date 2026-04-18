@@ -5,6 +5,7 @@ import { analyticsApi } from '@/api/analytics'
 import SeverityDonut from '@/components/charts/SeverityDonut'
 import FindingsTimeline from '@/components/charts/FindingsTimeline'
 import TopVulnerableHosts from '@/components/charts/TopVulnerableHosts'
+import ScanActivityHeatmap from '@/components/charts/ScanActivityHeatmap'
 
 export default function Dashboard() {
   const { data: stats } = useQuery({
@@ -30,6 +31,11 @@ export default function Dashboard() {
   const { data: topHosts = [] } = useQuery({
     queryKey: ['analytics', 'top-vulnerable-hosts'],
     queryFn: () => analyticsApi.topVulnerableHosts(10),
+    refetchInterval: 60_000,
+  })
+  const { data: scanActivity = [] } = useQuery({
+    queryKey: ['analytics', 'scan-activity'],
+    queryFn: () => analyticsApi.scanActivity(30),
     refetchInterval: 60_000,
   })
 
@@ -71,10 +77,18 @@ export default function Dashboard() {
         </div>
       </div>
 
-      <div className="bg-white border border-gray-200 rounded-xl p-4">
-        <h3 className="text-sm font-semibold text-gray-700 mb-3">Top Vulnerable Hosts</h3>
-        <div className="h-56">
-          <TopVulnerableHosts data={topHosts} />
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <div className="bg-white border border-gray-200 rounded-xl p-4">
+          <h3 className="text-sm font-semibold text-gray-700 mb-3">Top Vulnerable Hosts</h3>
+          <div className="h-56">
+            <TopVulnerableHosts data={topHosts} />
+          </div>
+        </div>
+        <div className="bg-white border border-gray-200 rounded-xl p-4">
+          <h3 className="text-sm font-semibold text-gray-700 mb-3">Scan Activity (30 days)</h3>
+          <div className="h-56">
+            <ScanActivityHeatmap data={scanActivity} />
+          </div>
         </div>
       </div>
 
