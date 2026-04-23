@@ -1,21 +1,25 @@
 /**
- * ScanDetail — slide-over panel with tabs:
- *   Console     — live WebSocket log feed (always visible while running)
- *   Findings    — vulnerability findings table with triage
- *   Hosts       — discovered hosts with ports/services
- *   Screenshots — Aquatone-style screenshot gallery
+ * ScanDetail — full-page scan view
+ * Tabs: Console | Findings | Hosts | Topology | Screenshots | Exclusions
  */
-import { useState, useRef, useEffect } from 'react'
+import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { X, RefreshCw, Terminal, AlertTriangle, Camera, Server, CheckSquare, Square, Shield, Trash2, Network } from 'lucide-react'
+import {
+  X, RefreshCw, Terminal, AlertTriangle, Camera, Server, Network, Shield,
+  ChevronLeft, GitCompare, StopCircle, CheckSquare, Square,
+  ExternalLink, Copy,
+} from 'lucide-react'
 import { scansApi } from '@/api/scans'
 import { findingsApi, type Finding } from '@/api/findings'
 import api from '@/api/client'
 import ScanConsole from '@/components/ScanConsole'
 import ScreenshotGallery from '@/components/ScreenshotGallery'
-import SeverityBadge from '@/components/SeverityBadge'
+import ScanDelta from '@/pages/ScanDelta'
 import { useScanConsole } from '@/hooks/useScanConsole'
 import NetworkTopology from '@/components/NetworkTopology'
+import {
+  StatusPill, SevTag, Meter, relTime, fmtDuration,
+} from '@/components/ui'
 
 interface Props {
   scanId: string
@@ -24,38 +28,28 @@ interface Props {
 
 type Tab = 'console' | 'findings' | 'hosts' | 'topology' | 'screenshots' | 'exclusions'
 
-interface PortService {
-  name?: string
-  product?: string
-  version?: string
-  extra_info?: string
-}
-
 interface ScannedPort {
-  id: string
-  number: number
-  protocol: string
-  state: string
-  service?: PortService
+  id: string; number: number; protocol: string; state: string
+  service?: { name?: string; product?: string; version?: string; extra_info?: string }
 }
 
 interface ScannedHost {
-  id: string
-  ip: string
-  hostname?: string
-  os_name?: string
-  status: string
+  id: string; ip: string; hostname?: string; os_name?: string; status: string
   ports?: ScannedPort[]
 }
 
 export default function ScanDetail({ scanId, onBack }: Props) {
   const [tab, setTab] = useState<Tab>('console')
   const [highlightHostIp, setHighlightHostIp] = useState<string | null>(null)
+  const [showDelta, setShowDelta] = useState(false)
+  const qc = useQueryClient()
 
-  function goToHost(ip: string) {
-    setHighlightHostIp(ip)
-    setTab('hosts')
-  }
+  function goToHost(ip: string) { setHighlightHostIp(ip); setTab('hosts') }
+
+  const cancelMut = useMutation({
+    mutationFn: () => scansApi.cancel(scanId),
+    onSuccess: () => { refetch(); qc.invalidateQueries({ queryKey: ['scans'] }) },
+  })
 
   const { data: scan, refetch } = useQuery({
     queryKey: ['scan', scanId],
@@ -66,9 +60,8 @@ export default function ScanDetail({ scanId, onBack }: Props) {
   const { data: findings = [] } = useQuery({
     queryKey: ['findings', scanId],
     queryFn: () => findingsApi.list({ scan_id: scanId }),
-    // Poll during scan so findings show live
     refetchInterval: scan?.status === 'running' ? 10_000 : false,
-    enabled: scan?.status === 'completed' || scan?.status === 'failed' || scan?.status === 'running',
+    enabled: ['completed', 'failed', 'running'].includes(scan?.status ?? ''),
   })
 
   const { data: hosts = [], isLoading: hostsLoading } = useQuery<ScannedHost[]>({
@@ -78,440 +71,522 @@ export default function ScanDetail({ scanId, onBack }: Props) {
     refetchInterval: scan?.status === 'running' ? 10_000 : false,
   })
 
-  const { events, connected, scanStatus } = useScanConsole(
-    scan ? scanId : null   // always connect to get history replay for completed scans
-  )
-
-  const isActive = scan?.status === 'running' || scan?.status === 'pending'
+  const { events, connected, scanStatus } = useScanConsole(scan ? scanId : null)
+  const isActive = ['running', 'pending'].includes(scan?.status ?? '')
   const isPending = scan?.status === 'pending'
 
+  const totalFindings = (scan?.findings_critical ?? 0) + (scan?.findings_high ?? 0) + (scan?.findings_medium ?? 0) + (scan?.findings_low ?? 0) + (scan?.findings_info ?? 0)
+
   return (
-    <div className="h-full flex flex-col bg-gray-950 overflow-hidden">
-        {/* Header */}
-        <div className="flex items-center gap-3 px-6 py-4 bg-gray-900 border-b border-gray-800 flex-shrink-0">
-          <button onClick={onBack} className="p-2 text-gray-500 hover:text-gray-300 rounded" title="Back to scans">
-            <X size={18} />
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0, background: 'var(--bg-0)' }}>
+      {showDelta && scan && (
+        <ScanDelta scanId={scanId} scanName={scan.name} onClose={() => setShowDelta(false)} />
+      )}
+      {/* Header */}
+      <div style={{ padding: '14px 20px 12px', borderBottom: '1px solid var(--border)', background: 'var(--bg-1)', flexShrink: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+          <button className="btn btn-ghost btn-sm" onClick={onBack}>
+            <ChevronLeft size={13} /> Back
           </button>
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2">
-              <h2 className="text-white font-semibold text-lg truncate">{scan?.name ?? '…'}</h2>
+          <span className="mono dim" style={{ fontSize: 11 }}>{scanId.slice(0, 8)}</span>
+          <div style={{ flex: 1 }} />
+          {isActive && (
+            <button className="btn btn-danger btn-sm" onClick={() => cancelMut.mutate()} disabled={cancelMut.isPending}>
+              <StopCircle size={11} /> {cancelMut.isPending ? 'Cancelling…' : 'Cancel'}
+            </button>
+          )}
+          {!isActive && scan?.status === 'completed' && (
+            <button className="btn btn-sm" onClick={() => setShowDelta(true)}><GitCompare size={12} /> Compare</button>
+          )}
+          <button className="btn btn-sm" onClick={() => refetch()}>
+            <RefreshCw size={12} /> Refresh
+          </button>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 16 }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
+              <h1 style={{ margin: 0, fontSize: 20, fontWeight: 600 }}>{scan?.name ?? '…'}</h1>
               {scan && <StatusPill status={scan.status} />}
             </div>
-            <div className="text-xs text-gray-500 mt-0.5 font-mono">{scan?.id}</div>
+            <div className="mono dim" style={{ fontSize: 11.5 }}>
+              profile: {scan?.profile}
+            </div>
           </div>
-          <button onClick={() => refetch()} className="p-2 text-gray-500 hover:text-gray-300 rounded" title="Refresh">
-            <RefreshCw size={15} />
-          </button>
-        </div>
-
-        {/* Stats bar */}
-        {scan && (
-          <div className="flex gap-6 px-6 py-3 bg-gray-900 border-b border-gray-800 text-sm flex-shrink-0 flex-wrap">
-            <Stat label="Hosts" value={`${scan.hosts_up ?? 0}/${scan.hosts_total ?? 0}`} />
-            <Stat label="Critical" value={scan.findings_critical ?? 0} color="text-red-400" />
-            <Stat label="High" value={scan.findings_high ?? 0} color="text-orange-400" />
-            <Stat label="Medium" value={scan.findings_medium ?? 0} color="text-yellow-400" />
-            <Stat label="Low" value={scan.findings_low ?? 0} color="text-green-400" />
-            <Stat label="Info" value={scan.findings_info ?? 0} color="text-blue-400" />
-            {scan.started_at && (
-              <Stat label="Started" value={new Date(scan.started_at).toLocaleTimeString()} />
-            )}
-            {scan.finished_at && (
-              <Stat label="Duration" value={duration(scan.started_at ?? undefined, scan.finished_at ?? undefined)} />
-            )}
+          <div style={{ display: 'flex', gap: 20, flexShrink: 0 }}>
+            <DStat label="Hosts up" value={`${scan?.hosts_up ?? 0}/${scan?.hosts_total ?? 0}`} />
+            <DStat label="Findings" value={totalFindings} />
+            <DStat label="Duration" value={fmtDuration((scan as any)?.duration_s)} />
+            <DStat label="Started" value={relTime(scan?.started_at)} />
           </div>
-        )}
-
-        {/* Tabs */}
-        <div className="flex border-b border-gray-800 bg-gray-900 flex-shrink-0">
-          <TabBtn active={tab === 'console'} onClick={() => setTab('console')} icon={<Terminal size={13} />} label="Console" badge={isActive ? '●' : undefined} badgeClass="text-emerald-400" />
-          <TabBtn active={tab === 'findings'} onClick={() => setTab('findings')} icon={<AlertTriangle size={13} />} label="Findings" badge={findings.length > 0 ? String(findings.length) : undefined} />
-          <TabBtn active={tab === 'hosts'} onClick={() => setTab('hosts')} icon={<Server size={13} />} label="Hosts" badge={scan ? String(scan.hosts_up) : undefined} />
-          <TabBtn active={tab === 'topology'} onClick={() => setTab('topology')} icon={<Network size={13} />} label="Topology" badge={hosts.length > 0 ? String(hosts.length) : undefined} />
-          <TabBtn active={tab === 'screenshots'} onClick={() => setTab('screenshots')} icon={<Camera size={13} />} label="Screenshots" />
-          {isPending && <TabBtn active={tab === 'exclusions'} onClick={() => setTab('exclusions')} icon={<Shield size={13} />} label="Exclusions" />}
         </div>
-
-        {/* Body */}
-        <div className="flex-1 overflow-hidden flex flex-col min-h-0">
-          {tab === 'console' && (
-            <div className="flex-1 p-4 min-h-0">
-              <ScanConsole events={events} connected={connected} scanStatus={scanStatus} />
-            </div>
-          )}
-          {tab === 'findings' && (
-            <div className="flex-1 overflow-y-auto">
-              {findings.length > 0 ? (
-                <FindingsList findings={findings} scanId={scanId} onGoToHost={goToHost} />
-              ) : (
-                <div className="flex items-center justify-center h-32 text-gray-600 text-sm">
-                  {scan?.status === 'running' ? 'Scan running — findings will appear here as discovered' : scan?.status === 'pending' ? 'Scan not started yet' : 'No findings recorded'}
-                </div>
-              )}
-            </div>
-          )}
-          {tab === 'hosts' && (
-            <div className="flex-1 overflow-y-auto">
-              {hostsLoading
-                ? <div className="flex items-center justify-center h-32 text-gray-500 text-sm">Loading hosts…</div>
-                : <HostsList hosts={hosts} highlightIp={highlightHostIp} />}
-            </div>
-          )}
-          {tab === 'topology' && (
-            <div className="flex-1 p-4 min-h-0">
-              {hostsLoading
-                ? <div className="flex items-center justify-center h-full text-gray-500 text-sm">Loading topology…</div>
-                : <NetworkTopology
-                    hosts={hosts}
-                    findingsByHost={Object.fromEntries(
-                      hosts.map((h) => [h.ip, findings.filter(f => f.host_ip === h.ip)])
-                    )}
-                  />}
-            </div>
-          )}
-          {tab === 'screenshots' && (
-            <div className="flex-1 overflow-y-auto">
-              <ScreenshotGallery scanId={scanId} />
-            </div>
-          )}
-          {tab === 'exclusions' && (
-            <div className="flex-1 overflow-y-auto">
-              <ExclusionsPanel scanId={scanId} />
-            </div>
-          )}
-        </div>
-    </div>
-  )
-}
-
-function TabBtn({ active, onClick, icon, label, badge, badgeClass = 'text-gray-400' }: {
-  active: boolean; onClick: () => void; icon: React.ReactNode
-  label: string; badge?: string; badgeClass?: string
-}) {
-  return (
-    <button
-      onClick={onClick}
-      className={`flex items-center gap-1.5 px-5 py-2.5 text-sm font-medium border-b-2 transition-colors ${
-        active
-          ? 'border-blue-500 text-white'
-          : 'border-transparent text-gray-500 hover:text-gray-300'
-      }`}
-    >
-      {icon}
-      {label}
-      {badge && <span className={`ml-1 text-xs ${badgeClass}`}>{badge}</span>}
-    </button>
-  )
-}
-
-function Stat({ label, value, color = 'text-white' }: { label: string; value: string | number; color?: string }) {
-  return (
-    <div className="text-center">
-      <div className={`font-bold font-mono ${color}`}>{value}</div>
-      <div className="text-xs text-gray-500">{label}</div>
-    </div>
-  )
-}
-
-function StatusPill({ status }: { status: string }) {
-  const c: Record<string, string> = {
-    running:   'bg-yellow-500/20 text-yellow-400 border border-yellow-500/30',
-    completed: 'bg-green-500/20 text-green-400 border border-green-500/30',
-    failed:    'bg-red-500/20 text-red-400 border border-red-500/30',
-    pending:   'bg-blue-500/20 text-blue-400 border border-blue-500/30',
-    cancelled: 'bg-gray-700/50 text-gray-400 border border-gray-600/30',
-  }
-  return (
-    <span className={`px-2 py-0.5 rounded text-xs font-medium ${c[status] ?? c.cancelled}`}>
-      {status}
-    </span>
-  )
-}
-
-function sdSafeParse(s: string | null): string[] {
-  if (!s) return []
-  try { return JSON.parse(s) } catch { return [] }
-}
-
-function FindingsList({ findings, scanId, onGoToHost }: { findings: Finding[]; scanId: string; onGoToHost: (ip: string) => void }) {
-  const qc = useQueryClient()
-  const [selected, setSelected] = useState<Set<string>>(new Set())
-  const [detailFinding, setDetailFinding] = useState<Finding | null>(null)
-  const [filter, setFilter] = useState<'all' | 'open' | 'false_positive' | 'accepted_risk'>('all')
-
-  const updateMut = useMutation({
-    mutationFn: ({ id, data }: { id: string; data: Parameters<typeof findingsApi.update>[1] }) =>
-      findingsApi.update(id, data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['findings', scanId] }),
-  })
-
-  const bulkMut = useMutation({
-    mutationFn: (data: { false_positive?: boolean; remediation_status?: string }) =>
-      findingsApi.bulkUpdate([...selected], data),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['findings', scanId] })
-      setSelected(new Set())
-    },
-  })
-
-  const toggleSelect = (id: string) => {
-    setSelected(prev => {
-      const next = new Set(prev)
-      next.has(id) ? next.delete(id) : next.add(id)
-      return next
-    })
-  }
-
-  const filteredFindings = findings.filter(f => {
-    if (filter === 'open') return !f.false_positive && f.remediation_status === 'open'
-    if (filter === 'false_positive') return f.false_positive
-    if (filter === 'accepted_risk') return f.remediation_status === 'accepted_risk'
-    return true
-  })
-
-  if (findings.length === 0) {
-    return <div className="flex items-center justify-center h-32 text-gray-600">No findings recorded</div>
-  }
-
-  return (
-    <div>
-      {/* Filter + bulk action bar */}
-      <div className="flex items-center gap-3 px-4 py-2 bg-gray-900 border-b border-gray-800 flex-wrap sticky top-0">
-        <div className="flex gap-1">
-          {(['all', 'open', 'false_positive', 'accepted_risk'] as const).map(f => (
-            <button
-              key={f}
-              onClick={() => setFilter(f)}
-              className={`px-2 py-1 text-xs rounded transition-colors ${filter === f ? 'bg-gray-700 text-white' : 'text-gray-500 hover:text-gray-300'}`}
-            >
-              {f === 'all' ? 'All' : f === 'false_positive' ? 'False Positive' : f === 'accepted_risk' ? 'Accepted Risk' : 'Open'}
-            </button>
-          ))}
-        </div>
-
-        {selected.size > 0 && (
-          <div className="flex items-center gap-2 ml-2 border-l border-gray-700 pl-3">
-            <span className="text-xs text-gray-400">{selected.size} selected</span>
-            <button
-              onClick={() => bulkMut.mutate({ false_positive: true })}
-              disabled={bulkMut.isPending}
-              className="text-xs px-2 py-1 bg-orange-500/20 text-orange-400 rounded hover:bg-orange-500/30"
-            >
-              Mark FP
-            </button>
-            <button
-              onClick={() => bulkMut.mutate({ remediation_status: 'accepted_risk' })}
-              disabled={bulkMut.isPending}
-              className="text-xs px-2 py-1 bg-gray-600/50 text-gray-300 rounded hover:bg-gray-600"
-            >
-              Accept Risk
-            </button>
-            <button onClick={() => setSelected(new Set())} className="text-xs text-gray-500 hover:text-gray-300">
-              Clear
-            </button>
+        {scan?.status === 'running' && (
+          <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 10 }}>
+            <Meter value={(scan as any)?.progress ?? 0.5} color="var(--accent-2)" />
           </div>
         )}
       </div>
 
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="bg-gray-900 border-b border-gray-800">
-            <th className="px-2 py-2 w-8" />
-            {['Severity', 'Title', 'Host', 'Port', 'Status'].map(h => (
-              <th key={h} className="px-4 py-2 text-left text-xs font-medium text-gray-500">{h}</th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {filteredFindings.map((f, i) => (
-            <tr
-              key={f.id ?? i}
-              onClick={() => setDetailFinding(f)}
-              className={`border-b border-gray-800 hover:bg-gray-900/50 cursor-pointer ${f.false_positive ? 'opacity-50' : ''}`}
-            >
-              <td className="px-2 py-2 text-center">
-                <button onClick={() => toggleSelect(f.id)} className="text-gray-600 hover:text-gray-300">
-                  {selected.has(f.id) ? <CheckSquare size={14} className="text-blue-400" /> : <Square size={14} />}
-                </button>
-              </td>
-              <td className="px-4 py-2"><SeverityBadge severity={f.severity} /></td>
-              <td className="px-4 py-2 text-gray-200 max-w-xs">
-                <div className="truncate">{f.title}</div>
-                {f.false_positive && <span className="text-xs text-orange-400">FP</span>}
-              </td>
-              <td className="px-4 py-2 font-mono text-xs" onClick={e => e.stopPropagation()}>
-                {f.host_ip
-                  ? <button onClick={() => onGoToHost(f.host_ip!)} className="text-blue-400 hover:text-blue-300 hover:underline">{f.host_ip}</button>
-                  : <span className="text-gray-500">—</span>}
-              </td>
-              <td className="px-4 py-2 text-gray-400 font-mono text-xs">{f.port_number ?? '—'}</td>
-              <td className="px-4 py-2" onClick={e => e.stopPropagation()}>
-                <select
-                  value={f.remediation_status}
-                  onChange={e => updateMut.mutate({ id: f.id, data: { remediation_status: e.target.value } })}
-                  className="text-xs bg-gray-800 border border-gray-700 rounded px-1 py-0.5 text-gray-300"
-                >
-                  <option value="open">Open</option>
-                  <option value="accepted_risk">Accepted</option>
-                  <option value="resolved">Resolved</option>
-                </select>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      {/* Tabs */}
+      <div className="tabs">
+        <TabBtn active={tab === 'console'} onClick={() => setTab('console')} icon={<Terminal size={12}/>} label="Console" count={events.length || undefined} liveColor={isActive ? 'var(--accent-2)' : undefined} />
+        <TabBtn active={tab === 'findings'} onClick={() => setTab('findings')} icon={<AlertTriangle size={12}/>} label="Findings" count={findings.length || undefined} />
+        <TabBtn active={tab === 'hosts'} onClick={() => setTab('hosts')} icon={<Server size={12}/>} label="Hosts" count={hosts.length || undefined} />
+        <TabBtn active={tab === 'topology'} onClick={() => setTab('topology')} icon={<Network size={12}/>} label="Topology" />
+        <TabBtn active={tab === 'screenshots'} onClick={() => setTab('screenshots')} icon={<Camera size={12}/>} label="Screenshots" />
+        {isPending && <TabBtn active={tab === 'exclusions'} onClick={() => setTab('exclusions')} icon={<Shield size={12}/>} label="Exclusions" />}
+      </div>
 
-      {detailFinding && (
-        <div className="fixed right-0 top-0 h-full w-96 bg-gray-800 border-l border-gray-700 overflow-y-auto z-50 p-5 shadow-2xl">
-          <div className="flex items-center gap-2 mb-3">
-            <SeverityBadge severity={detailFinding.severity} />
-            <button onClick={() => setDetailFinding(null)} className="ml-auto text-gray-400 hover:text-gray-200 text-xl leading-none">×</button>
+      {/* Content */}
+      <div style={{ flex: 1, minHeight: 0, overflow: 'auto', display: 'flex', flexDirection: 'column' }}>
+        {tab === 'console' && (
+          <div style={{ flex: 1, padding: 20, display: 'flex', flexDirection: 'column', gap: 12, minHeight: 0 }}>
+            <ScanConsole events={events} connected={connected} scanStatus={scanStatus} />
           </div>
-          <h2 className="font-semibold text-white text-sm mb-1">{detailFinding.title}</h2>
-          <p className="text-xs text-gray-500 font-mono mb-3">{detailFinding.plugin_id}</p>
-          {detailFinding.cvss_score != null && (
-            <p className="text-xs text-gray-400 mb-3">CVSS: {detailFinding.cvss_score.toFixed(1)}</p>
-          )}
-          {detailFinding.description && (
-            <><p className="text-xs font-semibold text-gray-500 uppercase mb-1">Description</p>
-            <p className="text-sm text-gray-300 mb-3">{detailFinding.description}</p></>
-          )}
-          {detailFinding.evidence && (
-            <><p className="text-xs font-semibold text-gray-500 uppercase mb-1">Evidence</p>
-            <pre className="bg-gray-900 text-gray-100 rounded p-3 text-xs overflow-auto mb-3 whitespace-pre-wrap">{detailFinding.evidence}</pre></>
-          )}
-          {detailFinding.remediation && (
-            <><p className="text-xs font-semibold text-gray-500 uppercase mb-1">Remediation</p>
-            <div className="bg-green-900/30 border-l-4 border-green-600 px-3 py-2 text-sm text-green-300 mb-3">{detailFinding.remediation}</div></>
-          )}
-          {sdSafeParse(detailFinding.cve_ids).length > 0 && (
-            <><p className="text-xs font-semibold text-gray-500 uppercase mb-1">CVE IDs</p>
-            <div className="flex flex-wrap gap-1 mb-3">
-              {sdSafeParse(detailFinding.cve_ids).map(id => (
-                <span key={id} className="text-xs font-mono bg-red-900/40 text-red-300 px-1.5 py-0.5 rounded">{id}</span>
-              ))}
-            </div></>
-          )}
-          {sdSafeParse(detailFinding.mitre_tags).length > 0 && (
-            <><p className="text-xs font-semibold text-gray-500 uppercase mb-1">MITRE ATT&amp;CK</p>
-            <div className="flex flex-wrap gap-1 mb-3">
-              {sdSafeParse(detailFinding.mitre_tags).map(t => (
-                <span key={t} className="text-xs font-mono bg-orange-900/40 text-orange-300 px-1.5 py-0.5 rounded">{t}</span>
-              ))}
-            </div></>
-          )}
-          {sdSafeParse(detailFinding.compliance_tags).length > 0 && (
-            <><p className="text-xs font-semibold text-gray-500 uppercase mb-1">Compliance</p>
-            <div className="flex flex-wrap gap-1 mb-3">
-              {sdSafeParse(detailFinding.compliance_tags).map(t => (
-                <span key={t} className="text-xs font-mono bg-blue-900/40 text-blue-300 px-1.5 py-0.5 rounded">{t}</span>
-              ))}
-            </div></>
-          )}
-          {sdSafeParse(detailFinding.references).length > 0 && (
-            <><p className="text-xs font-semibold text-gray-500 uppercase mb-1">References</p>
-            <div className="space-y-1 mb-3">
-              {sdSafeParse(detailFinding.references).map(url => (
-                <a key={url} href={url} target="_blank" rel="noreferrer"
-                  className="text-xs text-blue-400 hover:underline block truncate">{url}</a>
-              ))}
-            </div></>
+        )}
+        {tab === 'findings' && (
+          <FindingsTab findings={findings} scanId={scanId} onGoToHost={goToHost} />
+        )}
+        {tab === 'hosts' && (
+          <HostsTab hosts={hosts} loading={hostsLoading} highlightIp={highlightHostIp} findings={findings} />
+        )}
+        {tab === 'topology' && (
+          <div style={{ flex: 1, padding: 20, minHeight: 0 }}>
+            {hostsLoading
+              ? <div style={{ textAlign: 'center', color: 'var(--text-3)', padding: 40 }}>Loading…</div>
+              : <NetworkTopology
+                  hosts={hosts}
+                  findingsByHost={Object.fromEntries(hosts.map(h => [h.ip, findings.filter(f => f.host_ip === h.ip)]))}
+                />
+            }
+          </div>
+        )}
+        {tab === 'screenshots' && <ScreenshotGallery scanId={scanId} />}
+        {tab === 'exclusions' && <ExclusionsPanel scanId={scanId} />}
+      </div>
+    </div>
+  )
+}
+
+function TabBtn({ active, onClick, icon, label, count, liveColor }: {
+  active: boolean; onClick: () => void; icon: React.ReactNode
+  label: string; count?: number; liveColor?: string
+}) {
+  return (
+    <button className={`tab ${active ? 'active' : ''}`} onClick={onClick}>
+      {liveColor
+        ? <span className="live-dot" style={{ width: 5, height: 5, boxShadow: 'none', background: liveColor }} />
+        : icon
+      }
+      {label}
+      {count != null && <span className="count">{count}</span>}
+    </button>
+  )
+}
+
+function DStat({ label, value }: { label: string; value: string | number }) {
+  return (
+    <div style={{ textAlign: 'right' }}>
+      <div className="panel-title" style={{ fontSize: 9.5 }}>{label}</div>
+      <div className="mono" style={{ fontSize: 14, fontWeight: 500, color: 'var(--text-0)', marginTop: 2 }}>{value ?? '—'}</div>
+    </div>
+  )
+}
+
+/* ── Findings tab ──────────────────────────────────────────── */
+function FindingsTab({ findings, scanId, onGoToHost }: { findings: Finding[]; scanId: string; onGoToHost: (ip: string) => void }) {
+  const qc = useQueryClient()
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [detailFinding, setDetailFinding] = useState<Finding | null>(null)
+  const [sevFilter, setSevFilter] = useState<string>('all')
+  const [triageFilter, setTriageFilter] = useState<'all' | 'open' | 'false_positive' | 'accepted_risk'>('all')
+
+  const updateMut = useMutation({
+    mutationFn: ({ id, data }: { id: string; data: any }) => findingsApi.update(id, data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['findings', scanId] }),
+  })
+
+  const bulkMut = useMutation({
+    mutationFn: (data: any) => findingsApi.bulkUpdate([...selected], data),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['findings', scanId] }); setSelected(new Set()) },
+  })
+
+  const toggle = (id: string) => setSelected(prev => {
+    const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next
+  })
+
+  const filtered = findings.filter(f => {
+    if (sevFilter !== 'all' && f.severity !== sevFilter) return false
+    if (triageFilter === 'open') return !f.false_positive && f.remediation_status === 'open'
+    if (triageFilter === 'false_positive') return f.false_positive
+    if (triageFilter === 'accepted_risk') return f.remediation_status === 'accepted_risk'
+    return true
+  })
+
+  const sevCounts: Record<string, number> = { all: findings.length }
+  findings.forEach(f => { sevCounts[f.severity] = (sevCounts[f.severity] ?? 0) + 1 })
+
+  if (findings.length === 0) {
+    return (
+      <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-3)', fontSize: 12.5 }}>
+        No findings recorded
+      </div>
+    )
+  }
+
+  return (
+    <div style={{ display: 'flex', height: '100%', minHeight: 0 }}>
+      <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+        {/* Filters */}
+        <div style={{ display: 'flex', gap: 6, padding: '10px 16px', borderBottom: '1px solid var(--border)', flexShrink: 0, flexWrap: 'wrap', alignItems: 'center', background: 'var(--bg-1)' }}>
+          {['all', 'critical', 'high', 'medium', 'low', 'info'].map(s => {
+            const n = sevCounts[s] ?? 0
+            return (
+              <button key={s} onClick={() => setSevFilter(s)} style={{
+                padding: '4px 10px', borderRadius: 6, fontSize: 11, textTransform: 'capitalize', cursor: 'pointer',
+                background: sevFilter === s ? 'var(--bg-3)' : 'transparent',
+                color: sevFilter === s ? 'var(--text-0)' : 'var(--text-2)',
+                border: '1px solid ' + (sevFilter === s ? 'var(--border-strong)' : 'transparent'),
+                display: 'inline-flex', alignItems: 'center', gap: 5,
+              }}>
+                {s !== 'all' && <span className="sev-bar" style={{ background: `var(--sev-${s})`, height: 10 }} />}
+                {s} <span className="mono dim" style={{ marginLeft: 2 }}>{n}</span>
+              </button>
+            )
+          })}
+          <div style={{ flex: 1 }} />
+          <div style={{ display: 'flex', gap: 4 }}>
+            {(['all', 'open', 'false_positive', 'accepted_risk'] as const).map(f => (
+              <button key={f} onClick={() => setTriageFilter(f)} style={{
+                padding: '4px 8px', borderRadius: 4, fontSize: 10.5, cursor: 'pointer',
+                background: triageFilter === f ? 'var(--bg-3)' : 'transparent',
+                color: triageFilter === f ? 'var(--text-0)' : 'var(--text-2)',
+                border: '1px solid ' + (triageFilter === f ? 'var(--border-strong)' : 'transparent'),
+              }}>
+                {f === 'false_positive' ? 'False Positive' : f === 'accepted_risk' ? 'Accepted Risk' : f === 'open' ? 'Open' : 'All'}
+              </button>
+            ))}
+          </div>
+          {selected.size > 0 && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, paddingLeft: 8, borderLeft: '1px solid var(--border)' }}>
+              <span className="dim" style={{ fontSize: 11 }}>{selected.size} selected</span>
+              <button className="btn btn-sm" onClick={() => bulkMut.mutate({ false_positive: true })}>Mark FP</button>
+              <button className="btn btn-sm" onClick={() => bulkMut.mutate({ remediation_status: 'accepted_risk' })}>Accept Risk</button>
+              <button className="btn btn-ghost btn-sm" onClick={() => setSelected(new Set())}><X size={11}/></button>
+            </div>
           )}
         </div>
+
+        {/* Table */}
+        <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
+          <table className="tbl">
+            <thead>
+              <tr>
+                <th style={{ width: 4 }}></th>
+                <th style={{ width: 28 }}></th>
+                <th>Severity</th>
+                <th>Title</th>
+                <th>Host</th>
+                <th>Port</th>
+                <th>Plugin</th>
+                <th>CVSS</th>
+                <th>CVE</th>
+                <th>Age</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map(f => (
+                <tr
+                  key={f.id}
+                  className={detailFinding?.id === f.id ? 'selected' : ''}
+                  style={{ opacity: f.false_positive ? 0.45 : 1 }}
+                  onClick={() => setDetailFinding(f)}
+                >
+                  <td style={{ padding: 0 }}>
+                    <span className={`sev-bar ${f.severity}`} style={{ height: 34, width: 3, display: 'block' }} />
+                  </td>
+                  <td onClick={e => e.stopPropagation()} style={{ textAlign: 'center' }}>
+                    <button onClick={() => toggle(f.id)} style={{ color: 'var(--text-3)', cursor: 'pointer', background: 'none', border: 'none' }}>
+                      {selected.has(f.id) ? <CheckSquare size={13} style={{ color: 'var(--accent)' }} /> : <Square size={13} />}
+                    </button>
+                  </td>
+                  <td><SevTag severity={f.severity} /></td>
+                  <td style={{ fontWeight: 500, maxWidth: 340, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {f.title}
+                    {f.false_positive && <span className="mono" style={{ fontSize: 9, color: 'var(--sev-medium)', marginLeft: 6 }}>FP</span>}
+                  </td>
+                  <td onClick={e => e.stopPropagation()}>
+                    {f.host_ip
+                      ? <button onClick={() => onGoToHost(f.host_ip!)} className="mono" style={{ color: 'var(--accent)', fontSize: 11.5, background: 'none', border: 'none', cursor: 'pointer' }}>{f.host_ip}</button>
+                      : <span className="dimmer">—</span>
+                    }
+                  </td>
+                  <td className="mono dim">{f.port_number ? `${f.port_number}/${f.protocol ?? 'tcp'}` : '—'}</td>
+                  <td className="mono dim" style={{ fontSize: 11 }}>{f.plugin_id}</td>
+                  <td className="mono" style={{
+                    fontWeight: 600,
+                    color: f.cvss_score != null && f.cvss_score >= 9 ? 'var(--sev-critical)' : f.cvss_score != null && f.cvss_score >= 7 ? 'var(--sev-high)' : 'var(--text-1)',
+                  }}>
+                    {f.cvss_score?.toFixed(1) ?? '—'}
+                  </td>
+                  <td>
+                    {(() => {
+                      const ids = f.cve_ids ? (() => { try { return JSON.parse(f.cve_ids!) } catch { return [] } })() : []
+                      return ids.length > 0
+                        ? <span className="mono" style={{ fontSize: 10, padding: '1px 5px', borderRadius: 3, background: 'oklch(0.68 0.21 27 / 0.12)', color: 'var(--sev-high)', border: '1px solid oklch(0.68 0.21 27 / 0.25)', whiteSpace: 'nowrap' }}>{ids[0]}</span>
+                        : <span className="dimmer">—</span>
+                    })()}
+                  </td>
+                  <td className="mono dim" style={{ fontSize: 11 }}>{relTime(f.created_at)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* Detail drawer */}
+      {detailFinding && (
+        <FindingDrawer
+          finding={detailFinding}
+          onClose={() => setDetailFinding(null)}
+          onUpdate={(data) => updateMut.mutate({ id: detailFinding.id, data })}
+        />
       )}
     </div>
   )
 }
 
-function HostsList({ hosts, highlightIp }: { hosts: ScannedHost[]; highlightIp?: string | null }) {
-  const [expandedId, setExpandedId] = useState<string | null>(null)
-  const highlightRef = useRef<HTMLTableRowElement | null>(null)
-
-  useEffect(() => {
-    if (highlightIp && highlightRef.current) {
-      highlightRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' })
-    }
-  }, [highlightIp])
-
-  if (hosts.length === 0) {
-    return <div className="flex items-center justify-center h-32 text-gray-600 text-sm">No hosts discovered</div>
+function FindingDrawer({ finding, onClose, onUpdate }: { finding: Finding; onClose: () => void; onUpdate: (d: any) => void }) {
+  function safeParse(s?: string | null): string[] {
+    if (!s) return []; try { return JSON.parse(s) } catch { return [] }
   }
+  const cves = safeParse((finding as any).cve_ids)
+  const mitre = safeParse((finding as any).mitre_tags)
+  const comp = safeParse((finding as any).compliance_tags)
+  const refs = safeParse((finding as any).references)
 
   return (
-    <table className="w-full text-sm">
-      <thead>
-        <tr className="bg-gray-900 border-b border-gray-800 sticky top-0">
-          {['IP', 'Hostname', 'OS', 'Open Ports', 'Status'].map(h => (
-            <th key={h} className="px-4 py-2 text-left text-xs font-medium text-gray-500">{h}</th>
-          ))}
-        </tr>
-      </thead>
-      <tbody>
-        {hosts.map(host => {
-          const isHighlighted = host.ip === highlightIp
-          return (
-          <>
-            <tr
-              key={host.id}
-              ref={isHighlighted ? highlightRef : null}
-              className={`border-b border-gray-800 cursor-pointer transition-colors ${isHighlighted ? 'bg-blue-900/30 border-l-2 border-l-blue-500' : 'hover:bg-gray-900'}`}
-              onClick={() => setExpandedId(expandedId === host.id ? null : host.id)}
-            >
-              <td className="px-4 py-2 font-mono text-blue-400 text-xs">{host.ip}</td>
-              <td className="px-4 py-2 text-gray-400 text-xs">{host.hostname ?? '—'}</td>
-              <td className="px-4 py-2 text-gray-500 text-xs truncate max-w-xs">{host.os_name ?? '—'}</td>
-              <td className="px-4 py-2 text-gray-300 font-mono text-xs">
-                {host.ports?.filter((p) => p.state === 'open').length ?? 0}
-              </td>
-              <td className="px-4 py-2">
-                <span className={`text-xs px-1.5 py-0.5 rounded ${host.status === 'up' ? 'bg-green-500/20 text-green-400' : 'bg-gray-700 text-gray-400'}`}>
-                  {host.status}
-                </span>
-              </td>
-            </tr>
-            {expandedId === host.id && (host.ports?.length ?? 0) > 0 && (
-              <tr key={`${host.id}-ports`} className="bg-gray-900/50 border-b border-gray-800">
-                <td colSpan={5} className="px-6 py-3">
-                  <div className="text-xs text-gray-500 mb-2 font-medium">Open Ports</div>
-                  <div className="flex flex-wrap gap-2">
-                    {(host.ports ?? [])
-                      .filter((p) => p.state === 'open')
-                      .map((p) => (
-                        <div key={p.id} className="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs">
-                          <span className="text-blue-400 font-mono">{p.number}/{p.protocol}</span>
-                          {p.service && (
-                            <span className="text-gray-400 ml-1">
-                              {[p.service.name, p.service.product, p.service.version].filter(Boolean).join(' ')}
-                            </span>
-                          )}
-                        </div>
-                      ))}
-                  </div>
-                </td>
-              </tr>
-            )}
-          </>
-        )})}
-      </tbody>
-    </table>
+    <div style={{ width: 420, flexShrink: 0, background: 'var(--bg-1)', borderLeft: '1px solid var(--border)', overflow: 'auto', minHeight: 0 }}>
+      {/* Sticky header */}
+      <div style={{ padding: '14px 18px', borderBottom: '1px solid var(--border)', position: 'sticky', top: 0, background: 'var(--bg-1)', zIndex: 1 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+          <SevTag severity={finding.severity} />
+          <span className="mono dim" style={{ fontSize: 10.5 }}>{finding.id.slice(0, 8)}</span>
+          <div style={{ flex: 1 }} />
+          <button className="btn btn-ghost btn-icon" onClick={onClose}><X size={14} /></button>
+        </div>
+        <h2 style={{ margin: 0, fontSize: 15, fontWeight: 600, lineHeight: 1.35 }}>{finding.title}</h2>
+        <div style={{ display: 'flex', gap: 16, marginTop: 10 }}>
+          {finding.cvss_score != null && (
+            <div>
+              <div className="panel-title" style={{ fontSize: 9.5 }}>CVSS</div>
+              <div className="mono" style={{
+                fontSize: 15, fontWeight: 700, marginTop: 2,
+                color: finding.cvss_score >= 9 ? 'var(--sev-critical)' : finding.cvss_score >= 7 ? 'var(--sev-high)' : finding.cvss_score >= 4 ? 'var(--sev-medium)' : 'var(--sev-low)',
+              }}>
+                {finding.cvss_score.toFixed(1)}
+              </div>
+            </div>
+          )}
+          <MiniField label="Host" value={finding.host_ip ?? '—'} mono accent />
+          <MiniField label="Port" value={finding.port_number ? `${finding.port_number}/${finding.protocol ?? 'tcp'}` : '—'} mono />
+          <MiniField label="Plugin" value={finding.plugin_id} mono small />
+        </div>
+      </div>
+
+      {/* Body */}
+      <div style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 16 }}>
+        <DrawerSection title="Description">
+          <p style={{ margin: 0, fontSize: 12.5, color: 'var(--text-1)', lineHeight: 1.55 }}>{finding.description}</p>
+        </DrawerSection>
+
+        {finding.evidence && (
+          <DrawerSection title="Evidence">
+            <pre className="mono" style={{
+              margin: 0, fontSize: 11, background: 'oklch(0.12 0.008 255)', color: 'var(--text-1)',
+              padding: 10, borderRadius: 6, border: '1px solid var(--border)',
+              whiteSpace: 'pre-wrap', overflow: 'auto', maxHeight: 200,
+            }}>{finding.evidence}</pre>
+          </DrawerSection>
+        )}
+
+        {finding.remediation && (
+          <DrawerSection title="Remediation">
+            <div style={{
+              padding: 10, fontSize: 12, lineHeight: 1.5, color: 'var(--text-1)',
+              background: 'oklch(0.75 0.15 145 / 0.08)',
+              border: '1px solid oklch(0.75 0.15 145 / 0.25)',
+              borderLeft: '3px solid var(--ok)', borderRadius: 4,
+            }}>
+              {finding.remediation}
+            </div>
+          </DrawerSection>
+        )}
+
+        {cves.length > 0 && (
+          <DrawerSection title="CVE IDs">
+            <TagRow items={cves} color="var(--sev-high)" />
+          </DrawerSection>
+        )}
+
+        {mitre.length > 0 && (
+          <DrawerSection title="MITRE ATT&CK">
+            <TagRow items={mitre} color="var(--accent-2)" />
+          </DrawerSection>
+        )}
+
+        {comp.length > 0 && (
+          <DrawerSection title="Compliance">
+            <TagRow items={comp} color="var(--accent)" />
+          </DrawerSection>
+        )}
+
+        {refs.length > 0 && (
+          <DrawerSection title="References">
+            {refs.map((u: string) => (
+              <a key={u} href={u} target="_blank" rel="noreferrer" style={{
+                display: 'flex', alignItems: 'center', gap: 6, fontSize: 11.5,
+                color: 'var(--accent)', padding: '4px 0', textDecoration: 'none',
+              }}>
+                <ExternalLink size={11} /> {u}
+              </a>
+            ))}
+          </DrawerSection>
+        )}
+
+        <div style={{ display: 'flex', gap: 6, paddingTop: 10, borderTop: '1px solid var(--border)' }}>
+          <button
+            className="btn btn-sm"
+            onClick={() => onUpdate({ false_positive: !finding.false_positive })}
+          >
+            {finding.false_positive ? 'Unmark FP' : 'Mark False Positive'}
+          </button>
+          <button
+            className="btn btn-sm"
+            onClick={() => onUpdate({ remediation_status: finding.remediation_status === 'accepted_risk' ? 'open' : 'accepted_risk' })}
+          >
+            {finding.remediation_status === 'accepted_risk' ? 'Reopen' : 'Accept Risk'}
+          </button>
+          <button className="btn btn-ghost btn-icon btn-sm" style={{ marginLeft: 'auto' }} title="Copy ID"
+            onClick={() => navigator.clipboard.writeText(finding.id)}>
+            <Copy size={11} />
+          </button>
+        </div>
+      </div>
+    </div>
   )
 }
 
+function DrawerSection({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div>
+      <div className="panel-title" style={{ fontSize: 10, marginBottom: 6 }}>{title}</div>
+      {children}
+    </div>
+  )
+}
+
+function TagRow({ items, color }: { items: string[]; color: string }) {
+  return (
+    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+      {items.map(i => (
+        <span key={i} className="mono" style={{
+          fontSize: 10.5, padding: '2px 7px', borderRadius: 3,
+          background: `color-mix(in oklch, ${color} 14%, transparent)`,
+          color, border: `1px solid color-mix(in oklch, ${color} 30%, transparent)`,
+        }}>{i}</span>
+      ))}
+    </div>
+  )
+}
+
+function MiniField({ label, value, mono, accent, small }: { label: string; value: string; mono?: boolean; accent?: boolean; small?: boolean }) {
+  return (
+    <div>
+      <div className="panel-title" style={{ fontSize: 9.5 }}>{label}</div>
+      <div className={mono ? 'mono' : ''} style={{ fontSize: small ? 11 : 12, color: accent ? 'var(--accent)' : 'var(--text-0)', marginTop: 2 }}>{value}</div>
+    </div>
+  )
+}
+
+/* ── Hosts tab ─────────────────────────────────────────────── */
+function HostsTab({ hosts, loading, highlightIp, findings }: {
+  hosts: ScannedHost[]; loading: boolean; highlightIp: string | null; findings: Finding[]
+}) {
+  if (loading) {
+    return <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-3)', fontSize: 12 }}>Loading hosts…</div>
+  }
+  const findingsPerHost = Object.fromEntries(
+    hosts.map(h => [h.ip, findings.filter(f => f.host_ip === h.ip)])
+  )
+  return (
+    <div style={{ padding: 20 }}>
+      <div className="panel" style={{ overflow: 'hidden' }}>
+        <table className="tbl">
+          <thead>
+            <tr>
+              <th style={{ width: 4 }}></th>
+              <th>Host</th>
+              <th>Hostname</th>
+              <th>OS</th>
+              <th>Open Ports</th>
+              <th>Findings</th>
+              <th>Severity</th>
+            </tr>
+          </thead>
+          <tbody>
+            {hosts.map(h => {
+              const hf = findingsPerHost[h.ip] ?? []
+              const maxSev = hf[0]?.severity ?? 'info'
+              const openPorts = (h.ports ?? []).filter(p => p.state === 'open')
+              const isHighlighted = h.ip === highlightIp
+              return (
+                <tr key={h.ip} style={{ background: isHighlighted ? 'var(--accent-soft)' : undefined }}>
+                  <td style={{ padding: 0 }}>
+                    <span className={`sev-bar ${maxSev}`} style={{ height: 26, width: 3, display: 'block' }} />
+                  </td>
+                  <td className="mono" style={{ color: 'var(--accent)', fontSize: 12 }}>{h.ip}</td>
+                  <td style={{ fontSize: 12.5 }}>{h.hostname ?? <span className="dimmer">—</span>}</td>
+                  <td className="dim" style={{ fontSize: 11.5 }}>{h.os_name ?? '—'}</td>
+                  <td className="mono" style={{ fontSize: 11, color: 'var(--text-1)' }}>
+                    {openPorts.slice(0, 6).map(p => (
+                      <span key={p.number} style={{ marginRight: 6 }}>
+                        {p.number}<span className="dim">/tcp</span>
+                      </span>
+                    ))}
+                    {openPorts.length > 6 && <span className="dim">+{openPorts.length - 6}</span>}
+                    {openPorts.length === 0 && <span className="dimmer">—</span>}
+                  </td>
+                  <td className="mono" style={{ fontSize: 12, fontWeight: 600, color: hf.length > 0 ? `var(--sev-${maxSev})` : 'var(--text-3)' }}>
+                    {hf.length}
+                  </td>
+                  <td>{hf.length > 0 ? <SevTag severity={maxSev} /> : <span className="dimmer">—</span>}</td>
+                </tr>
+              )
+            })}
+            {hosts.length === 0 && (
+              <tr><td colSpan={7} style={{ padding: '40px 20px', textAlign: 'center', color: 'var(--text-3)', fontSize: 12 }}>No hosts discovered</td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
+}
+
+/* ── Exclusions panel ──────────────────────────────────────── */
 function ExclusionsPanel({ scanId }: { scanId: string }) {
   const qc = useQueryClient()
-  const [type, setType] = useState('ip')
-  const [value, setValue] = useState('')
-  const [reason, setReason] = useState('')
-
-  interface Exclusion { id: string; type: string; value: string; reason?: string }
-  const { data: exclusions = [] } = useQuery<Exclusion[]>({
+  const { data: exclusions = [] } = useQuery({
     queryKey: ['exclusions', scanId],
     queryFn: () => api.get(`/scans/${scanId}/exclusions`).then(r => r.data),
   })
+  const [type, setType] = useState('ip')
+  const [value, setValue] = useState('')
 
   const addMut = useMutation({
-    mutationFn: () => api.post(`/scans/${scanId}/exclusions`, { type, value, reason: reason || undefined }),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['exclusions', scanId] }); setValue(''); setReason('') },
+    mutationFn: () => api.post(`/scans/${scanId}/exclusions`, { type, value }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['exclusions', scanId] }); setValue('') },
   })
   const delMut = useMutation({
     mutationFn: (id: string) => api.delete(`/scans/${scanId}/exclusions/${id}`),
@@ -519,60 +594,35 @@ function ExclusionsPanel({ scanId }: { scanId: string }) {
   })
 
   return (
-    <div className="p-4 space-y-4">
-      <p className="text-xs text-gray-500">Exclusions are applied at scan time — IPs, CIDRs, ports, or hostnames to skip entirely.</p>
-
-      {/* Add form */}
-      <div className="flex gap-2 flex-wrap">
-        <select value={type} onChange={e => setType(e.target.value)}
-          className="bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-300">
-          <option value="ip">IP</option>
-          <option value="cidr">CIDR</option>
-          <option value="port">Port</option>
-          <option value="host">Hostname</option>
-        </select>
-        <input value={value} onChange={e => setValue(e.target.value)}
-          placeholder={type === 'ip' ? '192.168.1.5' : type === 'cidr' ? '10.0.0.0/8' : type === 'port' ? '22' : 'evil.corp'}
-          className="bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-300 font-mono w-44"
-        />
-        <input value={reason} onChange={e => setReason(e.target.value)}
-          placeholder="Reason (optional)"
-          className="bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-300 flex-1 min-w-32"
-        />
-        <button
-          onClick={() => addMut.mutate()}
-          disabled={!value || addMut.isPending}
-          className="px-3 py-1.5 bg-blue-600 text-white text-xs rounded hover:bg-blue-700 disabled:opacity-50"
-        >
-          Add
-        </button>
-      </div>
-
-      {/* Exclusion list */}
-      {exclusions.length === 0 ? (
-        <p className="text-gray-600 text-xs text-center py-4">No exclusions — all targets will be scanned</p>
-      ) : (
-        <div className="space-y-1">
-          {exclusions.map((e) => (
-            <div key={e.id} className="flex items-center gap-3 bg-gray-800/50 border border-gray-700 rounded px-3 py-2">
-              <span className="text-xs bg-gray-700 text-gray-300 rounded px-1.5 py-0.5">{e.type}</span>
-              <span className="text-xs font-mono text-gray-200 flex-1">{e.value}</span>
-              {e.reason && <span className="text-xs text-gray-500 truncate max-w-48">{e.reason}</span>}
-              <button onClick={() => delMut.mutate(e.id)} className="text-gray-600 hover:text-red-400 ml-2">
-                <Trash2 size={12} />
-              </button>
-            </div>
-          ))}
+    <div style={{ padding: 20, maxWidth: 600 }}>
+      <div className="panel">
+        <div className="panel-head">
+          <span className="panel-title">Exclusions</span>
         </div>
-      )}
+        <div style={{ padding: 14, display: 'flex', gap: 8 }}>
+          <select className="select-field" style={{ width: 100 }} value={type} onChange={e => setType(e.target.value)}>
+            {['ip', 'cidr', 'port', 'host'].map(t => <option key={t} value={t}>{t}</option>)}
+          </select>
+          <input className="input" style={{ flex: 1 }} value={value} onChange={e => setValue(e.target.value)}
+            placeholder={type === 'ip' ? '192.168.1.5' : type === 'cidr' ? '10.0.0.0/8' : type === 'port' ? '22' : 'hostname'} />
+          <button className="btn btn-primary" disabled={!value} onClick={() => addMut.mutate()}>Add</button>
+        </div>
+        <table className="tbl">
+          <thead><tr><th>Type</th><th>Value</th><th></th></tr></thead>
+          <tbody>
+            {exclusions.map((e: any) => (
+              <tr key={e.id}>
+                <td><span className="pill" style={{ fontSize: 10 }}>{e.type}</span></td>
+                <td className="mono">{e.value}</td>
+                <td><button className="btn btn-ghost btn-icon" onClick={() => delMut.mutate(e.id)}><X size={12} /></button></td>
+              </tr>
+            ))}
+            {exclusions.length === 0 && (
+              <tr><td colSpan={3} style={{ padding: '20px', textAlign: 'center', color: 'var(--text-3)', fontSize: 12 }}>No exclusions</td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
     </div>
   )
-}
-
-function duration(start?: string, end?: string) {
-  if (!start || !end) return '—'
-  const s = Math.round((new Date(end).getTime() - new Date(start).getTime()) / 1000)
-  if (s < 60) return `${s}s`
-  if (s < 3600) return `${Math.floor(s / 60)}m ${s % 60}s`
-  return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`
 }

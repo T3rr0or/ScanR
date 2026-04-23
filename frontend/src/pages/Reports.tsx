@@ -1,8 +1,9 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Download } from 'lucide-react'
+import { Download, FileText } from 'lucide-react'
 import { reportsApi } from '@/api/reports'
 import { scansApi } from '@/api/scans'
+import { StatusPill, relTime, EmptyState } from '@/components/ui'
 
 const FORMATS = ['html', 'pdf', 'json', 'csv']
 
@@ -21,69 +22,96 @@ export default function Reports() {
   })
 
   return (
-    <div className="p-8">
-      <h1 className="text-2xl font-bold mb-6">Reports</h1>
-
-      <div className="bg-white border border-gray-200 rounded-xl p-5 mb-6">
-        <h2 className="font-semibold mb-3">Generate Report</h2>
-        <div className="flex gap-3 flex-wrap">
-          <select value={scanId} onChange={e => setScanId(e.target.value)}
-            className="border border-gray-300 rounded-lg px-3 py-2 text-sm flex-1 min-w-48">
-            <option value="">Select scan...</option>
-            {scans.map(s => <option key={s.id} value={s.id}>{s.name} ({s.status})</option>)}
-          </select>
-          <select value={format} onChange={e => setFormat(e.target.value)}
-            className="border border-gray-300 rounded-lg px-3 py-2 text-sm">
-            {FORMATS.map(f => <option key={f} value={f}>{f.toUpperCase()}</option>)}
-          </select>
-          <button
-            onClick={() => createMut.mutate()}
-            disabled={!scanId || createMut.isPending}
-            className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white px-4 py-2 rounded-lg text-sm font-medium"
-          >
-            {createMut.isPending ? 'Generating...' : 'Generate'}
-          </button>
-        </div>
+    <div style={{ padding: '24px 28px' }}>
+      {/* Header */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 24 }}>
+        <FileText size={18} style={{ color: 'var(--accent)' }} />
+        <h1 style={{ fontSize: 20, fontWeight: 700, color: 'var(--text-0)' }}>Reports</h1>
       </div>
 
-      <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="bg-gray-50 border-b border-gray-200">
-              {['ID', 'Scan', 'Format', 'Status', 'Created', 'Download'].map(h =>
-                <th key={h} className="px-4 py-3 text-left font-medium text-gray-600">{h}</th>
-              )}
-            </tr>
-          </thead>
-          <tbody>
-            {reports.map(r => (
-              <tr key={r.id} className="border-b border-gray-100 hover:bg-gray-50">
-                <td className="px-4 py-3 font-mono text-xs text-gray-400">{r.id.slice(0, 8)}</td>
-                <td className="px-4 py-3 text-gray-700">{scanMap[r.scan_id] ?? r.scan_id.slice(0, 8)}</td>
-                <td className="px-4 py-3 font-medium uppercase">{r.format}</td>
-                <td className="px-4 py-3">
-                  <span className={`px-2 py-0.5 rounded text-xs font-medium ${r.status === 'completed' ? 'bg-green-100 text-green-700' : r.status === 'failed' ? 'bg-red-100 text-red-700' : 'bg-yellow-100 text-yellow-700'}`}>
-                    {r.status}
-                  </span>
-                </td>
-                <td className="px-4 py-3 text-gray-500 text-xs">{new Date(r.created_at).toLocaleString()}</td>
-                <td className="px-4 py-3">
-                  {r.status === 'completed' && (
-                    <button
-                      onClick={() => reportsApi.download(r)}
-                      className="flex items-center gap-1 text-blue-600 hover:text-blue-700 text-xs font-medium"
-                    >
-                      <Download size={13} /> Download
-                    </button>
-                  )}
-                </td>
-              </tr>
-            ))}
-            {reports.length === 0 && (
-              <tr><td colSpan={6} className="px-4 py-8 text-center text-gray-400">No reports yet</td></tr>
-            )}
-          </tbody>
-        </table>
+      {/* Side-by-side layout */}
+      <div style={{ display: 'flex', gap: 20, alignItems: 'flex-start' }}>
+        {/* Report list — left, grows */}
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div className="panel" style={{ overflow: 'hidden' }}>
+            <table className="tbl">
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Scan</th>
+                  <th>Format</th>
+                  <th>Status</th>
+                  <th>Created</th>
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {reports.map(r => (
+                  <tr key={r.id}>
+                    <td className="mono dimmer" style={{ fontSize: 11 }}>{r.id.slice(0, 8)}</td>
+                    <td style={{ color: 'var(--text-0)', fontWeight: 500 }}>{scanMap[r.scan_id] ?? r.scan_id.slice(0, 8)}</td>
+                    <td className="mono" style={{ fontSize: 11, textTransform: 'uppercase', color: 'var(--accent)' }}>{r.format}</td>
+                    <td><StatusPill status={r.status} /></td>
+                    <td className="dimmer" style={{ fontSize: 11 }}>{relTime(r.created_at)}</td>
+                    <td style={{ textAlign: 'right' }}>
+                      {r.status === 'completed' && (
+                        <button
+                          onClick={() => reportsApi.download(r)}
+                          className="btn btn-ghost btn-sm"
+                          style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}
+                        >
+                          <Download size={12} /> Download
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+                {reports.length === 0 && (
+                  <EmptyState icon={<FileText size={28} />} message="No reports yet" />
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {/* Generate panel — right, fixed width */}
+        <div className="panel" style={{ width: 260, flexShrink: 0 }}>
+          <div className="panel-head">
+            <span className="panel-title">Generate Report</span>
+          </div>
+          <div style={{ padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <div>
+              <label className="label">Scan</label>
+              <select value={scanId} onChange={e => setScanId(e.target.value)} className="select-field">
+                <option value="">Select scan…</option>
+                {scans.map(s => <option key={s.id} value={s.id}>{s.name} ({s.status})</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="label">Format</label>
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                {FORMATS.map(f => (
+                  <button
+                    key={f}
+                    onClick={() => setFormat(f)}
+                    className={`btn btn-sm ${format === f ? 'btn-primary' : 'btn-ghost'}`}
+                    style={{ fontSize: 11, textTransform: 'uppercase' }}
+                  >
+                    {f}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <button
+              onClick={() => createMut.mutate()}
+              disabled={!scanId || createMut.isPending}
+              className="btn btn-primary btn-sm"
+              style={{ marginTop: 4 }}
+            >
+              {createMut.isPending ? 'Generating…' : 'Generate'}
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   )

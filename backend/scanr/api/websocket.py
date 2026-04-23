@@ -12,9 +12,10 @@ import asyncio
 import json
 import logging
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 from sqlalchemy import select
 
+from scanr.auth.jwt_handler import decode_token
 from scanr.config import get_settings
 from scanr.db.session import AsyncSessionLocal
 from scanr.models import Scan
@@ -22,26 +23,49 @@ from scanr.models import Scan
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["websocket"])
 
+_HISTORY_LIMIT = 2000  # max events replayed on connect
+
 
 @router.websocket("/ws/scans/{scan_id}/progress")
-async def scan_progress_ws(websocket: WebSocket, scan_id: str):
+async def scan_progress_ws(
+    websocket: WebSocket,
+    scan_id: str,
+    token: str | None = Query(None),
+):
     await websocket.accept()
 
-    # Send current scan state immediately on connect
+    # --- Auth: require valid JWT passed as ?token= query param ---
+    if not token:
+        await websocket.send_text(json.dumps({"type": "error", "msg": "authentication required"}))
+        await websocket.close(code=4401)
+        return
+    try:
+        payload = decode_token(token)
+        user_id: str = payload.get("sub", "")
+        if not user_id or payload.get("type") != "access":
+            raise ValueError("invalid token type")
+    except ValueError:
+        await websocket.send_text(json.dumps({"type": "error", "msg": "invalid token"}))
+        await websocket.close(code=4401)
+        return
+
+    # --- Authorization: verify user owns this scan ---
     async with AsyncSessionLocal() as db:
-        result = await db.execute(select(Scan).where(Scan.id == scan_id))
+        result = await db.execute(
+            select(Scan).where(Scan.id == scan_id, Scan.user_id == user_id)
+        )
         scan = result.scalar_one_or_none()
-        if scan:
-            await websocket.send_text(json.dumps({
-                "type": "status",
-                "scan_id": scan_id,
-                "status": scan.status,
-                "hosts_total": scan.hosts_total,
-                "hosts_up": scan.hosts_up,
-            }))
-        else:
+        if not scan:
             await websocket.send_text(json.dumps({"type": "error", "msg": "scan not found"}))
+            await websocket.close(code=4404)
             return
+        await websocket.send_text(json.dumps({
+            "type": "status",
+            "scan_id": scan_id,
+            "status": scan.status,
+            "hosts_total": scan.hosts_total,
+            "hosts_up": scan.hosts_up,
+        }))
 
     import redis.asyncio as aioredis
     settings = get_settings()
@@ -50,12 +74,11 @@ async def scan_progress_ws(websocket: WebSocket, scan_id: str):
 
     redis_client = aioredis.from_url(settings.redis_url, decode_responses=True)
 
-    # Replay persisted history before subscribing to live events
+    # Replay persisted history (capped) before subscribing to live events
     try:
-        history = await redis_client.lrange(history_key, 0, -1)
+        history = await redis_client.lrange(history_key, -_HISTORY_LIMIT, -1)
         for item in history:
             await websocket.send_text(item)
-        # Tell client replay is done
         await websocket.send_text(json.dumps({"type": "history_end", "count": len(history)}))
     except Exception as exc:
         logger.debug("WS history replay failed: %s", exc)

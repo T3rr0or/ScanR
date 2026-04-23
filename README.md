@@ -9,9 +9,7 @@ A self-hosted network vulnerability scanner. Point it at a subnet, get a structu
 
 ---
 
-<img width="1704" height="971" alt="image" src="https://github.com/user-attachments/assets/c8008403-e68d-473d-8e22-24447b95dc95" />
-
-
+![Dashboard](docs/screenshots/dashboard.png)
 
 ## Features
 
@@ -30,9 +28,9 @@ A self-hosted network vulnerability scanner. Point it at a subnet, get a structu
 - **Distributed agents** — run scans from multiple network vantage points
 - **Nuclei integration** — runs Nuclei templates alongside native plugins
 
+![New Scan](docs/screenshots/new-scan.png)
 
-<img width="1469" height="1221" alt="image" src="https://github.com/user-attachments/assets/5807b225-ed60-470f-adb9-d65d5652d4b5" />
-
+![Findings](docs/screenshots/findings.png)
 
 ### Plugin categories
 
@@ -45,6 +43,10 @@ A self-hosted network vulnerability scanner. Point it at a subnet, get a structu
 | Network | ICMP info, open ports summary, NetBIOS |
 | CVE | NVD-based CVE matching against detected service versions |
 | Nuclei | Runs Nuclei template library (CVEs, exposures, misconfigs, default logins) |
+
+![Plugins](docs/screenshots/plugins.png)
+
+![Settings](docs/screenshots/settings.png)
 
 ---
 
@@ -120,7 +122,7 @@ Navigate to **http://localhost** and log in with the admin credentials you set i
    - CIDR range: `192.168.1.0/24`
    - IP range: `10.0.0.1-10.0.0.50`
    - Hostname: `example.com`
-4. Click **Create Scan**, then **▶ Launch**
+4. Click **Create & Launch**
 
 ### Scan profiles
 
@@ -137,15 +139,16 @@ Open any scan row to enter the scan detail view:
 
 - **Console** — live log stream during scan; full history on completed scans
 - **Findings** — sortable/filterable vulnerability table with triage controls
-- **Hosts** — discovered hosts with open ports and services; click an IP in findings to jump directly to it
+- **Hosts** — discovered hosts with open ports and services
 - **Topology** — D3 force-directed network map colored by severity; scroll to zoom, drag to pan
 - **Screenshots** — gallery of web service screenshots captured by Playwright
 
 ### Findings triage
 
-- Click the **Status** dropdown per row to set `Open` / `Accepted` / `Resolved`
-- Check multiple rows and use the bulk toolbar to mark as **False Positive** or **Accept Risk**
-- Host IPs in the findings table are clickable — jumps to the Hosts tab with that host highlighted
+- Click any finding row to open the detail drawer
+- Use **False Positive** / **Accept Risk** buttons in the drawer
+- Add analyst notes (auto-saved on blur)
+- Filter by triage status: All / Open / False Positive / Accepted Risk
 
 ### Comparing scans
 
@@ -158,7 +161,7 @@ On the Scans list, click the **⎇ Compare** icon on any completed scan to open 
 
 ### Reports
 
-Go to **Reports → Generate** to export a PDF report for any completed scan. Includes executive summary, severity breakdown, and full findings list.
+Go to **Reports → Generate** to export a report for any completed scan in HTML, PDF, JSON, or CSV format. Includes executive summary, severity breakdown, and full findings list.
 
 ### Scheduled scans
 

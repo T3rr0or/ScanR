@@ -15,14 +15,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     unzip \
     && rm -rf /var/lib/apt/lists/*
 
-# SecLists wordlists for web content discovery
+# SecLists wordlists for web content discovery (best-effort — plugin falls back to embedded list)
 RUN mkdir -p /usr/share/seclists/Discovery/Web-Content && \
     wget -q -O /usr/share/seclists/Discovery/Web-Content/common.txt \
-      https://raw.githubusercontent.com/danielmiessler/SecLists/master/Discovery/Web-Content/common.txt && \
+      https://raw.githubusercontent.com/danielmiessler/SecLists/master/Discovery/Web-Content/common.txt || true && \
     wget -q -O /usr/share/seclists/Discovery/Web-Content/big.txt \
-      https://raw.githubusercontent.com/danielmiessler/SecLists/master/Discovery/Web-Content/big.txt && \
+      https://raw.githubusercontent.com/danielmiessler/SecLists/master/Discovery/Web-Content/big.txt || true && \
     wget -q -O /usr/share/seclists/Discovery/Web-Content/directory-list-2.3-medium.txt \
-      https://raw.githubusercontent.com/danielmiessler/SecLists/master/Discovery/Web-Content/directory-list-2.3-medium.txt
+      https://raw.githubusercontent.com/danielmiessler/SecLists/master/Discovery/Web-Content/directory-list-2.3-medium.txt || true
 
 # Install Nuclei (separate layer — cached unless version changes)
 RUN wget -q https://github.com/projectdiscovery/nuclei/releases/download/v3.3.9/nuclei_3.3.9_linux_amd64.zip \

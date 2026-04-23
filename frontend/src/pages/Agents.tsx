@@ -1,7 +1,8 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Bot, Plus, Trash2, Copy, Check, Wifi, WifiOff } from 'lucide-react'
+import { Bot, Plus, Trash2, Copy, Check } from 'lucide-react'
 import { agentsApi, type AgentCreated } from '@/api/agents'
+import { relTime, EmptyState } from '@/components/ui'
 
 export default function Agents() {
   const qc = useQueryClient()
@@ -38,146 +39,171 @@ export default function Agents() {
 
   function isOnline(last_seen: string | null) {
     if (!last_seen) return false
-    return Date.now() - new Date(last_seen).getTime() < 90_000  // 90s
+    return Date.now() - new Date(last_seen).getTime() < 90_000
   }
 
   return (
-    <div className="p-6 max-w-4xl mx-auto">
-      <div className="flex items-center justify-between mb-6">
+    <div style={{ padding: '24px 28px', maxWidth: 1100 }}>
+      {/* Header */}
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 24 }}>
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Scan Agents</h1>
-          <p className="text-sm text-gray-500 mt-1">Remote agents scan internal/firewalled networks and report findings back</p>
+          <h1 style={{ fontSize: 20, fontWeight: 700, color: 'var(--text-0)', display: 'flex', alignItems: 'center', gap: 8 }}>
+            <Bot size={18} style={{ color: 'var(--accent)' }} /> Scan Agents
+          </h1>
+          <p style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 4 }}>
+            Remote agents scan internal / firewalled networks and report findings back
+          </p>
         </div>
-        <button
-          onClick={() => setShowCreate(true)}
-          className="flex items-center gap-2 px-3 py-1.5 bg-blue-600 text-white rounded text-sm hover:bg-blue-700"
-        >
-          <Plus size={14} /> Register Agent
+        <button onClick={() => setShowCreate(true)} className="btn btn-primary btn-sm">
+          <Plus size={13} /> Register Agent
         </button>
       </div>
 
+      {/* One-time token reveal */}
       {createdAgent && (
-        <div className="bg-green-50 border border-green-200 rounded-lg p-4 mb-6">
-          <p className="text-sm font-semibold text-green-800 mb-1">Agent registered — copy the token now, it won't be shown again:</p>
-          <div className="flex items-center gap-2 bg-white border border-green-300 rounded px-3 py-2 font-mono text-xs mb-3">
-            <span className="flex-1 break-all">{createdAgent.token}</span>
-            <button onClick={() => copy(createdAgent.token)} className="text-green-600 hover:text-green-800">
-              {copied ? <Check size={14} /> : <Copy size={14} />}
+        <div style={{
+          marginBottom: 24, padding: 16, borderRadius: 8,
+          background: 'oklch(0.22 0.05 145 / 0.3)', border: '1px solid var(--ok)',
+        }}>
+          <p style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--ok)', marginBottom: 8 }}>
+            Agent registered — copy the token now, it won't be shown again:
+          </p>
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 8, background: 'var(--bg-0)',
+            border: '1px solid var(--border)', borderRadius: 6, padding: '8px 12px', marginBottom: 12,
+          }}>
+            <span className="mono" style={{ flex: 1, fontSize: 11, wordBreak: 'break-all', color: 'var(--text-1)' }}>
+              {createdAgent.token}
+            </span>
+            <button onClick={() => copy(createdAgent.token)} className="btn btn-ghost btn-icon btn-sm">
+              {copied ? <Check size={13} style={{ color: 'var(--ok)' }} /> : <Copy size={13} />}
             </button>
           </div>
 
-          {/* Option A: Docker full agent */}
-          <p className="text-xs font-semibold text-green-800 mb-1">Option A — Docker (full plugin suite, recommended):</p>
-          <p className="text-xs text-green-700 mb-1">Uses the same image as the ScanR worker — runs all plugins (SSL, web, service, CVE, etc.):</p>
-          <div className="bg-gray-900 text-green-400 text-xs font-mono px-3 py-2 rounded space-y-1 mb-3">
+          <p style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--text-1)', marginBottom: 4 }}>Option A — Docker (recommended):</p>
+          <div className="console" style={{ padding: '10px 12px', marginBottom: 12, fontSize: 11 }}>
             <div>docker run --rm \</div>
-            <div className="pl-4">-e SCANR_SERVER={window.location.origin} \</div>
-            <div className="pl-4">-e SCANR_TOKEN={createdAgent.token} \</div>
-            <div className="pl-4">--network host \</div>
-            <div className="pl-4">{'<your-scanr-worker-image>'} \</div>
-            <div className="pl-4">python -m scanr.agent.full_runner</div>
+            <div style={{ paddingLeft: 16 }}>-e SCANR_SERVER={window.location.origin} \</div>
+            <div style={{ paddingLeft: 16 }}>-e SCANR_TOKEN={createdAgent.token} \</div>
+            <div style={{ paddingLeft: 16 }}>--network host \</div>
+            <div style={{ paddingLeft: 16 }}>{'<your-scanr-worker-image>'} \</div>
+            <div style={{ paddingLeft: 16 }}>python -m scanr.agent.full_runner</div>
           </div>
 
-          {/* Option B: Lightweight nmap-only script */}
-          <p className="text-xs font-semibold text-green-800 mb-1">Option B — Lightweight script (nmap only, minimal deps):</p>
-          <p className="text-xs text-green-700 mb-1">Needs Python 3.10+, httpx, and nmap installed on the target machine:</p>
-          <div className="bg-gray-900 text-green-400 text-xs font-mono px-3 py-2 rounded space-y-1">
-            <div><span className="text-gray-500"># 1. install the only Python dependency</span></div>
+          <p style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--text-1)', marginBottom: 4 }}>Option B — Lightweight script:</p>
+          <div className="console" style={{ padding: '10px 12px', fontSize: 11 }}>
+            <div><span style={{ color: 'var(--text-3)' }}># install dependency</span></div>
             <div>pip install httpx</div>
-            <div className="mt-1"><span className="text-gray-500"># 2. download the agent script</span></div>
+            <div style={{ marginTop: 6 }}><span style={{ color: 'var(--text-3)' }}># download agent</span></div>
             <div>curl {window.location.origin}/api/v1/agent/script -o scanr_agent.py</div>
-            <div className="mt-1"><span className="text-gray-500"># 3. run it</span></div>
+            <div style={{ marginTop: 6 }}><span style={{ color: 'var(--text-3)' }}># run</span></div>
             <div>python scanr_agent.py --server {window.location.origin} --token {createdAgent.token}</div>
           </div>
-          <button onClick={() => setCreatedAgent(null)} className="mt-3 text-xs text-green-700 underline">Dismiss</button>
+
+          <button onClick={() => setCreatedAgent(null)} style={{ marginTop: 10, fontSize: 11, color: 'var(--ok)', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}>
+            Dismiss
+          </button>
         </div>
       )}
 
+      {/* Create form */}
       {showCreate && (
-        <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 space-y-3 mb-6">
-          <h3 className="font-medium text-sm">Register Agent</h3>
+        <div className="panel" style={{ marginBottom: 24, padding: 16 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-0)', marginBottom: 12 }}>Register Agent</div>
           <input
             value={form.name}
             onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
             placeholder="Agent name (e.g. Office-Network-Agent)"
-            className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
+            className="input"
+            style={{ marginBottom: 8 }}
           />
           <input
             value={form.description}
             onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
             placeholder="Description (optional)"
-            className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
+            className="input"
+            style={{ marginBottom: 10 }}
           />
-          <div className="flex gap-2">
-            <button
-              onClick={() => createMut.mutate()}
-              disabled={!form.name || createMut.isPending}
-              className="px-3 py-1.5 bg-blue-600 text-white rounded text-sm hover:bg-blue-700 disabled:opacity-50"
-            >
-              {createMut.isPending ? 'Registering...' : 'Register'}
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button onClick={() => createMut.mutate()} disabled={!form.name || createMut.isPending} className="btn btn-primary btn-sm">
+              {createMut.isPending ? 'Registering…' : 'Register'}
             </button>
-            <button onClick={() => setShowCreate(false)} className="px-3 py-1.5 text-gray-600 text-sm">Cancel</button>
+            <button onClick={() => setShowCreate(false)} className="btn btn-ghost btn-sm">Cancel</button>
           </div>
         </div>
       )}
 
+      {/* Card grid */}
       {isLoading ? (
-        <div className="text-gray-500 text-sm">Loading...</div>
+        <div className="dimmer" style={{ fontSize: 13, padding: '20px 0' }}>Loading…</div>
       ) : agents.length === 0 ? (
-        <div className="text-center py-16 text-gray-400">
-          <Bot size={40} className="mx-auto mb-3 opacity-30" />
-          <p className="text-sm">No agents registered</p>
-          <p className="text-xs mt-1">Register an agent to scan internal networks</p>
+        <div className="panel" style={{ padding: 40 }}>
+          <EmptyState
+            icon={<Bot size={28} />}
+            message="No agents registered"
+            action={<span style={{ fontSize: 11, color: 'var(--text-3)' }}>Register an agent to scan internal networks</span>}
+          />
         </div>
       ) : (
-        <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="bg-gray-50 border-b border-gray-200 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">
-                <th className="px-4 py-3">Agent</th>
-                <th className="px-4 py-3">Token Prefix</th>
-                <th className="px-4 py-3">Status</th>
-                <th className="px-4 py-3">Last Seen</th>
-                <th className="px-4 py-3">IP</th>
-                <th className="px-4 py-3">Version</th>
-                <th className="px-4 py-3" />
-              </tr>
-            </thead>
-            <tbody>
-              {agents.map((a, i) => {
-                const online = isOnline(a.last_seen_at)
-                return (
-                  <tr key={a.id} className={`border-b border-gray-100 ${i === agents.length - 1 ? 'border-b-0' : ''}`}>
-                    <td className="px-4 py-3">
-                      <div className="font-medium">{a.name}</div>
-                      {a.description && <div className="text-xs text-gray-400">{a.description}</div>}
-                    </td>
-                    <td className="px-4 py-3 font-mono text-gray-500 text-xs">{a.prefix}...</td>
-                    <td className="px-4 py-3">
-                      <span className={`flex items-center gap-1 text-xs ${online ? 'text-green-600' : 'text-gray-400'}`}>
-                        {online ? <Wifi size={12} /> : <WifiOff size={12} />}
-                        {a.last_seen_at ? (online ? 'Online' : 'Offline') : 'Never connected'}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 14 }}>
+          {agents.map(a => {
+            const online = isOnline(a.last_seen_at)
+            return (
+              <div key={a.id} className="panel" style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 12 }}>
+                {/* Card header */}
+                <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 }}>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+                      {online
+                        ? <span className="live-dot" style={{ width: 7, height: 7, flexShrink: 0, boxShadow: 'none' }} />
+                        : <span style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--text-3)', flexShrink: 0, display: 'inline-block' }} />
+                      }
+                      <span style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--text-0)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {a.name}
                       </span>
-                    </td>
-                    <td className="px-4 py-3 text-xs text-gray-500">
-                      {a.last_seen_at ? new Date(a.last_seen_at).toLocaleString() : '—'}
-                    </td>
-                    <td className="px-4 py-3 text-xs font-mono text-gray-500">{a.ip_address || '—'}</td>
-                    <td className="px-4 py-3 text-xs text-gray-500">{a.agent_version || '—'}</td>
-                    <td className="px-4 py-3 text-right">
-                      <button
-                        onClick={() => deleteMut.mutate(a.id)}
-                        className="p-1 text-gray-400 hover:text-red-500"
-                        title="Remove agent"
-                      >
-                        <Trash2 size={13} />
-                      </button>
-                    </td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
+                    </div>
+                    {a.description && (
+                      <div className="dimmer" style={{ fontSize: 11, marginTop: 3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {a.description}
+                      </div>
+                    )}
+                  </div>
+                  <button
+                    onClick={() => deleteMut.mutate(a.id)}
+                    className="btn btn-ghost btn-icon btn-sm"
+                    title="Remove agent"
+                    style={{ color: 'var(--sev-high)', flexShrink: 0 }}
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                </div>
+
+                {/* Stats row */}
+                <div style={{ display: 'flex', gap: 0, borderTop: '1px solid var(--border)', paddingTop: 10 }}>
+                  {[
+                    { label: 'Status', value: online ? 'Online' : (a.last_seen_at ? 'Offline' : 'Never'), color: online ? 'var(--ok)' : 'var(--text-3)' },
+                    { label: 'IP', value: a.ip_address || '—', mono: true },
+                    { label: 'Version', value: a.agent_version || '—', mono: true },
+                  ].map((stat, i) => (
+                    <div key={i} style={{ flex: 1, textAlign: 'center', borderRight: i < 2 ? '1px solid var(--border)' : 'none', padding: '0 8px' }}>
+                      <div style={{ fontSize: 10, color: 'var(--text-3)', marginBottom: 2 }}>{stat.label}</div>
+                      <div className={stat.mono ? 'mono' : ''} style={{ fontSize: 12, fontWeight: 600, color: stat.color ?? 'var(--text-1)' }}>
+                        {stat.value}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Footer */}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span className="mono dimmer" style={{ fontSize: 10 }}>{a.prefix}…</span>
+                  <span className="dimmer" style={{ fontSize: 10 }}>
+                    {a.last_seen_at ? relTime(a.last_seen_at) : 'never connected'}
+                  </span>
+                </div>
+              </div>
+            )
+          })}
         </div>
       )}
     </div>

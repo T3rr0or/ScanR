@@ -7,11 +7,18 @@ interface Props {
   scanId: string
 }
 
-function statusColor(code: number | null) {
-  if (!code) return 'bg-gray-100 text-gray-500'
-  if (code < 300) return 'bg-green-100 text-green-700'
-  if (code < 400) return 'bg-yellow-100 text-yellow-700'
-  return 'bg-red-100 text-red-700'
+function statusColor(code: number | null): string {
+  if (!code) return 'var(--text-3)'
+  if (code < 300) return 'var(--ok)'
+  if (code < 400) return 'var(--sev-medium)'
+  return 'var(--sev-high)'
+}
+
+function statusBg(code: number | null): string {
+  if (!code) return 'var(--bg-3)'
+  if (code < 300) return 'oklch(0.22 0.05 145 / 0.3)'
+  if (code < 400) return 'oklch(0.24 0.08 85 / 0.3)'
+  return 'oklch(0.24 0.08 30 / 0.3)'
 }
 
 export default function ScreenshotGallery({ scanId }: Props) {
@@ -20,52 +27,73 @@ export default function ScreenshotGallery({ scanId }: Props) {
     queryFn: () => screenshotsApi.list(scanId),
     refetchInterval: 10_000,
   })
-
   const [lightbox, setLightbox] = useState<Screenshot | null>(null)
 
   if (isLoading) {
-    return <div className="text-gray-500 text-sm p-4">Loading screenshots...</div>
+    return <div className="dimmer" style={{ fontSize: 13, padding: 16 }}>Loading screenshots…</div>
   }
 
   if (shots.length === 0) {
     return (
-      <div className="text-gray-600 text-sm p-8 text-center">
-        No screenshots captured yet.
-        <div className="text-xs text-gray-500 mt-1">
-          Enable the <span className="font-mono">web.screenshot</span> plugin and run a scan with HTTP/HTTPS ports.
-        </div>
+      <div style={{ textAlign: 'center', padding: '40px 20px', color: 'var(--text-3)' }}>
+        <div style={{ fontSize: 13, marginBottom: 6 }}>No screenshots captured yet.</div>
+        <div className="mono" style={{ fontSize: 11 }}>Enable the <span style={{ color: 'var(--accent)' }}>web.screenshot</span> plugin and run a scan with HTTP/HTTPS ports.</div>
       </div>
     )
   }
 
   return (
     <>
-      <div className="grid grid-cols-2 xl:grid-cols-3 gap-4 p-4">
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))',
+        gap: 12,
+        padding: 16,
+      }}>
         {shots.map(shot => (
           <div
             key={shot.id}
-            className="bg-gray-900 border border-gray-700 rounded-lg overflow-hidden cursor-pointer hover:border-gray-500 transition-colors group"
             onClick={() => setLightbox(shot)}
+            style={{
+              background: 'var(--bg-2)',
+              border: '1px solid var(--border)',
+              borderRadius: 8,
+              overflow: 'hidden',
+              cursor: 'pointer',
+              transition: 'border-color 0.15s',
+            }}
+            onMouseEnter={e => (e.currentTarget.style.borderColor = 'var(--border-strong)')}
+            onMouseLeave={e => (e.currentTarget.style.borderColor = 'var(--border)')}
           >
-            <div className="relative h-40 bg-gray-800 overflow-hidden">
-              <AuthImage
-                src={screenshotsApi.imageUrl(shot.id)}
-                alt={shot.url}
-                className="w-full h-full object-cover object-top group-hover:scale-105 transition-transform duration-300"
-              />
+            {/* 16:9 thumbnail */}
+            <div style={{ position: 'relative', paddingTop: '56.25%', background: 'var(--bg-1)', overflow: 'hidden' }}>
+              <div style={{ position: 'absolute', inset: 0 }}>
+                <AuthImage
+                  src={screenshotsApi.imageUrl(shot.id)}
+                  alt={shot.url}
+                  style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'top', display: 'block' }}
+                />
+              </div>
             </div>
-            <div className="p-3">
-              <div className="flex items-start gap-2">
-                <div className="flex-1 min-w-0">
-                  <div className="text-white text-xs font-medium truncate" title={shot.title ?? shot.url}>
-                    {shot.title || shot.url}
+
+            {/* Caption */}
+            <div style={{ padding: '8px 10px' }}>
+              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6 }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 12, fontWeight: 500, color: 'var(--text-0)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {shot.title || extractHostPort(shot.url)}
                   </div>
-                  <div className="text-gray-400 text-xs truncate mt-0.5 font-mono" title={shot.url}>
-                    {shot.url}
+                  <div className="mono" style={{ fontSize: 10, color: 'var(--text-3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: 2 }}>
+                    {extractHostPort(shot.url)}
                   </div>
                 </div>
                 {shot.status_code && (
-                  <span className={`flex-shrink-0 px-1.5 py-0.5 rounded text-[10px] font-bold ${statusColor(shot.status_code)}`}>
+                  <span className="mono" style={{
+                    fontSize: 10, fontWeight: 700, flexShrink: 0,
+                    padding: '2px 5px', borderRadius: 4,
+                    background: statusBg(shot.status_code),
+                    color: statusColor(shot.status_code),
+                  }}>
                     {shot.status_code}
                   </span>
                 )}
@@ -78,20 +106,45 @@ export default function ScreenshotGallery({ scanId }: Props) {
       {/* Lightbox */}
       {lightbox && (
         <div
-          className="fixed inset-0 z-50 bg-black/90 flex items-center justify-center p-4"
           onClick={() => setLightbox(null)}
+          style={{
+            position: 'fixed', inset: 0, zIndex: 50,
+            background: 'rgba(0,0,0,0.88)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            padding: 16,
+          }}
         >
           <div
-            className="max-w-5xl w-full bg-gray-900 rounded-xl overflow-hidden shadow-2xl"
             onClick={e => e.stopPropagation()}
+            style={{
+              maxWidth: 1000, width: '100%',
+              background: 'var(--bg-2)', borderRadius: 10,
+              overflow: 'hidden',
+              boxShadow: '0 24px 80px #0009',
+              border: '1px solid var(--border)',
+            }}
           >
-            <div className="flex items-center gap-3 px-4 py-3 bg-gray-800 border-b border-gray-700">
-              <div className="flex-1 min-w-0">
-                <div className="text-white text-sm font-medium truncate">{lightbox.title || lightbox.url}</div>
-                <div className="text-gray-400 text-xs font-mono truncate">{lightbox.url}</div>
+            {/* Lightbox header */}
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 10,
+              padding: '10px 14px',
+              background: 'var(--bg-3)', borderBottom: '1px solid var(--border)',
+            }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-0)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {lightbox.title || extractHostPort(lightbox.url)}
+                </div>
+                <div className="mono" style={{ fontSize: 11, color: 'var(--text-3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {lightbox.url}
+                </div>
               </div>
               {lightbox.status_code && (
-                <span className={`px-2 py-0.5 rounded text-xs font-bold ${statusColor(lightbox.status_code)}`}>
+                <span className="mono" style={{
+                  fontSize: 11, fontWeight: 700, flexShrink: 0,
+                  padding: '2px 7px', borderRadius: 4,
+                  background: statusBg(lightbox.status_code),
+                  color: statusColor(lightbox.status_code),
+                }}>
                   {lightbox.status_code}
                 </span>
               )}
@@ -99,19 +152,20 @@ export default function ScreenshotGallery({ scanId }: Props) {
                 href={lightbox.url}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="p-1.5 text-gray-400 hover:text-white rounded"
+                className="btn btn-ghost btn-icon btn-sm"
                 title="Open URL"
               >
-                <ExternalLink size={15} />
+                <ExternalLink size={14} />
               </a>
-              <button onClick={() => setLightbox(null)} className="p-1.5 text-gray-400 hover:text-white rounded">
-                <X size={16} />
+              <button onClick={() => setLightbox(null)} className="btn btn-ghost btn-icon btn-sm">
+                <X size={15} />
               </button>
             </div>
+
             <AuthImage
               src={screenshotsApi.imageUrl(lightbox.id)}
               alt={lightbox.url}
-              className="w-full max-h-[75vh] object-contain object-top"
+              style={{ width: '100%', maxHeight: '75vh', objectFit: 'contain', objectPosition: 'top', display: 'block' }}
             />
           </div>
         </div>
@@ -120,8 +174,16 @@ export default function ScreenshotGallery({ scanId }: Props) {
   )
 }
 
-/** Authenticated image component — fetches via axios token and renders as blob URL */
-function AuthImage({ src, alt, className }: { src: string; alt: string; className: string }) {
+function extractHostPort(url: string): string {
+  try {
+    const u = new URL(url)
+    return u.host
+  } catch {
+    return url
+  }
+}
+
+function AuthImage({ src, alt, style }: { src: string; alt: string; style: React.CSSProperties }) {
   const { data: blobUrl } = useQuery({
     queryKey: ['img', src],
     queryFn: async () => {
@@ -133,10 +195,12 @@ function AuthImage({ src, alt, className }: { src: string; alt: string; classNam
   })
 
   if (!blobUrl) {
-    return <div className={`${className} bg-gray-800 flex items-center justify-center`}>
-      <span className="text-gray-600 text-xs">Loading...</span>
-    </div>
+    return (
+      <div style={{ ...style, background: 'var(--bg-1)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <span className="dimmer" style={{ fontSize: 11 }}>Loading…</span>
+      </div>
+    )
   }
 
-  return <img src={blobUrl} alt={alt} className={className} />
+  return <img src={blobUrl} alt={alt} style={style} />
 }

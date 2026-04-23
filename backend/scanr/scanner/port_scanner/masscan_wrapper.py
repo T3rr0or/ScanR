@@ -25,13 +25,37 @@ logger = logging.getLogger(__name__)
 class MasscanWrapper:
     """Run masscan across a list of targets, return open ports per host."""
 
-    # Packets per second — conservative default that won't saturate most networks.
-    # Users running against a local LAN can increase this via scan profile.
-    DEFAULT_RATE = 1000
+    # Packets per second. 10 000 pps scans 65535 ports across 254 hosts in ~28 min.
+    # Raise via profile_json: {"masscan_rate": 50000} for local LANs.
+    DEFAULT_RATE = 10000
+
+    # When the profile requests all ports (-p-), masscan still only sweeps this
+    # range for initial discovery. nmap then scans known-open ports per host, so
+    # missed exotic ports are caught by nmap's per-host run anyway.
+    FULL_RANGE_CAP = "1-10000,20000-20010,27017,6379,5432,3306,1433,5900,5984,5985,5986,8080,8443,8888,9090,9200,9300,10250,2375,2376,623"
 
     @staticmethod
     def is_available() -> bool:
         return shutil.which("masscan") is not None
+
+    @staticmethod
+    def _port_args(port_range: str) -> list[str]:
+        """Translate nmap-style port spec to masscan -p args."""
+        if port_range.startswith("--top-ports"):
+            # masscan has no --top-ports; map to a common-ports list
+            try:
+                n = int(port_range.split()[-1])
+            except ValueError:
+                n = 1000
+            return ["-p", "1-1024,8080,8443,8888,9090,9200,9300,27017,6379,5432,3306,1433,5900,5985,5986"] if n <= 1000 else ["-p", "1-65535"]
+        if port_range in ("-p-", "-p -"):
+            return ["-p", MasscanWrapper.FULL_RANGE_CAP]
+        if port_range.startswith("-p "):
+            return ["-p", port_range[3:].strip()]
+        if port_range.startswith("-p"):
+            return ["-p", port_range[2:].strip()]
+        # bare spec like "80,443" or "1-1024"
+        return ["-p", port_range]
 
     async def scan(
         self,
@@ -45,23 +69,27 @@ class MasscanWrapper:
             return {}
 
         effective_rate = rate or self._rate_from_profile(context)
-        target_str = " ".join(targets)
         open_ports: dict[str, list[int]] = {}
 
         with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as tmp:
             out_path = tmp.name
 
+        port_args = self._port_args(port_range)
         cmd = [
             "masscan",
             *targets,
-            "-p", port_range,
+            *port_args,
             "--rate", str(effective_rate),
             "--output-format", "json",
             "--output-filename", out_path,
             "--wait", "3",
         ]
 
-        await context.log.info(f"$ {' '.join(cmd)}", phase="portscan")
+        target_summary = targets[0] if len(targets) == 1 else f"{targets[0]} … ({len(targets)} hosts)"
+        await context.log.info(
+            f"$ masscan {target_summary} {' '.join(port_args)} --rate {effective_rate} --output-format json --wait 3",
+            phase="portscan",
+        )
         try:
             proc = await asyncio.create_subprocess_exec(
                 *cmd,

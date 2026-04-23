@@ -1,7 +1,6 @@
 /**
  * NetworkTopology — D3 force-directed graph of discovered hosts.
- *
- * Layout: pure force repulsion, no subnet chain — nodes spread organically.
+ * Center node = scanner itself. Hosts orbit around it.
  * Subnet siblings get weak attraction so same-/24 nodes loosely cluster.
  * Nodes sized by open port count, colored by highest severity finding.
  */
@@ -23,12 +22,13 @@ interface Props {
   onSelectHost?: (host: HostNode) => void
 }
 
-const SEV_COLOR: Record<string, string> = {
-  critical: '#dc2626',
+// Resolved hex values for D3 (can't use CSS vars in SVG attributes directly)
+const SEV_HEX: Record<string, string> = {
+  critical: '#f43f5e',
   high:     '#f97316',
   medium:   '#eab308',
   low:      '#22c55e',
-  info:     '#3b82f6',
+  info:     '#38bdf8',
   none:     '#4b5563',
 }
 
@@ -57,7 +57,7 @@ export default function NetworkTopology({ hosts, findingsByHost, onSelectHost }:
   const [tooltip, setTooltip] = useState<{ x: number; y: number; host: HostNode } | null>(null)
 
   useEffect(() => {
-    if (!svgRef.current || !containerRef.current || hosts.length === 0) return
+    if (!svgRef.current || !containerRef.current) return
 
     const width = containerRef.current.clientWidth || 800
     const height = containerRef.current.clientHeight || 500
@@ -66,23 +66,60 @@ export default function NetworkTopology({ hosts, findingsByHost, onSelectHost }:
     svg.selectAll('*').remove()
     svg.attr('width', width).attr('height', height)
 
+    // Grid background
+    const defs = svg.append('defs')
+    defs.append('pattern')
+      .attr('id', 'topo-grid')
+      .attr('width', 32)
+      .attr('height', 32)
+      .attr('patternUnits', 'userSpaceOnUse')
+      .append('path')
+        .attr('d', 'M 32 0 L 0 0 0 32')
+        .attr('fill', 'none')
+        .attr('stroke', '#1f2937')
+        .attr('stroke-width', 0.5)
+
+    svg.append('rect')
+      .attr('width', width)
+      .attr('height', height)
+      .attr('fill', 'url(#topo-grid)')
+
+    if (hosts.length === 0) return
+
     // Build nodes
     const nodes = hosts.map(h => ({
       ...h,
       openPorts: (h.ports ?? []).filter(p => p.state === 'open').length,
       severity: hostSeverity(h.ip, findingsByHost),
       subnet: subnet24(h.ip),
+      _isScanner: false,
     }))
 
-    // Weak subnet links — pull same-/24 nodes together without chaining
+    // Center scanner node (fixed at center)
+    const scannerNode: any = {
+      id: '__scanner__',
+      ip: 'Scanner',
+      _isScanner: true,
+      openPorts: 0,
+      severity: 'none',
+      subnet: '',
+      fx: width / 2,
+      fy: height / 2,
+    }
+    const allNodes = [scannerNode, ...nodes]
+
+    // Links: every host → scanner center
+    const links: { source: string; target: string }[] = nodes.map(n => ({
+      source: '__scanner__',
+      target: n.id,
+    }))
+
+    // Weak subnet links — pull same-/24 nodes together
     const subnetMap: Record<string, string[]> = {}
     nodes.forEach(n => {
       if (!subnetMap[n.subnet]) subnetMap[n.subnet] = []
       subnetMap[n.subnet].push(n.id)
     })
-
-    // Connect each node to the first node in its subnet (star within subnet, not chain)
-    const links: { source: string; target: string }[] = []
     Object.values(subnetMap).forEach(group => {
       if (group.length < 2) return
       const anchor = group[0]
@@ -91,16 +128,14 @@ export default function NetworkTopology({ hosts, findingsByHost, onSelectHost }:
       }
     })
 
-    // Simulation
-    const sim = d3.forceSimulation(nodes as any)
+    const sim = d3.forceSimulation(allNodes as any)
       .force('link', d3.forceLink(links)
         .id((d: any) => d.id)
-        .distance(80)
-        .strength(0.05)   // very weak — just a gentle pull, not rigid
+        .distance((d: any) => d.source.id === '__scanner__' ? 140 : 80)
+        .strength((d: any) => d.source.id === '__scanner__' ? 0.12 : 0.05)
       )
-      .force('charge', d3.forceManyBody().strength(-220))
-      .force('center', d3.forceCenter(width / 2, height / 2))
-      .force('collision', d3.forceCollide().radius((d: any) => nodeRadius(d.openPorts) + 10))
+      .force('charge', d3.forceManyBody().strength(-260))
+      .force('collision', d3.forceCollide().radius((d: any) => d._isScanner ? 28 : nodeRadius(d.openPorts) + 10))
       .alphaDecay(0.02)
 
     const g = svg.append('g')
@@ -109,17 +144,20 @@ export default function NetworkTopology({ hosts, findingsByHost, onSelectHost }:
       .scaleExtent([0.15, 6])
       .on('zoom', e => { g.attr('transform', e.transform.toString()) }) as any)
 
-    // Subnet boundary rings (drawn first, behind nodes)
-    const subnetRingGroup = g.append('g').attr('class', 'subnet-rings')
+    // Subnet hulls (behind everything)
+    const subnetRingGroup = g.append('g')
 
-    // invisible links — just force hints, not rendered
-    g.append('g')
+    // Edges — thin lines from scanner to each host
+    const linkGroup = g.append('g')
       .selectAll('line')
-      .data(links).enter().append('line')
-      .attr('stroke-opacity', 0)
+      .data(links.filter((l: any) => l.source === '__scanner__' || (typeof l.source === 'object' && (l.source as any).id === '__scanner__')))
+      .enter().append('line')
+      .attr('stroke', '#1f2937')
+      .attr('stroke-width', 1)
+      .attr('stroke-opacity', 0.6)
 
-    // Nodes
-    const nodeGroup = g.append('g')
+    // Host nodes
+    const hostGroup = g.append('g')
       .selectAll('g')
       .data(nodes).enter().append('g')
       .attr('cursor', 'pointer')
@@ -130,42 +168,94 @@ export default function NetworkTopology({ hosts, findingsByHost, onSelectHost }:
       )
 
     // Glow ring for critical/high
-    nodeGroup.filter((d: any) => d.severity === 'critical' || d.severity === 'high')
+    hostGroup.filter((d: any) => d.severity === 'critical' || d.severity === 'high')
       .append('circle')
       .attr('r', (d: any) => nodeRadius(d.openPorts) + 5)
       .attr('fill', 'none')
-      .attr('stroke', (d: any) => SEV_COLOR[d.severity])
+      .attr('stroke', (d: any) => SEV_HEX[d.severity])
       .attr('stroke-width', 1.5)
       .attr('stroke-opacity', 0.4)
 
-    nodeGroup.append('circle')
+    hostGroup.append('circle')
       .attr('r', (d: any) => nodeRadius(d.openPorts))
-      .attr('fill', (d: any) => SEV_COLOR[d.severity])
+      .attr('fill', (d: any) => SEV_HEX[d.severity])
       .attr('fill-opacity', 0.9)
-      .attr('stroke', '#111827')
+      .attr('stroke', '#0d1117')
       .attr('stroke-width', 1.5)
 
-    // Last-octet label below node
-    nodeGroup.append('text')
+    hostGroup.append('text')
       .text((d: any) => d.ip)
       .attr('text-anchor', 'middle')
       .attr('dy', (d: any) => nodeRadius(d.openPorts) + 12)
       .attr('font-size', 9)
+      .attr('font-family', 'var(--font-mono, monospace)')
       .attr('fill', '#6b7280')
       .attr('pointer-events', 'none')
 
-    nodeGroup.on('mouseenter', (event, d: any) => {
-      const rect = svgRef.current!.getBoundingClientRect()
-      setTooltip({ x: event.clientX - rect.left, y: event.clientY - rect.top, host: d })
-    })
-    nodeGroup.on('mouseleave', () => setTooltip(null))
-    nodeGroup.on('click', (_, d: any) => { onSelectHost?.(d) })
+    hostGroup
+      .on('mouseenter', (event, d: any) => {
+        const rect = svgRef.current!.getBoundingClientRect()
+        setTooltip({ x: event.clientX - rect.left, y: event.clientY - rect.top, host: d })
+      })
+      .on('mouseleave', () => setTooltip(null))
+      .on('click', (_, d: any) => { onSelectHost?.(d) })
 
-    // Draw convex-hull subnet backgrounds after simulation settles
+    // Center scanner node (drawn on top)
+    const scannerG = g.append('g').attr('cursor', 'default')
+
+    // Outer pulse ring
+    scannerG.append('circle')
+      .attr('r', 22)
+      .attr('fill', 'none')
+      .attr('stroke', '#38bdf8')
+      .attr('stroke-width', 1)
+      .attr('stroke-opacity', 0.25)
+      .attr('stroke-dasharray', '4,3')
+
+    scannerG.append('circle')
+      .attr('r', 16)
+      .attr('fill', '#0d1117')
+      .attr('stroke', '#38bdf8')
+      .attr('stroke-width', 2)
+
+    // Scanner crosshair icon
+    scannerG.append('line').attr('x1', -8).attr('x2', 8).attr('y1', 0).attr('y2', 0)
+      .attr('stroke', '#38bdf8').attr('stroke-width', 1.5).attr('stroke-linecap', 'round')
+    scannerG.append('line').attr('x1', 0).attr('x2', 0).attr('y1', -8).attr('y2', 8)
+      .attr('stroke', '#38bdf8').attr('stroke-width', 1.5).attr('stroke-linecap', 'round')
+    scannerG.append('circle').attr('r', 3).attr('fill', 'none').attr('stroke', '#38bdf8').attr('stroke-width', 1.5)
+
+    scannerG.append('text')
+      .text('scanner')
+      .attr('text-anchor', 'middle')
+      .attr('dy', 28)
+      .attr('font-size', 9)
+      .attr('font-family', 'var(--font-mono, monospace)')
+      .attr('fill', '#38bdf8')
+      .attr('fill-opacity', 0.6)
+      .attr('pointer-events', 'none')
+
     sim.on('tick', () => {
-      nodeGroup.attr('transform', (d: any) => `translate(${d.x},${d.y})`)
+      // Position scanner node
+      scannerG.attr('transform', `translate(${width / 2},${height / 2})`)
 
-      // Update subnet hulls
+      // Position host nodes
+      hostGroup.attr('transform', (d: any) => `translate(${d.x},${d.y})`)
+
+      // Update edge lines
+      linkGroup
+        .attr('x1', width / 2)
+        .attr('y1', height / 2)
+        .attr('x2', (d: any) => {
+          const target = typeof d.target === 'object' ? d.target : allNodes.find(n => n.id === d.target)
+          return target?.x ?? 0
+        })
+        .attr('y2', (d: any) => {
+          const target = typeof d.target === 'object' ? d.target : allNodes.find(n => n.id === d.target)
+          return target?.y ?? 0
+        })
+
+      // Subnet hulls
       subnetRingGroup.selectAll('*').remove()
       const subnets = Object.entries(subnetMap)
       if (subnets.length > 1) {
@@ -174,12 +264,9 @@ export default function NetworkTopology({ hosts, findingsByHost, onSelectHost }:
             const n = (nodes as any[]).find(n => n.id === id)
             return n ? [n.x, n.y] as [number, number] : null
           }).filter(Boolean) as [number, number][]
-
           if (pts.length < 3) return
           const hull = d3.polygonHull(pts)
           if (!hull) return
-
-          // Expand hull outward a bit
           const cx = d3.mean(hull, d => d[0])!
           const cy = d3.mean(hull, d => d[1])!
           const expanded = hull.map(([x, y]) => {
@@ -187,22 +274,19 @@ export default function NetworkTopology({ hosts, findingsByHost, onSelectHost }:
             const dist = Math.sqrt(dx * dx + dy * dy) || 1
             return [x + (dx / dist) * 20, y + (dy / dist) * 20] as [number, number]
           })
-
           subnetRingGroup.append('path')
             .attr('d', `M${expanded.map(p => p.join(',')).join('L')}Z`)
-            .attr('fill', '#1e3a5f')
-            .attr('fill-opacity', 0.12)
-            .attr('stroke', '#3b82f6')
-            .attr('stroke-opacity', 0.2)
+            .attr('fill', '#0ea5e920')
+            .attr('stroke', '#0ea5e9')
+            .attr('stroke-opacity', 0.18)
             .attr('stroke-width', 1)
             .attr('stroke-dasharray', '4,3')
-
           subnetRingGroup.append('text')
-            .attr('x', cx)
-            .attr('y', cy - 8)
+            .attr('x', cx).attr('y', cy - 8)
             .attr('text-anchor', 'middle')
             .attr('font-size', 10)
-            .attr('fill', '#3b82f6')
+            .attr('font-family', 'var(--font-mono, monospace)')
+            .attr('fill', '#0ea5e9')
             .attr('fill-opacity', 0.4)
             .attr('pointer-events', 'none')
             .text(subnet + '.0/24')
@@ -214,18 +298,23 @@ export default function NetworkTopology({ hosts, findingsByHost, onSelectHost }:
   }, [hosts, findingsByHost])
 
   return (
-    <div ref={containerRef} className="relative w-full h-full bg-gray-950 rounded-lg overflow-hidden">
-      <svg ref={svgRef} className="w-full h-full" />
+    <div ref={containerRef} style={{ position: 'relative', width: '100%', height: '100%', background: 'var(--bg-1)', borderRadius: 8, overflow: 'hidden' }}>
+      <svg ref={svgRef} style={{ width: '100%', height: '100%', display: 'block' }} />
 
       {/* Legend */}
-      <div className="absolute top-3 right-3 bg-gray-900/90 border border-gray-800 rounded-lg p-2.5 text-xs space-y-1">
-        {Object.entries(SEV_COLOR).map(([sev, color]) => (
-          <div key={sev} className="flex items-center gap-1.5">
-            <span className="w-3 h-3 rounded-full inline-block flex-shrink-0" style={{ background: color }} />
-            <span className="text-gray-400 capitalize">{sev}</span>
+      <div style={{
+        position: 'absolute', top: 12, right: 12,
+        background: 'var(--bg-2)', border: '1px solid var(--border)',
+        borderRadius: 8, padding: '10px 12px',
+        fontSize: 11, display: 'flex', flexDirection: 'column', gap: 4,
+      }}>
+        {SEV_ORDER.concat(['none']).map(sev => (
+          <div key={sev} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span style={{ width: 10, height: 10, borderRadius: '50%', background: SEV_HEX[sev], flexShrink: 0 }} />
+            <span style={{ color: 'var(--text-2)', textTransform: 'capitalize' }}>{sev}</span>
           </div>
         ))}
-        <div className="border-t border-gray-700 pt-1 mt-1 text-gray-500 space-y-0.5">
+        <div style={{ borderTop: '1px solid var(--border)', marginTop: 4, paddingTop: 4, color: 'var(--text-3)', lineHeight: 1.6 }}>
           <div>Node size = open ports</div>
           <div>Scroll to zoom · drag to pan</div>
         </div>
@@ -233,18 +322,21 @@ export default function NetworkTopology({ hosts, findingsByHost, onSelectHost }:
 
       {/* Tooltip */}
       {tooltip && (
-        <div
-          className="absolute pointer-events-none bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-xs shadow-lg z-10"
-          style={{ left: tooltip.x + 14, top: tooltip.y - 8, maxWidth: 240 }}
-        >
-          <div className="font-mono font-semibold text-white">{tooltip.host.ip}</div>
-          {tooltip.host.hostname && <div className="text-gray-400">{tooltip.host.hostname}</div>}
-          {tooltip.host.os_name && <div className="text-gray-500 truncate">{tooltip.host.os_name}</div>}
-          <div className="text-gray-400 mt-1">
+        <div style={{
+          position: 'absolute', pointerEvents: 'none',
+          left: tooltip.x + 14, top: tooltip.y - 8,
+          background: 'var(--bg-2)', border: '1px solid var(--border)',
+          borderRadius: 8, padding: '8px 12px', fontSize: 12, maxWidth: 240,
+          boxShadow: '0 4px 20px #0006', zIndex: 10,
+        }}>
+          <div className="mono" style={{ fontWeight: 600, color: 'var(--text-0)' }}>{tooltip.host.ip}</div>
+          {tooltip.host.hostname && <div style={{ color: 'var(--text-2)' }}>{tooltip.host.hostname}</div>}
+          {tooltip.host.os_name && <div style={{ color: 'var(--text-3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{tooltip.host.os_name}</div>}
+          <div style={{ color: 'var(--text-2)', marginTop: 4 }}>
             {(tooltip.host.ports ?? []).filter(p => p.state === 'open').length} open port(s)
           </div>
           {(tooltip.host.ports ?? []).filter(p => p.state === 'open').length > 0 && (
-            <div className="text-gray-500 mt-0.5 font-mono">
+            <div className="mono" style={{ color: 'var(--text-3)', marginTop: 2 }}>
               {(tooltip.host.ports ?? []).filter(p => p.state === 'open').slice(0, 8).map(p => p.number).join(', ')}
               {(tooltip.host.ports ?? []).filter(p => p.state === 'open').length > 8 && '…'}
             </div>
@@ -253,7 +345,7 @@ export default function NetworkTopology({ hosts, findingsByHost, onSelectHost }:
       )}
 
       {hosts.length === 0 && (
-        <div className="absolute inset-0 flex items-center justify-center text-gray-600 text-sm">
+        <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-3)', fontSize: 13 }}>
           No hosts discovered yet
         </div>
       )}

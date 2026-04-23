@@ -61,37 +61,40 @@ export function ProfileEditor({
   }
 
   return (
-    <div className="space-y-4">
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
       {!hidePortRange && (
-      <div>
-        <label className="block text-xs font-medium text-gray-600 mb-1.5">Port Range</label>
-        <select
-          value={isCustomPort ? '__custom__' : config.port_range}
-          onChange={handlePortRange}
-          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
-        >
-          {PORT_RANGES.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
-          <option value="__custom__" disabled={!isCustomPort}>
-            {isCustomPort ? `Custom: ${config.port_range}` : 'Custom (set via template)'}
-          </option>
-        </select>
-        {isCustomPort && (
-          <p className="mt-1 text-xs text-gray-400">Custom range from template: <code className="font-mono">{config.port_range}</code> — pick a preset above to override</p>
-        )}
-      </div>
+        <div>
+          <label className="label" style={{ marginBottom: 6 }}>Port Range</label>
+          <select
+            value={isCustomPort ? '__custom__' : config.port_range}
+            onChange={handlePortRange}
+            className="select-field"
+          >
+            {PORT_RANGES.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
+            <option value="__custom__" disabled={!isCustomPort}>
+              {isCustomPort ? `Custom: ${config.port_range}` : 'Custom (set via template)'}
+            </option>
+          </select>
+          {isCustomPort && (
+            <p style={{ marginTop: 4, fontSize: 11, color: 'var(--text-3)' }}>
+              Custom range from template: <code style={{ fontFamily: 'var(--font-mono)' }}>{config.port_range}</code> — pick a preset above to override
+            </p>
+          )}
+        </div>
       )}
+
       <div>
-        <div className="flex items-center justify-between mb-2">
-          <label className="text-xs font-medium text-gray-600">Plugin Categories</label>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+          <span className="label">Plugin Categories</span>
           <button
             type="button"
             onClick={() => onChange({ ...config, categories: allSelected ? [] : ALL_CATEGORIES.map(x => x.id) })}
-            className="text-xs text-blue-600 hover:underline"
+            style={{ fontSize: 11, color: 'var(--accent)', background: 'none', border: 'none', cursor: 'pointer' }}
           >
             {allSelected ? 'Deselect all' : 'Select all'}
           </button>
         </div>
-        <div className="grid grid-cols-2 gap-2">
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
           {ALL_CATEGORIES.map(cat => {
             const on = config.categories.includes(cat.id)
             return (
@@ -99,18 +102,25 @@ export function ProfileEditor({
                 key={cat.id}
                 type="button"
                 onClick={() => toggleCat(cat.id)}
-                className={`flex items-start gap-2 p-2.5 rounded-lg border text-left transition-colors ${
-                  on ? 'border-blue-300 bg-blue-50' : 'border-gray-200 bg-white hover:border-gray-300'
-                }`}
+                style={{
+                  display: 'flex', alignItems: 'flex-start', gap: 10,
+                  padding: '10px 12px', borderRadius: 8, border: `1px solid ${on ? 'var(--accent)' : 'var(--border)'}`,
+                  background: on ? 'var(--accent-soft)' : 'var(--bg-2)',
+                  textAlign: 'left', cursor: 'pointer', transition: 'border-color 0.12s, background 0.12s',
+                }}
               >
-                <span className={`mt-0.5 w-4 h-4 flex-shrink-0 rounded border flex items-center justify-center ${
-                  on ? 'bg-blue-600 border-blue-600' : 'border-gray-300'
-                }`}>
-                  {on && <Check size={10} className="text-white" />}
+                <span style={{
+                  marginTop: 1, width: 16, height: 16, flexShrink: 0, borderRadius: 4,
+                  border: `1.5px solid ${on ? 'var(--accent)' : 'var(--border)'}`,
+                  background: on ? 'var(--accent)' : 'transparent',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  transition: 'background 0.12s, border-color 0.12s',
+                }}>
+                  {on && <Check size={10} color="oklch(0.14 0.01 255)" strokeWidth={3} />}
                 </span>
                 <div>
-                  <div className="text-xs font-medium text-gray-800">{cat.label}</div>
-                  <div className="text-xs text-gray-400 leading-tight mt-0.5">{cat.desc}</div>
+                  <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text-0)', marginBottom: 2 }}>{cat.label}</div>
+                  <div style={{ fontSize: 11, color: 'var(--text-3)', lineHeight: 1.4 }}>{cat.desc}</div>
                 </div>
               </button>
             )

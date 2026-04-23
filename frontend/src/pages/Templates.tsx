@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Trash2, Plus, Lock, User, FileText, Pencil, Check, X } from 'lucide-react'
+import { Trash2, Plus, Lock, User, LayoutTemplate, Pencil, Check, X } from 'lucide-react'
 import { templatesApi, type ScanTemplate } from '@/api/templates'
 import { ProfileEditor, configToJson, jsonToConfig, type ProfileConfig } from '@/components/ProfileEditor'
 
@@ -42,64 +42,58 @@ export default function Templates({ onSelectTemplate }: Props) {
   const userTemplates = templates.filter(t => !t.is_system)
 
   return (
-    <div className="p-6 max-w-4xl mx-auto">
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">Scan Templates</h1>
-        <button
-          onClick={() => setShowCreate(true)}
-          className="flex items-center gap-2 px-3 py-1.5 bg-blue-600 text-white rounded text-sm hover:bg-blue-700"
-        >
-          <Plus size={14} /> New Template
+    <div style={{ padding: '24px 28px', maxWidth: 900 }}>
+      {/* Header */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <LayoutTemplate size={18} style={{ color: 'var(--accent)' }} />
+          <h1 style={{ fontSize: 18, fontWeight: 700, color: 'var(--text-0)' }}>Scan Templates</h1>
+        </div>
+        <button onClick={() => setShowCreate(true)} className="btn btn-primary btn-sm">
+          <Plus size={13} /> New Template
         </button>
       </div>
 
+      {/* Create form */}
       {showCreate && (
-        <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 space-y-3 mb-6">
-          <h3 className="font-medium text-sm">New Template</h3>
+        <div className="panel" style={{ marginBottom: 20, padding: 16 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-0)', marginBottom: 12 }}>New Template</div>
           <input
             value={form.name}
             onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
             placeholder="Template name"
-            className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
+            className="input"
+            style={{ marginBottom: 8 }}
           />
           <textarea
             value={form.description}
             onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
             placeholder="Description (optional)"
             rows={2}
-            className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
+            className="textarea"
+            style={{ marginBottom: 10 }}
           />
-          <div className="flex gap-2">
-            <button
-              onClick={() => createMut.mutate()}
-              disabled={!form.name || createMut.isPending}
-              className="px-3 py-1.5 bg-blue-600 text-white rounded text-sm hover:bg-blue-700 disabled:opacity-50"
-            >
-              {createMut.isPending ? 'Creating...' : 'Create'}
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button onClick={() => createMut.mutate()} disabled={!form.name || createMut.isPending} className="btn btn-primary btn-sm">
+              {createMut.isPending ? 'Creating…' : 'Create'}
             </button>
-            <button onClick={() => setShowCreate(false)} className="px-3 py-1.5 text-gray-600 text-sm">Cancel</button>
+            <button onClick={() => setShowCreate(false)} className="btn btn-ghost btn-sm">Cancel</button>
           </div>
         </div>
       )}
 
       {isLoading ? (
-        <div className="text-gray-500 text-sm p-4">Loading...</div>
+        <div className="dimmer" style={{ fontSize: 13, padding: '20px 0' }}>Loading…</div>
       ) : (
-        <div className="space-y-6">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
           {systemTemplates.length > 0 && (
             <section>
-              <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3 flex items-center gap-2">
-                <Lock size={12} /> System Templates
-              </h2>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div style={{ fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-3)', marginBottom: 10, display: 'flex', alignItems: 'center', gap: 6 }}>
+                <Lock size={11} /> System Templates
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 12 }}>
                 {systemTemplates.map(t => (
-                  <TemplateCard
-                    key={t.id}
-                    template={t}
-                    onSelect={onSelectTemplate}
-                    canEdit={false}
-                    canDelete={false}
-                  />
+                  <TemplateCard key={t.id} template={t} onSelect={onSelectTemplate} canEdit={false} canDelete={false} />
                 ))}
               </div>
             </section>
@@ -107,17 +101,14 @@ export default function Templates({ onSelectTemplate }: Props) {
 
           {userTemplates.length > 0 && (
             <section>
-              <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3 flex items-center gap-2">
-                <User size={12} /> My Templates
-              </h2>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div style={{ fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-3)', marginBottom: 10, display: 'flex', alignItems: 'center', gap: 6 }}>
+                <User size={11} /> My Templates
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 12 }}>
                 {userTemplates.map(t => (
                   <TemplateCard
-                    key={t.id}
-                    template={t}
-                    onSelect={onSelectTemplate}
-                    canEdit={true}
-                    canDelete={true}
+                    key={t.id} template={t} onSelect={onSelectTemplate}
+                    canEdit canDelete
                     onDelete={() => deleteMut.mutate(t.id)}
                     onSave={(body) => updateMut.mutate({ id: t.id, body })}
                     isSaving={updateMut.isPending}
@@ -128,7 +119,10 @@ export default function Templates({ onSelectTemplate }: Props) {
           )}
 
           {templates.length === 0 && (
-            <div className="text-center py-12 text-gray-400 text-sm">No templates yet</div>
+            <div style={{ textAlign: 'center', padding: '48px 20px', color: 'var(--text-3)', fontSize: 13 }}>
+              <LayoutTemplate size={32} style={{ margin: '0 auto 12px', opacity: 0.3 }} />
+              No templates yet
+            </div>
           )}
         </div>
       )}
@@ -137,13 +131,7 @@ export default function Templates({ onSelectTemplate }: Props) {
 }
 
 function TemplateCard({
-  template,
-  onSelect,
-  canEdit,
-  canDelete,
-  onDelete,
-  onSave,
-  isSaving,
+  template, onSelect, canEdit, canDelete, onDelete, onSave, isSaving,
 }: {
   template: ScanTemplate
   onSelect?: (t: ScanTemplate) => void
@@ -168,99 +156,76 @@ function TemplateCard({
   }
 
   function handleSave() {
-    onSave?.({
-      name: editName || undefined,
-      description: editDesc || undefined,
-      profile_json: configToJson(editProfile),
-    })
+    onSave?.({ name: editName || undefined, description: editDesc || undefined, profile_json: configToJson(editProfile) })
     setEditing(false)
   }
 
   if (editing) {
     return (
-      <div className="bg-white border border-blue-300 rounded-lg p-4 space-y-3">
+      <div className="panel" style={{ padding: 14, border: '1px solid var(--accent)' }}>
         <input
           value={editName}
           onChange={e => setEditName(e.target.value)}
-          className="w-full border border-gray-300 rounded px-3 py-1.5 text-sm font-medium"
+          className="input"
           placeholder="Template name"
+          style={{ marginBottom: 8 }}
         />
         <textarea
           value={editDesc}
           onChange={e => setEditDesc(e.target.value)}
           placeholder="Description (optional)"
           rows={2}
-          className="w-full border border-gray-300 rounded px-3 py-1.5 text-sm text-gray-600 resize-none"
+          className="textarea"
+          style={{ marginBottom: 10 }}
         />
-        <div className="border border-gray-200 rounded-lg p-3 bg-gray-50">
+        <div style={{ borderRadius: 6, border: '1px solid var(--border)', padding: 10, marginBottom: 10 }}>
           <ProfileEditor config={editProfile} onChange={setEditProfile} />
         </div>
-        <div className="flex gap-2">
-          <button
-            onClick={handleSave}
-            disabled={!editName || isSaving}
-            className="flex items-center gap-1 px-3 py-1.5 bg-blue-600 text-white rounded text-sm hover:bg-blue-700 disabled:opacity-50"
-          >
-            <Check size={13} /> {isSaving ? 'Saving...' : 'Save'}
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button onClick={handleSave} disabled={!editName || isSaving} className="btn btn-primary btn-sm">
+            <Check size={12} /> {isSaving ? 'Saving…' : 'Save'}
           </button>
-          <button
-            onClick={() => setEditing(false)}
-            className="flex items-center gap-1 px-3 py-1.5 text-gray-600 rounded text-sm hover:bg-gray-100"
-          >
-            <X size={13} /> Cancel
+          <button onClick={() => setEditing(false)} className="btn btn-ghost btn-sm">
+            <X size={12} /> Cancel
           </button>
         </div>
       </div>
     )
   }
 
+  const portRange = (template.profile_json as any)?.port_range
+
   return (
-    <div className="bg-white border border-gray-200 rounded-lg p-4 hover:border-gray-300 transition-colors">
-      <div className="flex items-start justify-between gap-2">
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2">
-            <FileText size={14} className="text-blue-500 flex-shrink-0" />
-            <span className="font-medium text-sm truncate">{template.name}</span>
-            {template.is_system && (
-              <Lock size={11} className="text-gray-400 flex-shrink-0" />
-            )}
+    <div className="panel" style={{ padding: 14 }}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginBottom: 8 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+            <LayoutTemplate size={13} style={{ color: 'var(--accent)', flexShrink: 0 }} />
+            <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-0)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {template.name}
+            </span>
+            {template.is_system && <Lock size={10} style={{ color: 'var(--text-3)', flexShrink: 0 }} />}
           </div>
           {template.description && (
-            <p className="text-xs text-gray-500 mt-1 line-clamp-2">{template.description}</p>
+            <p style={{ fontSize: 11.5, color: 'var(--text-2)', lineHeight: 1.5 }}>{template.description}</p>
           )}
-          {template.profile_json && (
-            <div className="mt-2 text-xs text-gray-400 font-mono">
-              {(template.profile_json as any).port_range && (
-                <span className="mr-2">ports: {(template.profile_json as any).port_range}</span>
-              )}
-            </div>
+          {portRange && (
+            <div className="mono dimmer" style={{ fontSize: 10, marginTop: 6 }}>ports: {portRange}</div>
           )}
         </div>
-        <div className="flex items-center gap-1 flex-shrink-0">
+
+        <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
           {onSelect && (
-            <button
-              onClick={() => onSelect(template)}
-              className="px-2 py-1 text-xs bg-blue-50 text-blue-600 rounded hover:bg-blue-100"
-            >
-              Use
-            </button>
+            <button onClick={() => onSelect(template)} className="btn btn-ghost btn-sm" style={{ fontSize: 11 }}>Use</button>
           )}
           {canEdit && (
-            <button
-              onClick={startEdit}
-              className="p-1 text-gray-400 hover:text-blue-500 rounded"
-              title="Edit"
-            >
-              <Pencil size={13} />
+            <button onClick={startEdit} className="btn btn-ghost btn-icon btn-sm" title="Edit">
+              <Pencil size={12} />
             </button>
           )}
           {canDelete && onDelete && (
-            <button
-              onClick={onDelete}
-              className="p-1 text-gray-400 hover:text-red-500 rounded"
-              title="Delete"
-            >
-              <Trash2 size={13} />
+            <button onClick={onDelete} className="btn btn-ghost btn-icon btn-sm" title="Delete" style={{ color: 'var(--sev-high)' }}>
+              <Trash2 size={12} />
             </button>
           )}
         </div>

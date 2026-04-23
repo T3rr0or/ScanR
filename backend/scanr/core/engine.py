@@ -76,8 +76,12 @@ class ScanEngine:
             cred = cred_result.scalar_one_or_none()
             if cred:
                 from scanr.credentials.vault import decrypt
-                context.credential_data = decrypt(cred.encrypted_data)
-                await scan_log.info(f"Credentials loaded: {cred.name}", phase="engine")
+                from scanr.utils.exceptions import VaultError
+                try:
+                    context.credential_data = decrypt(cred.encrypted_data)
+                    await scan_log.info(f"Credentials loaded: {cred.name}", phase="engine")
+                except VaultError as exc:
+                    await scan_log.error(f"Credential decrypt failed for '{cred.name}': {exc} — scanning without credentials", phase="engine")
 
         collector = ResultCollector(self.scan_id, self.db, scan_log, user_id=scan.user_id)
         rate_limiter = RateLimiter()

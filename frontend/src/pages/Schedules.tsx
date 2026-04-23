@@ -5,23 +5,18 @@ import { schedulesApi, type Schedule } from '@/api/schedules'
 
 const CRON_PRESETS = [
   { label: 'Every hour', value: '0 * * * *' },
-  { label: 'Every day at 2am', value: '0 2 * * *' },
-  { label: 'Every Monday at 2am', value: '0 2 * * 1' },
-  { label: 'Every Sunday at midnight', value: '0 0 * * 0' },
-  { label: 'Every 6 hours', value: '0 */6 * * *' },
-  { label: 'First day of month', value: '0 2 1 * *' },
+  { label: 'Daily 2am', value: '0 2 * * *' },
+  { label: 'Mon 2am', value: '0 2 * * 1' },
+  { label: 'Sun midnight', value: '0 0 * * 0' },
+  { label: 'Every 6h', value: '0 */6 * * *' },
+  { label: '1st of month', value: '0 2 1 * *' },
 ]
 
 export default function Schedules() {
   const qc = useQueryClient()
   const [showCreate, setShowCreate] = useState(false)
   const [form, setForm] = useState({
-    name: '',
-    description: '',
-    targets: '',
-    cron_expr: '0 2 * * *',
-    scan_profile_json: '{}',
-    enabled: true,
+    name: '', description: '', targets: '', cron_expr: '0 2 * * *', scan_profile_json: '{}', enabled: true,
   })
 
   const { data: schedules = [], isLoading } = useQuery({
@@ -51,8 +46,7 @@ export default function Schedules() {
   })
 
   const toggleMut = useMutation({
-    mutationFn: ({ id, enabled }: { id: string; enabled: boolean }) =>
-      schedulesApi.update(id, { enabled }),
+    mutationFn: ({ id, enabled }: { id: string; enabled: boolean }) => schedulesApi.update(id, { enabled }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['schedules'] }),
   })
 
@@ -62,94 +56,103 @@ export default function Schedules() {
   }
 
   return (
-    <div className="p-6 max-w-4xl mx-auto">
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">Scheduled Scans</h1>
-          <p className="text-sm text-gray-500 mt-1">Recurring scans run automatically on a cron schedule</p>
+    <div style={{ padding: '24px 28px', maxWidth: 900 }}>
+      {/* Header */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <Clock size={18} style={{ color: 'var(--accent)' }} />
+          <div>
+            <h1 style={{ fontSize: 18, fontWeight: 700, color: 'var(--text-0)' }}>Scheduled Scans</h1>
+            <p style={{ fontSize: 11.5, color: 'var(--text-3)', marginTop: 2 }}>Recurring scans run automatically on a cron schedule</p>
+          </div>
         </div>
-        <button
-          onClick={() => setShowCreate(true)}
-          className="flex items-center gap-2 px-3 py-1.5 bg-blue-600 text-white rounded text-sm hover:bg-blue-700"
-        >
-          <Plus size={14} /> New Schedule
+        <button onClick={() => setShowCreate(true)} className="btn btn-primary btn-sm">
+          <Plus size={13} /> New Schedule
         </button>
       </div>
 
+      {/* Create form */}
       {showCreate && (
-        <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 space-y-3 mb-6">
-          <h3 className="font-medium text-sm">New Schedule</h3>
+        <div className="panel" style={{ marginBottom: 20, padding: 16 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-0)', marginBottom: 12 }}>New Schedule</div>
+
           <input
             value={form.name}
             onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
             placeholder="Schedule name"
-            className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
+            className="input"
+            style={{ marginBottom: 8 }}
           />
           <input
             value={form.description}
             onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
             placeholder="Description (optional)"
-            className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
+            className="input"
+            style={{ marginBottom: 10 }}
           />
-          <div>
-            <label className="block text-xs text-gray-500 mb-1">Targets (one per line — IPs, CIDRs, or domains)</label>
-            <textarea
-              value={form.targets}
-              onChange={e => setForm(f => ({ ...f, targets: e.target.value }))}
-              placeholder={"192.168.1.0/24\nexample.com"}
-              rows={3}
-              className="w-full border border-gray-300 rounded px-3 py-2 text-sm font-mono"
-            />
+
+          <label className="label" style={{ marginBottom: 4 }}>Targets (one per line — IPs, CIDRs, or domains)</label>
+          <textarea
+            value={form.targets}
+            onChange={e => setForm(f => ({ ...f, targets: e.target.value }))}
+            placeholder={"192.168.1.0/24\nexample.com"}
+            rows={3}
+            className="textarea"
+            style={{ marginBottom: 12, fontFamily: 'var(--font-mono)', fontSize: 12 }}
+          />
+
+          <label className="label" style={{ marginBottom: 6 }}>Cron expression</label>
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 8 }}>
+            {CRON_PRESETS.map(p => (
+              <button
+                key={p.value}
+                onClick={() => setForm(f => ({ ...f, cron_expr: p.value }))}
+                className={`btn btn-sm ${form.cron_expr === p.value ? 'btn-primary' : 'btn-ghost'}`}
+                style={{ fontSize: 11 }}
+              >
+                {p.label}
+              </button>
+            ))}
           </div>
-          <div>
-            <label className="block text-xs text-gray-500 mb-1">Cron expression</label>
-            <div className="flex gap-2 items-center flex-wrap mb-1">
-              {CRON_PRESETS.map(p => (
-                <button
-                  key={p.value}
-                  onClick={() => setForm(f => ({ ...f, cron_expr: p.value }))}
-                  className={`text-xs px-2 py-1 rounded border transition-colors ${form.cron_expr === p.value ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-gray-200 text-gray-500 hover:border-gray-400'}`}
-                >
-                  {p.label}
-                </button>
-              ))}
-            </div>
-            <input
-              value={form.cron_expr}
-              onChange={e => setForm(f => ({ ...f, cron_expr: e.target.value }))}
-              placeholder="0 2 * * *"
-              className="w-full border border-gray-300 rounded px-3 py-2 text-sm font-mono"
-            />
-          </div>
-          <div className="flex gap-2">
+          <input
+            value={form.cron_expr}
+            onChange={e => setForm(f => ({ ...f, cron_expr: e.target.value }))}
+            placeholder="0 2 * * *"
+            className="input"
+            style={{ fontFamily: 'var(--font-mono)', fontSize: 12, marginBottom: 12 }}
+          />
+
+          <div style={{ display: 'flex', gap: 8 }}>
             <button
               onClick={() => createMut.mutate()}
               disabled={!form.name || !form.targets.trim() || createMut.isPending}
-              className="px-3 py-1.5 bg-blue-600 text-white rounded text-sm hover:bg-blue-700 disabled:opacity-50"
+              className="btn btn-primary btn-sm"
             >
-              {createMut.isPending ? 'Creating...' : 'Create'}
+              {createMut.isPending ? 'Creating…' : 'Create'}
             </button>
-            <button onClick={() => setShowCreate(false)} className="px-3 py-1.5 text-gray-600 text-sm">Cancel</button>
+            <button onClick={() => setShowCreate(false)} className="btn btn-ghost btn-sm">Cancel</button>
           </div>
+
           {createMut.isError && (
-            <p className="text-red-500 text-xs">{(createMut.error as any)?.response?.data?.detail || 'Error creating schedule'}</p>
+            <p style={{ color: 'var(--sev-high)', fontSize: 11, marginTop: 8 }}>
+              {(createMut.error as any)?.response?.data?.detail || 'Error creating schedule'}
+            </p>
           )}
         </div>
       )}
 
+      {/* List */}
       {isLoading ? (
-        <div className="text-gray-500 text-sm">Loading...</div>
+        <div className="dimmer" style={{ fontSize: 13, padding: '20px 0' }}>Loading…</div>
       ) : schedules.length === 0 ? (
-        <div className="text-center py-16 text-gray-400">
-          <Calendar size={40} className="mx-auto mb-3 opacity-30" />
-          <p className="text-sm">No scheduled scans yet</p>
+        <div style={{ textAlign: 'center', padding: '48px 20px', color: 'var(--text-3)' }}>
+          <Calendar size={36} style={{ margin: '0 auto 12px', opacity: 0.3 }} />
+          <p style={{ fontSize: 13 }}>No scheduled scans yet</p>
         </div>
       ) : (
-        <div className="space-y-3">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
           {schedules.map(s => (
-            <ScheduleCard
-              key={s.id}
-              schedule={s}
+            <ScheduleCard key={s.id} schedule={s}
               onToggle={() => toggleMut.mutate({ id: s.id, enabled: !s.enabled })}
               onDelete={() => deleteMut.mutate(s.id)}
               fmtDate={fmtDate}
@@ -168,44 +171,43 @@ function ScheduleCard({ schedule: s, onToggle, onDelete, fmtDate }: {
   fmtDate: (d: string | null) => string
 }) {
   return (
-    <div className={`bg-white border rounded-lg p-4 ${s.enabled ? 'border-gray-200' : 'border-gray-100 opacity-70'}`}>
-      <div className="flex items-start justify-between gap-4">
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 mb-1">
-            <Clock size={14} className="text-blue-500 flex-shrink-0" />
-            <span className="font-medium text-sm">{s.name}</span>
-            <span className={`text-xs px-1.5 py-0.5 rounded font-mono ${s.enabled ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
+    <div className="panel" style={{ padding: 14, opacity: s.enabled ? 1 : 0.6 }}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+            <Clock size={13} style={{ color: 'var(--accent)', flexShrink: 0 }} />
+            <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-0)' }}>{s.name}</span>
+            <span className={`pill ${s.enabled ? 'pill-completed' : 'pill-cancelled'}`} style={{ fontSize: 10 }}>
               {s.enabled ? 'enabled' : 'paused'}
             </span>
           </div>
-          {s.description && <p className="text-xs text-gray-500 mb-2">{s.description}</p>}
-          <div className="font-mono text-xs bg-gray-50 px-2 py-1 rounded inline-block text-gray-700 mb-2">
+          {s.description && <p style={{ fontSize: 11.5, color: 'var(--text-2)', marginBottom: 8 }}>{s.description}</p>}
+
+          <div className="mono" style={{ fontSize: 11, background: 'var(--bg-2)', display: 'inline-block', padding: '3px 8px', borderRadius: 4, color: 'var(--text-1)', marginBottom: 8 }}>
             {s.cron_expr}
           </div>
-          <div className="flex flex-wrap gap-1 mb-2">
+
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 8 }}>
             {s.targets.slice(0, 6).map((t, i) => (
-              <span key={i} className="text-xs bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded font-mono">{t}</span>
+              <span key={i} className="mono" style={{ fontSize: 10, background: 'var(--accent-soft)', color: 'var(--accent)', padding: '2px 6px', borderRadius: 4 }}>{t}</span>
             ))}
-            {s.targets.length > 6 && <span className="text-xs text-gray-400">+{s.targets.length - 6} more</span>}
+            {s.targets.length > 6 && <span className="dimmer" style={{ fontSize: 10 }}>+{s.targets.length - 6} more</span>}
           </div>
-          <div className="flex gap-4 text-xs text-gray-400">
-            <span>Next: <span className="text-gray-600">{fmtDate(s.next_run)}</span></span>
-            <span>Last: <span className="text-gray-600">{fmtDate(s.last_run)}</span></span>
+
+          <div style={{ display: 'flex', gap: 16, fontSize: 11, color: 'var(--text-3)' }}>
+            <span>Next: <span style={{ color: 'var(--text-2)' }}>{fmtDate(s.next_run)}</span></span>
+            <span>Last: <span style={{ color: 'var(--text-2)' }}>{fmtDate(s.last_run)}</span></span>
           </div>
         </div>
-        <div className="flex items-center gap-1 flex-shrink-0">
-          <button
-            onClick={onToggle}
-            className={`p-1 rounded ${s.enabled ? 'text-green-600 hover:text-gray-500' : 'text-gray-400 hover:text-green-600'}`}
-            title={s.enabled ? 'Pause' : 'Enable'}
-          >
-            {s.enabled ? <ToggleRight size={20} /> : <ToggleLeft size={20} />}
+
+        <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
+          <button onClick={onToggle} className="btn btn-ghost btn-icon btn-sm" title={s.enabled ? 'Pause' : 'Enable'}>
+            {s.enabled
+              ? <ToggleRight size={18} style={{ color: 'var(--ok)' }} />
+              : <ToggleLeft size={18} style={{ color: 'var(--text-3)' }} />
+            }
           </button>
-          <button
-            onClick={onDelete}
-            className="p-1 text-gray-400 hover:text-red-500 rounded"
-            title="Delete"
-          >
+          <button onClick={onDelete} className="btn btn-ghost btn-icon btn-sm" title="Delete" style={{ color: 'var(--sev-high)' }}>
             <Trash2 size={14} />
           </button>
         </div>

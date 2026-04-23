@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from scanr.db import get_db
-from scanr.deps import get_current_user
+from scanr.deps import require_scope
 from scanr.models import Host, Scan, ScanStatus, Target
 from scanr.models.base import new_uuid
 from scanr.models.user import User
@@ -57,7 +57,7 @@ async def list_scans(
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_scope("scans:read")),
 ):
     result = await db.execute(
         select(Scan)
@@ -75,7 +75,7 @@ async def create_scan(
     request: Request,
     body: ScanCreate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_scope("scans:write")),
 ):
     if not body.targets:
         raise HTTPException(status_code=400, detail="At least one target required")
@@ -104,7 +104,11 @@ async def create_scan(
         )
         db.add(target)
 
-    await db.commit()
+    try:
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        raise HTTPException(status_code=500, detail="Failed to create scan")
     await db.refresh(scan)
     return scan
 
@@ -113,7 +117,7 @@ async def create_scan(
 async def get_scan(
     scan_id: str,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_scope("scans:read")),
 ):
     return await _get_own_scan(scan_id, current_user.id, db)
 
@@ -122,7 +126,7 @@ async def get_scan(
 async def get_scan_hosts(
     scan_id: str,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_scope("scans:read")),
 ):
     await _get_own_scan(scan_id, current_user.id, db)
     from scanr.models.port import Port
@@ -139,7 +143,7 @@ async def get_scan_hosts(
 async def launch_scan(
     scan_id: str,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_scope("scans:write")),
 ):
     scan = await _get_own_scan(scan_id, current_user.id, db)
     if scan.status == ScanStatus.running:
@@ -157,9 +161,12 @@ async def launch_scan(
 async def cancel_scan(
     scan_id: str,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_scope("scans:write")),
 ):
     scan = await _get_own_scan(scan_id, current_user.id, db)
+
+    if scan.status not in (ScanStatus.pending, ScanStatus.running):
+        raise HTTPException(status_code=409, detail=f"Scan is already {scan.status.value}")
 
     if scan.celery_task_id:
         from scanr.tasks.celery_app import celery_app
@@ -175,7 +182,7 @@ async def scan_delta(
     scan_id: str,
     baseline: str,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_scope("scans:read")),
 ):
     """Compare scan_id against baseline scan. Returns delta of hosts, ports, findings."""
     from scanr.core.delta_engine import compute_delta
@@ -188,7 +195,7 @@ async def scan_delta(
 async def delete_scan(
     scan_id: str,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_scope("scans:write")),
 ):
     await _get_own_scan(scan_id, current_user.id, db)
 

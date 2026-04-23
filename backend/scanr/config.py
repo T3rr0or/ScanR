@@ -63,6 +63,15 @@ class Settings(BaseSettings):
             raise ValueError("SECRET_KEY must be set in the environment (generate with: python3 -c \"import secrets; print(secrets.token_urlsafe(32))\")")
         if len(self.secret_key) < 32:
             raise ValueError("SECRET_KEY must be at least 32 characters")
+        if self.vault_key:
+            try:
+                from cryptography.fernet import Fernet
+                Fernet(self.vault_key.encode())
+            except Exception:
+                raise ValueError(
+                    "VAULT_KEY is not a valid Fernet key. "
+                    "Generate one with: python3 -c \"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())\""
+                )
         return self
 
 

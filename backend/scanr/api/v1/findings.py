@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from scanr.db import get_db
-from scanr.deps import get_current_user
+from scanr.deps import require_scope
 from scanr.models import Finding, Host, Scan
 from scanr.models.user import User
 from scanr.schemas import FindingBulkUpdate, FindingRead, FindingUpdate
@@ -26,7 +26,7 @@ async def list_findings(
     limit: int = Query(200, le=500),
     offset: int = Query(0),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_scope("findings:read")),
 ):
     q = (
         select(Finding, Host.ip.label("host_ip"))
@@ -65,7 +65,7 @@ async def list_findings(
 async def get_finding(
     finding_id: str,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_scope("findings:read")),
 ):
     result = await db.execute(
         select(Finding)
@@ -83,7 +83,7 @@ async def update_finding(
     finding_id: str,
     body: FindingUpdate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_scope("findings:triage")),
 ):
     result = await db.execute(
         select(Finding)
@@ -116,10 +116,12 @@ async def update_finding(
 async def bulk_update_findings(
     body: FindingBulkUpdate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_scope("findings:triage")),
 ):
     if not body.ids:
         return {"updated": 0}
+    if len(body.ids) > 500:
+        raise HTTPException(status_code=400, detail="Cannot bulk-update more than 500 findings at once")
     result = await db.execute(
         select(Finding)
         .join(Scan, Finding.scan_id == Scan.id)

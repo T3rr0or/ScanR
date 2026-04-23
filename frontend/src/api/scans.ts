@@ -6,6 +6,9 @@ export interface ScanSummary {
   hosts_total: number; hosts_up: number
   findings_critical: number; findings_high: number; findings_medium: number
   findings_low: number; findings_info: number
+  targets?: string[]
+  duration_s?: number
+  progress?: number
 }
 
 export interface ScanCreate {

@@ -7,8 +7,9 @@ from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from scanr.config import get_settings
 from scanr.db import get_db
-from scanr.deps import get_current_user
+from scanr.deps import require_scope
 from scanr.models import Report, Scan
 from scanr.models.base import new_uuid
 from scanr.models.user import User
@@ -33,7 +34,7 @@ async def _get_own_report(report_id: str, user_id: str, db: AsyncSession) -> Rep
 async def list_reports(
     scan_id: str | None = None,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_scope("reports:read")),
 ):
     q = (
         select(Report)
@@ -52,7 +53,7 @@ async def create_report(
     body: ReportCreate,
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_scope("reports:export")),
 ):
     result = await db.execute(
         select(Scan).where(Scan.id == body.scan_id, Scan.user_id == current_user.id)
@@ -80,7 +81,7 @@ async def create_report(
 async def get_report(
     report_id: str,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_scope("reports:read")),
 ):
     return await _get_own_report(report_id, current_user.id, db)
 
@@ -89,12 +90,15 @@ async def get_report(
 async def download_report(
     report_id: str,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_scope("reports:export")),
 ):
     report = await _get_own_report(report_id, current_user.id, db)
     if report.status != "completed" or not report.file_path:
         raise HTTPException(status_code=400, detail="Report not ready")
-    path = Path(report.file_path)
+    path = Path(report.file_path).resolve()
+    reports_dir = Path(get_settings().reports_dir).resolve()
+    if not str(path).startswith(str(reports_dir) + "/"):
+        raise HTTPException(status_code=403, detail="Invalid report path")
     if not path.exists():
         raise HTTPException(status_code=404, detail="Report file missing")
     return FileResponse(path, filename=path.name)

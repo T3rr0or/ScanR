@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { useAuthStore } from '@/store/auth'
 
 export type LogLevel = 'info' | 'warn' | 'error' | 'debug' | 'finding'
 export type LogPhase = 'discovery' | 'portscan' | 'fingerprint' | 'plugin' | 'engine'
@@ -26,15 +27,16 @@ export function useScanConsole(scanId: string | null) {
   const [connected, setConnected] = useState(false)
   const [scanStatus, setScanStatus] = useState<string | null>(null)
   const wsRef = useRef<WebSocket | null>(null)
+  const token = useAuthStore(s => s.token)
 
   useEffect(() => {
-    if (!scanId) return
+    if (!scanId || !token) return
 
     setEvents([])
     setScanStatus(null)
 
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const url = `${protocol}//${window.location.host}/ws/scans/${scanId}/progress`
+    const url = `${protocol}//${window.location.host}/ws/scans/${scanId}/progress?token=${encodeURIComponent(token)}`
     const ws = new WebSocket(url)
     wsRef.current = ws
 
