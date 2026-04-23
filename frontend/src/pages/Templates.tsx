@@ -13,17 +13,12 @@ export default function Templates({ onSelectTemplate }: Props) {
   const qc = useQueryClient()
   const [showCreate, setShowCreate] = useState(false)
   const [form, setForm] = useState({ name: '', description: '' })
-
-  // "Use Template" modal state
   const [useTemplate, setUseTemplate] = useState<ScanTemplate | null>(null)
   const [scanName, setScanName] = useState('')
   const [targets, setTargets] = useState('')
   const [createdScanId, setCreatedScanId] = useState<string | null>(null)
 
-  const { data: templates = [], isLoading } = useQuery({
-    queryKey: ['templates'],
-    queryFn: templatesApi.list,
-  })
+  const { data: templates = [], isLoading } = useQuery({ queryKey: ['templates'], queryFn: templatesApi.list })
 
   const createMut = useMutation({
     mutationFn: () => templatesApi.create({ name: form.name, description: form.description || undefined }),
@@ -48,12 +43,11 @@ export default function Templates({ onSelectTemplate }: Props) {
   const launchScanMut = useMutation({
     mutationFn: () => {
       if (!useTemplate) throw new Error('No template selected')
-      const pj = useTemplate.profile_json ?? {}
       return scansApi.create({
         name: scanName,
         targets: targets.split('\n').filter(Boolean).map(t => t.trim()),
         profile: 'custom',
-        profile_json: JSON.stringify(pj),
+        profile_json: JSON.stringify(useTemplate.profile_json ?? {}),
       })
     },
     onSuccess: (scan) => {
@@ -67,6 +61,7 @@ export default function Templates({ onSelectTemplate }: Props) {
     setScanName(`${t.name} — ${new Date().toLocaleDateString()}`)
     setTargets('')
     setCreatedScanId(null)
+    launchScanMut.reset()
   }
 
   function closeUseTemplate() {
@@ -81,65 +76,53 @@ export default function Templates({ onSelectTemplate }: Props) {
   const userTemplates = templates.filter(t => !t.is_system)
 
   return (
-    <div className="p-6 max-w-4xl mx-auto">
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">Scan Templates</h1>
-        <button
-          onClick={() => setShowCreate(true)}
-          className="flex items-center gap-2 px-3 py-1.5 bg-blue-600 text-white rounded text-sm hover:bg-blue-700"
-        >
+    <div style={{ padding: '24px 28px', maxWidth: 960 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
+        <h1 style={{ fontSize: 20, fontWeight: 700, color: 'var(--text-0)' }}>Scan Templates</h1>
+        <button onClick={() => setShowCreate(true)} className="btn btn-primary btn-sm">
           <Plus size={14} /> New Template
         </button>
       </div>
 
       {showCreate && (
-        <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 space-y-3 mb-6">
-          <h3 className="font-medium text-sm">New Template</h3>
+        <div className="panel" style={{ padding: 16, marginBottom: 20 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-0)', marginBottom: 12 }}>New Template</div>
           <input
             value={form.name}
             onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
             placeholder="Template name"
-            className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
+            className="input"
+            style={{ marginBottom: 8 }}
           />
           <textarea
             value={form.description}
             onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
             placeholder="Description (optional)"
             rows={2}
-            className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
+            className="textarea"
+            style={{ marginBottom: 10 }}
           />
-          <div className="flex gap-2">
-            <button
-              onClick={() => createMut.mutate()}
-              disabled={!form.name || createMut.isPending}
-              className="px-3 py-1.5 bg-blue-600 text-white rounded text-sm hover:bg-blue-700 disabled:opacity-50"
-            >
-              {createMut.isPending ? 'Creating...' : 'Create'}
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button onClick={() => createMut.mutate()} disabled={!form.name || createMut.isPending} className="btn btn-primary btn-sm">
+              {createMut.isPending ? 'Creating…' : 'Create'}
             </button>
-            <button onClick={() => setShowCreate(false)} className="px-3 py-1.5 text-gray-600 text-sm">Cancel</button>
+            <button onClick={() => setShowCreate(false)} className="btn btn-ghost btn-sm">Cancel</button>
           </div>
         </div>
       )}
 
       {isLoading ? (
-        <div className="text-gray-500 text-sm p-4">Loading...</div>
+        <div className="dimmer" style={{ fontSize: 13, padding: '20px 0' }}>Loading…</div>
       ) : (
-        <div className="space-y-6">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
           {systemTemplates.length > 0 && (
             <section>
-              <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3 flex items-center gap-2">
-                <Lock size={12} /> System Templates
-              </h2>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div style={{ fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-3)', marginBottom: 10, display: 'flex', alignItems: 'center', gap: 6 }}>
+                <Lock size={11} /> System Templates
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 12 }}>
                 {systemTemplates.map(t => (
-                  <TemplateCard
-                    key={t.id}
-                    template={t}
-                    onSelect={onSelectTemplate}
-                    canEdit={false}
-                    canDelete={false}
-                    onUse={() => openUseTemplate(t)}
-                  />
+                  <TemplateCard key={t.id} template={t} onSelect={onSelectTemplate} canEdit={false} canDelete={false} onUse={() => openUseTemplate(t)} />
                 ))}
               </div>
             </section>
@@ -147,19 +130,16 @@ export default function Templates({ onSelectTemplate }: Props) {
 
           {userTemplates.length > 0 && (
             <section>
-              <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3 flex items-center gap-2">
-                <User size={12} /> My Templates
-              </h2>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div style={{ fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-3)', marginBottom: 10, display: 'flex', alignItems: 'center', gap: 6 }}>
+                <User size={11} /> My Templates
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 12 }}>
                 {userTemplates.map(t => (
                   <TemplateCard
-                    key={t.id}
-                    template={t}
-                    onSelect={onSelectTemplate}
-                    canEdit={true}
-                    canDelete={true}
+                    key={t.id} template={t} onSelect={onSelectTemplate}
+                    canEdit canDelete
                     onDelete={() => deleteMut.mutate(t.id)}
-                    onSave={(body) => updateMut.mutate({ id: t.id, body })}
+                    onSave={body => updateMut.mutate({ id: t.id, body })}
                     isSaving={updateMut.isPending}
                     onUse={() => openUseTemplate(t)}
                   />
@@ -169,122 +149,74 @@ export default function Templates({ onSelectTemplate }: Props) {
           )}
 
           {templates.length === 0 && (
-            <div className="text-center py-12 text-gray-400 text-sm">No templates yet</div>
+            <div style={{ textAlign: 'center', padding: '48px 20px', color: 'var(--text-3)', fontSize: 13 }}>No templates yet</div>
           )}
         </div>
       )}
 
-      {/* ── Use Template Modal ─────────────────────────────────────────────── */}
+      {/* Use Template Modal */}
       {useTemplate && (
         <div
-          style={{
-            position: 'fixed',
-            inset: 0,
-            zIndex: 50,
-            background: 'rgba(0,0,0,0.55)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            padding: '16px',
-          }}
-          onClick={(e) => { if (e.target === e.currentTarget) closeUseTemplate() }}
+          style={{ position: 'fixed', inset: 0, zIndex: 50, background: 'oklch(0.05 0.01 255 / 0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}
+          onClick={e => { if (e.target === e.currentTarget) closeUseTemplate() }}
         >
-          <div
-            className="bg-white rounded-xl shadow-2xl w-full"
-            style={{ maxWidth: 520 }}
-          >
+          <div className="panel" style={{ maxWidth: 520, width: '100%', padding: 0, overflow: 'hidden', boxShadow: '0 24px 80px #0009' }}>
             {/* Header */}
-            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
-              <div className="flex items-center gap-2">
-                <Rocket size={16} className="text-blue-600" />
-                <h2 className="font-semibold text-gray-900">
-                  Use Template: <span className="text-blue-600">{useTemplate.name}</span>
-                </h2>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 18px', borderBottom: '1px solid var(--border)', background: 'var(--bg-2)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <Rocket size={15} style={{ color: 'var(--accent)' }} />
+                <span style={{ fontWeight: 600, fontSize: 14, color: 'var(--text-0)' }}>
+                  Use Template: <span style={{ color: 'var(--accent)' }}>{useTemplate.name}</span>
+                </span>
               </div>
-              <button
-                onClick={closeUseTemplate}
-                className="p-1 text-gray-400 hover:text-gray-600 rounded"
-              >
-                <X size={18} />
-              </button>
+              <button onClick={closeUseTemplate} className="btn btn-ghost btn-icon btn-sm"><X size={15} /></button>
             </div>
 
-            <div className="px-6 py-5 space-y-4">
-              {/* Success state */}
+            <div style={{ padding: '18px 20px', display: 'flex', flexDirection: 'column', gap: 14 }}>
               {createdScanId ? (
-                <div className="space-y-4">
-                  <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-                    <div className="flex items-center gap-2 text-green-700 font-medium text-sm mb-1">
-                      <Check size={15} /> Scan created successfully
+                <>
+                  <div style={{ padding: 14, borderRadius: 8, background: 'oklch(0.22 0.05 145 / 0.3)', border: '1px solid var(--ok)' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--ok)', fontWeight: 600, fontSize: 13, marginBottom: 4 }}>
+                      <Check size={14} /> Scan created successfully
                     </div>
-                    <p className="text-xs text-green-600 font-mono">ID: {createdScanId}</p>
-                    <p className="text-xs text-green-600 mt-1">
-                      Navigate to the <strong>Scans</strong> page to view and launch it.
-                    </p>
+                    <div className="mono" style={{ fontSize: 11, color: 'var(--ok)' }}>ID: {createdScanId}</div>
+                    <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 4 }}>Navigate to the Scans page to view and launch it.</div>
                   </div>
-                  <div className="flex justify-end">
-                    <button
-                      onClick={closeUseTemplate}
-                      className="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg text-sm font-medium"
-                    >
-                      Close
-                    </button>
+                  <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                    <button onClick={closeUseTemplate} className="btn btn-ghost btn-sm">Close</button>
                   </div>
-                </div>
+                </>
               ) : (
                 <>
-                  {/* Scan name */}
                   <div>
-                    <label className="block text-xs font-medium text-gray-600 mb-1.5">Scan Name</label>
-                    <input
-                      value={scanName}
-                      onChange={e => setScanName(e.target.value)}
-                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
-                      placeholder="My scan"
-                    />
+                    <label className="label">Scan Name</label>
+                    <input value={scanName} onChange={e => setScanName(e.target.value)} className="input" placeholder="My scan" />
                   </div>
-
-                  {/* Targets */}
                   <div>
-                    <label className="block text-xs font-medium text-gray-600 mb-1.5">
-                      Targets <span className="text-gray-400 font-normal">(one per line: IP, CIDR, hostname)</span>
-                    </label>
+                    <label className="label">Targets <span className="dimmer" style={{ fontWeight: 400 }}>(one per line: IP, CIDR, hostname)</span></label>
                     <textarea
                       value={targets}
                       onChange={e => setTargets(e.target.value)}
                       rows={4}
-                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono resize-none"
+                      className="textarea"
+                      style={{ fontFamily: 'var(--font-mono)', fontSize: 12, resize: 'none' }}
                       placeholder={"192.168.1.0/24\nexample.com"}
                     />
                   </div>
-
-                  {/* Profile preview */}
                   <ProfilePreview profileJson={useTemplate.profile_json} />
-
-                  {/* Error */}
                   {launchScanMut.isError && (
-                    <div className="bg-red-50 border border-red-200 rounded-lg px-3 py-2 text-xs text-red-600">
-                      {launchScanMut.error instanceof Error
-                        ? launchScanMut.error.message
-                        : 'Failed to create scan. Please try again.'}
+                    <div style={{ padding: '8px 12px', borderRadius: 6, background: 'oklch(0.22 0.08 25 / 0.3)', border: '1px solid var(--sev-high)', fontSize: 12, color: 'var(--sev-high)' }}>
+                      {launchScanMut.error instanceof Error ? launchScanMut.error.message : 'Failed to create scan'}
                     </div>
                   )}
-
-                  {/* Actions */}
-                  <div className="flex gap-2 justify-end pt-1">
-                    <button
-                      onClick={closeUseTemplate}
-                      className="px-4 py-2 text-sm text-gray-600 rounded-lg hover:bg-gray-100"
-                    >
-                      Cancel
-                    </button>
+                  <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', paddingTop: 4 }}>
+                    <button onClick={closeUseTemplate} className="btn btn-ghost btn-sm">Cancel</button>
                     <button
                       onClick={() => launchScanMut.mutate()}
                       disabled={!scanName.trim() || !targets.trim() || launchScanMut.isPending}
-                      className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="btn btn-primary btn-sm"
                     >
-                      <Rocket size={14} />
-                      {launchScanMut.isPending ? 'Creating...' : 'Launch Scan'}
+                      <Rocket size={13} /> {launchScanMut.isPending ? 'Creating…' : 'Launch Scan'}
                     </button>
                   </div>
                 </>
@@ -297,50 +229,33 @@ export default function Templates({ onSelectTemplate }: Props) {
   )
 }
 
-// ── Profile Preview ──────────────────────────────────────────────────────────
-
 function ProfilePreview({ profileJson }: { profileJson: Record<string, unknown> | null }) {
   if (!profileJson) return null
-
   const pj = typeof profileJson === 'string' ? JSON.parse(profileJson) : profileJson
   const config = jsonToConfig(pj)
-
   const portLabel = PORT_RANGES.find(r => r.value === config.port_range)?.label ?? config.port_range
   const plugins = (pj.plugins as string[] | undefined) ?? ['*']
   const pluginDisplay = plugins.includes('*') ? 'All categories' : plugins.join(', ')
 
   return (
-    <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 space-y-1.5">
-      <p className="text-xs font-medium text-gray-500 mb-2">Template profile</p>
-      <div className="flex items-center gap-2 text-xs">
-        <span className="text-gray-400 w-24 flex-shrink-0">Port range</span>
-        <span className="font-mono text-gray-700">{portLabel}</span>
-      </div>
-      <div className="flex items-start gap-2 text-xs">
-        <span className="text-gray-400 w-24 flex-shrink-0">Plugins</span>
-        <span className="font-mono text-gray-700 break-all">{pluginDisplay}</span>
-      </div>
-      {typeof pj.max_concurrent === 'number' && (
-        <div className="flex items-center gap-2 text-xs">
-          <span className="text-gray-400 w-24 flex-shrink-0">Concurrency</span>
-          <span className="font-mono text-gray-700">{pj.max_concurrent}</span>
+    <div style={{ background: 'var(--bg-2)', border: '1px solid var(--border)', borderRadius: 6, padding: 12 }}>
+      <div className="dimmer" style={{ fontSize: 11, fontWeight: 600, marginBottom: 8 }}>Template profile</div>
+      {[
+        { label: 'Port range', value: portLabel },
+        { label: 'Plugins', value: pluginDisplay },
+        ...(typeof pj.max_concurrent === 'number' ? [{ label: 'Concurrency', value: String(pj.max_concurrent) }] : []),
+      ].map(row => (
+        <div key={row.label} style={{ display: 'flex', gap: 8, fontSize: 12, marginBottom: 4 }}>
+          <span className="dimmer" style={{ width: 90, flexShrink: 0 }}>{row.label}</span>
+          <span className="mono" style={{ color: 'var(--text-1)', wordBreak: 'break-all' }}>{row.value}</span>
         </div>
-      )}
+      ))}
     </div>
   )
 }
 
-// ── Template Card ────────────────────────────────────────────────────────────
-
 function TemplateCard({
-  template,
-  onSelect,
-  canEdit,
-  canDelete,
-  onDelete,
-  onSave,
-  isSaving,
-  onUse,
+  template, onSelect, canEdit, canDelete, onDelete, onSave, isSaving, onUse,
 }: {
   template: ScanTemplate
   onSelect?: (t: ScanTemplate) => void
@@ -354,9 +269,7 @@ function TemplateCard({
   const [editing, setEditing] = useState(false)
   const [editName, setEditName] = useState(template.name)
   const [editDesc, setEditDesc] = useState(template.description ?? '')
-  const [editProfile, setEditProfile] = useState<ProfileConfig>(
-    jsonToConfig(template.profile_json as Record<string, unknown> | null)
-  )
+  const [editProfile, setEditProfile] = useState<ProfileConfig>(jsonToConfig(template.profile_json as Record<string, unknown> | null))
 
   function startEdit() {
     setEditName(template.name)
@@ -366,53 +279,36 @@ function TemplateCard({
   }
 
   function handleSave() {
-    onSave?.({
-      name: editName || undefined,
-      description: editDesc || undefined,
-      profile_json: configToJson(editProfile),
-    })
+    onSave?.({ name: editName || undefined, description: editDesc || undefined, profile_json: configToJson(editProfile) })
     setEditing(false)
   }
 
-  // Profile summary for card
   const pj = template.profile_json
   const portLabel = pj
-    ? PORT_RANGES.find(r => r.value === (pj as any).port_range)?.label.split(' —')[0]
-      ?? (pj as any).port_range ?? 'default'
+    ? PORT_RANGES.find(r => r.value === (pj as any).port_range)?.label.split(' —')[0] ?? (pj as any).port_range ?? 'default'
     : 'default'
 
   if (editing) {
     return (
-      <div className="bg-white border border-blue-300 rounded-lg p-4 space-y-3">
-        <input
-          value={editName}
-          onChange={e => setEditName(e.target.value)}
-          className="w-full border border-gray-300 rounded px-3 py-1.5 text-sm font-medium"
-          placeholder="Template name"
-        />
+      <div className="panel" style={{ padding: 14, border: '1px solid var(--accent)' }}>
+        <input value={editName} onChange={e => setEditName(e.target.value)} className="input" placeholder="Template name" style={{ marginBottom: 8 }} />
         <textarea
           value={editDesc}
           onChange={e => setEditDesc(e.target.value)}
           placeholder="Description (optional)"
           rows={2}
-          className="w-full border border-gray-300 rounded px-3 py-1.5 text-sm text-gray-600 resize-none"
+          className="textarea"
+          style={{ marginBottom: 10 }}
         />
-        <div className="border border-gray-200 rounded-lg p-3 bg-gray-50">
+        <div style={{ background: 'var(--bg-2)', border: '1px solid var(--border)', borderRadius: 6, padding: 12, marginBottom: 12 }}>
           <ProfileEditor config={editProfile} onChange={setEditProfile} />
         </div>
-        <div className="flex gap-2">
-          <button
-            onClick={handleSave}
-            disabled={!editName || isSaving}
-            className="flex items-center gap-1 px-3 py-1.5 bg-blue-600 text-white rounded text-sm hover:bg-blue-700 disabled:opacity-50"
-          >
-            <Check size={13} /> {isSaving ? 'Saving...' : 'Save'}
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button onClick={handleSave} disabled={!editName || isSaving} className="btn btn-primary btn-sm">
+            <Check size={12} /> {isSaving ? 'Saving…' : 'Save'}
           </button>
-          <button
-            onClick={() => setEditing(false)}
-            className="flex items-center gap-1 px-3 py-1.5 text-gray-600 rounded text-sm hover:bg-gray-100"
-          >
-            <X size={13} /> Cancel
+          <button onClick={() => setEditing(false)} className="btn btn-ghost btn-sm">
+            <X size={12} /> Cancel
           </button>
         </div>
       </div>
@@ -420,60 +316,38 @@ function TemplateCard({
   }
 
   return (
-    <div className="bg-white border border-gray-200 rounded-lg p-4 hover:border-gray-300 transition-colors">
-      <div className="flex items-start justify-between gap-2">
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2">
-            <FileText size={14} className="text-blue-500 flex-shrink-0" />
-            <span className="font-medium text-sm truncate">{template.name}</span>
+    <div className="panel" style={{ padding: 14 }}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+            <FileText size={13} style={{ color: 'var(--accent)', flexShrink: 0 }} />
+            <span style={{ fontWeight: 600, fontSize: 13, color: 'var(--text-0)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {template.name}
+            </span>
             {template.is_system && (
-              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs bg-gray-100 text-gray-500 font-medium flex-shrink-0">
-                <Lock size={9} /> system
+              <span className="mono" style={{ fontSize: 10, padding: '1px 5px', borderRadius: 4, background: 'var(--bg-3)', color: 'var(--text-3)', display: 'inline-flex', alignItems: 'center', gap: 3, flexShrink: 0 }}>
+                <Lock size={8} /> system
               </span>
             )}
           </div>
           {template.description && (
-            <p className="text-xs text-gray-500 mt-1 line-clamp-2">{template.description}</p>
+            <p style={{ fontSize: 12, color: 'var(--text-2)', marginBottom: 6, lineHeight: 1.5 }}>{template.description}</p>
           )}
-          {/* Profile summary */}
-          <div className="mt-2 text-xs text-gray-400 font-mono flex items-center gap-3">
-            <span>ports: {portLabel}</span>
-          </div>
+          <div className="mono dimmer" style={{ fontSize: 10 }}>ports: {portLabel}</div>
         </div>
-        <div className="flex items-center gap-1 flex-shrink-0">
-          {/* Use Template button — always visible */}
-          <button
-            onClick={onUse}
-            className="flex items-center gap-1 px-2.5 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 font-medium"
-            title="Use this template to create a scan"
-          >
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+          <button onClick={onUse} className="btn btn-primary btn-sm" style={{ fontSize: 11 }} title="Use this template">
             <Rocket size={11} /> Use
           </button>
           {onSelect && (
-            <button
-              onClick={() => onSelect(template)}
-              className="px-2 py-1 text-xs bg-blue-50 text-blue-600 rounded hover:bg-blue-100"
-            >
-              Select
-            </button>
+            <button onClick={() => onSelect(template)} className="btn btn-ghost btn-sm" style={{ fontSize: 11 }}>Select</button>
           )}
           {canEdit && (
-            <button
-              onClick={startEdit}
-              className="p-1 text-gray-400 hover:text-blue-500 rounded"
-              title="Edit"
-            >
-              <Pencil size={13} />
-            </button>
+            <button onClick={startEdit} className="btn btn-ghost btn-icon btn-sm" title="Edit"><Pencil size={12} /></button>
           )}
           {canDelete && onDelete && (
-            <button
-              onClick={onDelete}
-              className="p-1 text-gray-400 hover:text-red-500 rounded"
-              title="Delete"
-            >
-              <Trash2 size={13} />
-            </button>
+            <button onClick={onDelete} className="btn btn-ghost btn-icon btn-sm" title="Delete" style={{ color: 'var(--sev-high)' }}><Trash2 size={12} /></button>
           )}
         </div>
       </div>
