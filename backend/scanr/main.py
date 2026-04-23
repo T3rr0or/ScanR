@@ -14,7 +14,7 @@ from slowapi.middleware import SlowAPIMiddleware
 from scanr.api.router import api_router, ws_router_outer
 from scanr.api.websocket import router as ws_router
 from scanr.config import get_settings
-from scanr.db.init_db import create_tables, seed_admin, seed_plugins, seed_templates
+from scanr.db.init_db import create_tables, seed_admin, seed_plugins, seed_templates, _seed_builtin_wordlists
 from scanr.db.session import AsyncSessionLocal
 from scanr.utils.logging import configure_logging
 
@@ -52,6 +52,7 @@ async def lifespan(app: FastAPI):
         await seed_admin(db)
         await seed_plugins(db)
         await seed_templates(db)
+        await _seed_builtin_wordlists(db)
     logger.info("ScanR ready")
     yield
     logger.info("ScanR shutting down")

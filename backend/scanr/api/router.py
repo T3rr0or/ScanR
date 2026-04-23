@@ -18,6 +18,7 @@ from .v1 import (
     system,
     templates,
     webhooks,
+    wordlists,
 )
 from .websocket import router as ws_router
 
@@ -39,6 +40,7 @@ api_router.include_router(templates.router)
 api_router.include_router(exclusions.router)
 api_router.include_router(agents.router)
 api_router.include_router(agent_jobs.router)
+api_router.include_router(wordlists.router)
 
 # WebSocket (no v1 prefix — cleaner WS URLs)
 ws_router_outer = APIRouter()

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import logging
+import os
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from scanr.auth.password import hash_password
@@ -211,3 +213,55 @@ async def seed_templates(session: AsyncSession) -> None:
 
     await session.commit()
     logger.info("System scan templates seeded")
+
+
+async def _seed_builtin_wordlists(db: AsyncSession) -> None:
+    """Create built-in wordlist records if not already present."""
+    from pathlib import Path as _Path
+    from scanr.models.wordlist import Wordlist as _Wordlist
+
+    BUILTIN_DIR = _Path(__file__).parent.parent / "wordlists" / "builtin"
+    WORDLIST_DIR = _Path(os.getenv("WORDLIST_DIR", "/app/wordlists")) / "builtin"
+    WORDLIST_DIR.mkdir(parents=True, exist_ok=True)
+
+    BUILTINS = [
+        ("usernames_common", "Common Usernames", "usernames", "Top 60 common service/device usernames"),
+        ("passwords_common", "Common Passwords", "passwords", "Top 100 commonly used passwords"),
+        ("credentials_common", "Common Credentials", "credentials", "80 common username:password pairs"),
+    ]
+
+    for slug, name, wl_type, desc in BUILTINS:
+        src = BUILTIN_DIR / f"{slug}.txt"
+        if not src.exists():
+            continue  # file not bundled (dev environment)
+
+        dst = WORDLIST_DIR / f"{slug}.txt"
+        # Copy to volume if not there yet
+        if not dst.exists():
+            import shutil
+            shutil.copy2(src, dst)
+
+        # Count lines
+        with open(dst, encoding="utf-8") as f:
+            count = sum(1 for l in f if l.strip() and not l.startswith("#"))
+
+        # Upsert by file path
+        existing = await db.execute(
+            select(_Wordlist).where(_Wordlist.file_path == str(dst))
+        )
+        if existing.scalar_one_or_none():
+            continue
+
+        db.add(_Wordlist(
+            user_id=None,
+            name=name,
+            description=desc,
+            type=wl_type,
+            source="builtin",
+            file_path=str(dst),
+            entry_count=count,
+            is_builtin=True,
+        ))
+
+    await db.commit()
+    logger.info("Built-in wordlists seeded")

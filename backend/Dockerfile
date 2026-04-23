@@ -42,5 +42,9 @@ RUN playwright install --with-deps chromium
 # Copy source
 COPY scanr/ ./scanr/
 
+# Built-in wordlists
+RUN mkdir -p /app/wordlists/builtin
+COPY scanr/wordlists/builtin/ /app/wordlists/builtin/
+
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1

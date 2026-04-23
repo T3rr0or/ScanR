@@ -17,6 +17,7 @@ from .service import Service
 from .target import Target, TargetType
 from .user import User, UserRole
 from .webhook import Webhook
+from .wordlist import Wordlist
 
 __all__ = [
     "Base",
@@ -49,4 +50,5 @@ __all__ = [
     "APIKey",
     "Webhook",
     "Exclusion",
+    "Wordlist",
 ]

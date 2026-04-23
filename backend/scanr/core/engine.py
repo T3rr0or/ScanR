@@ -68,55 +68,37 @@ class ScanEngine:
         )
 
         # Decrypt credentials if provided
-        from scanr.credentials.vault import decrypt
-        from scanr.utils.exceptions import VaultError
-
         if scan.credential_id:
-            from scanr.models.credential import Credential
             cred_result = await self.db.execute(
-                select(Credential).where(Credential.id == scan.credential_id)
+                select(__import__("scanr.models", fromlist=["Credential"]).Credential)
+                .where(__import__("scanr.models", fromlist=["Credential"]).Credential.id == scan.credential_id)
             )
             cred = cred_result.scalar_one_or_none()
             if cred:
-                try:
-                    context.credential_data = decrypt(cred.encrypted_data)
-                    await scan_log.info(f"Credentials loaded: {cred.name}", phase="engine")
-                except VaultError as exc:
-                    await scan_log.error(
-                        f"Credential decrypt failed for '{cred.name}': {exc} — scanning without credentials",
-                        phase="engine",
-                    )
+                from scanr.credentials.vault import decrypt
+                context.credential_data = decrypt(cred.encrypted_data)
+                await scan_log.info(f"Credentials loaded: {cred.name}", phase="engine")
 
-        # Load scan-scoped credentials (inline credentials attached at scan creation)
-        from scanr.models.scan_credential import ScanCredential
-
-        sc_result = await self.db.execute(
-            select(ScanCredential).where(ScanCredential.scan_id == scan.id)
-        )
-        scan_creds = sc_result.scalars().all()
-
-        decrypted_creds: list[dict] = []
-        for sc in scan_creds:
+        # Load wordlist paths for brute_force config
+        import json as _json_bf
+        brute_cfg = {}
+        if scan.profile_json:
             try:
-                data = decrypt(sc.encrypted_data)
-                decrypted_creds.append({
-                    "role": sc.role,
-                    "type": sc.type,
-                    "username": sc.username,
-                    "domain": sc.domain,
-                    **data,
-                })
-            except Exception as exc:
-                await scan_log.warning(
-                    f"Could not decrypt scan credential (role={sc.role}): {exc}",
-                    phase="engine",
-                )
+                _pj = _json_bf.loads(scan.profile_json) if isinstance(scan.profile_json, str) else scan.profile_json
+                brute_cfg = _pj.get("brute_force", {})
+            except Exception:
+                pass
 
-        context.scan_credentials = decrypted_creds
-        if decrypted_creds:
-            await scan_log.info(
-                f"Loaded {len(decrypted_creds)} scan-scoped credential(s)", phase="engine"
+        wl_ids = [v for k, v in brute_cfg.items() if k.endswith("_wordlist_id") and v]
+        if wl_ids:
+            from scanr.models.wordlist import Wordlist as _Wordlist
+            wl_result = await self.db.execute(
+                select(_Wordlist).where(
+                    _Wordlist.id.in_(wl_ids)
+                )
             )
+            for wl in wl_result.scalars().all():
+                context._wordlist_paths[wl.id] = wl.file_path
 
         collector = ResultCollector(self.scan_id, self.db, scan_log, user_id=scan.user_id)
         rate_limiter = RateLimiter()

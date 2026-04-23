@@ -50,11 +50,28 @@ class DefaultCredsWebPlugin(PluginBase):
 
     async def check(self, context: "ScanContext", host: "Host") -> list[FindingData]:
         findings = []
+        cfg = context.get_brute_config()
+        cred_wl_id = cfg.get("credential_wordlist_id")
+
+        if cred_wl_id:
+            custom_creds = list(context.iter_credential_pairs(cred_wl_id))
+        else:
+            username_wl_id = cfg.get("username_wordlist_id")
+            password_wl_id = cfg.get("password_wordlist_id")
+            if username_wl_id and password_wl_id:
+                users = list(context.iter_wordlist(username_wl_id))[:50]
+                pwds = list(context.iter_wordlist(password_wl_id))[:50]
+                custom_creds = [(u, p) for u in users for p in pwds]
+            else:
+                custom_creds = None  # use DEFAULT_CREDS
+
+        creds_to_try = custom_creds if custom_creds is not None else DEFAULT_CREDS
+
         for port in host.ports:
             if port.number not in HTTP_PORTS or port.state != "open":
                 continue
             scheme = "https" if port.number in (443, 8443) else "http"
-            found = await self._try_default_creds(host.ip, port.number, scheme)
+            found = await self._try_default_creds(host.ip, port.number, scheme, creds_to_try)
             for username, password, path in found:
                 findings.append(FindingData(
                     plugin_id=self.id,
@@ -68,7 +85,7 @@ class DefaultCredsWebPlugin(PluginBase):
                 ))
         return findings
 
-    async def _try_default_creds(self, ip: str, port: int, scheme: str) -> list[tuple]:
+    async def _try_default_creds(self, ip: str, port: int, scheme: str, creds: list[tuple[str, str]]) -> list[tuple]:
         found = []
         async with httpx.AsyncClient(verify=False, timeout=5.0, follow_redirects=True) as client:
             for path in ADMIN_PATHS:
@@ -80,7 +97,7 @@ class DefaultCredsWebPlugin(PluginBase):
                 except Exception:
                     continue
 
-                for username, password in DEFAULT_CREDS:
+                for username, password in creds:
                     try:
                         resp = await client.post(
                             url,
