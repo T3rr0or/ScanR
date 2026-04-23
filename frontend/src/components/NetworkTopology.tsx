@@ -1,8 +1,9 @@
 /**
  * NetworkTopology — D3 force-directed graph of discovered hosts.
- * Center node = scanner itself. Hosts orbit around it.
- * Subnet siblings get weak attraction so same-/24 nodes loosely cluster.
- * Nodes sized by open port count, colored by highest severity finding.
+ *
+ * Single subnet:   all hosts connect directly to scanner node.
+ * Multiple subnets: subnet gateway nodes sit between scanner and hosts —
+ *                   scanner → subnet/24 → individual hosts.
  */
 import { useEffect, useRef, useState } from 'react'
 import * as d3 from 'd3'
@@ -22,7 +23,6 @@ interface Props {
   onSelectHost?: (host: HostNode) => void
 }
 
-// Resolved hex values for D3 (can't use CSS vars in SVG attributes directly)
 const SEV_HEX: Record<string, string> = {
   critical: '#f43f5e',
   high:     '#f97316',
@@ -31,7 +31,6 @@ const SEV_HEX: Record<string, string> = {
   info:     '#38bdf8',
   none:     '#4b5563',
 }
-
 const SEV_ORDER = ['critical', 'high', 'medium', 'low', 'info']
 
 function hostSeverity(ip: string, findingsByHost?: Record<string, { severity: string }[]>): string {
@@ -48,7 +47,7 @@ function subnet24(ip: string): string {
 }
 
 function nodeRadius(openPorts: number): number {
-  return Math.max(7, Math.min(24, 7 + Math.sqrt(openPorts) * 3))
+  return Math.max(7, Math.min(22, 7 + Math.sqrt(openPorts) * 2.8))
 }
 
 export default function NetworkTopology({ hosts, findingsByHost, onSelectHost }: Props) {
@@ -61,6 +60,8 @@ export default function NetworkTopology({ hosts, findingsByHost, onSelectHost }:
 
     const width = containerRef.current.clientWidth || 800
     const height = containerRef.current.clientHeight || 500
+    const cx = width / 2
+    const cy = height / 2
 
     const svg = d3.select(svgRef.current)
     svg.selectAll('*').remove()
@@ -69,233 +70,236 @@ export default function NetworkTopology({ hosts, findingsByHost, onSelectHost }:
     // Grid background
     const defs = svg.append('defs')
     defs.append('pattern')
-      .attr('id', 'topo-grid')
-      .attr('width', 32)
-      .attr('height', 32)
-      .attr('patternUnits', 'userSpaceOnUse')
-      .append('path')
-        .attr('d', 'M 32 0 L 0 0 0 32')
-        .attr('fill', 'none')
-        .attr('stroke', '#1f2937')
-        .attr('stroke-width', 0.5)
-
-    svg.append('rect')
-      .attr('width', width)
-      .attr('height', height)
-      .attr('fill', 'url(#topo-grid)')
+      .attr('id', 'topo-grid').attr('width', 32).attr('height', 32).attr('patternUnits', 'userSpaceOnUse')
+      .append('path').attr('d', 'M 32 0 L 0 0 0 32').attr('fill', 'none').attr('stroke', '#1a2032').attr('stroke-width', 0.5)
+    svg.append('rect').attr('width', width).attr('height', height).attr('fill', 'url(#topo-grid)')
 
     if (hosts.length === 0) return
 
-    // Build nodes
-    const nodes = hosts.map(h => ({
-      ...h,
-      openPorts: (h.ports ?? []).filter(p => p.state === 'open').length,
-      severity: hostSeverity(h.ip, findingsByHost),
-      subnet: subnet24(h.ip),
-      _isScanner: false,
-    }))
+    // Group hosts by /24 subnet
+    const subnetMap: Record<string, HostNode[]> = {}
+    hosts.forEach(h => {
+      const s = subnet24(h.ip)
+      if (!subnetMap[s]) subnetMap[s] = []
+      subnetMap[s].push(h)
+    })
+    const subnets = Object.keys(subnetMap)
+    const multiSubnet = subnets.length > 1
 
-    // Center scanner node (fixed at center)
-    const scannerNode: any = {
-      id: '__scanner__',
-      ip: 'Scanner',
-      _isScanner: true,
-      openPorts: 0,
-      severity: 'none',
-      subnet: '',
-      fx: width / 2,
-      fy: height / 2,
+    // Build simulation nodes
+    type SimNode = {
+      id: string; _kind: 'scanner' | 'subnet' | 'host'
+      ip?: string; subnet?: string; label?: string
+      openPorts?: number; severity?: string
+      hostData?: HostNode
+      fx?: number | null; fy?: number | null
+      x?: number; y?: number
     }
-    const allNodes = [scannerNode, ...nodes]
 
-    // Links: every host → scanner center
-    const links: { source: string; target: string }[] = nodes.map(n => ({
-      source: '__scanner__',
-      target: n.id,
-    }))
+    const simNodes: SimNode[] = []
 
-    // Weak subnet links — pull same-/24 nodes together
-    const subnetMap: Record<string, string[]> = {}
-    nodes.forEach(n => {
-      if (!subnetMap[n.subnet]) subnetMap[n.subnet] = []
-      subnetMap[n.subnet].push(n.id)
-    })
-    Object.values(subnetMap).forEach(group => {
-      if (group.length < 2) return
-      const anchor = group[0]
-      for (let i = 1; i < group.length; i++) {
-        links.push({ source: anchor, target: group[i] })
-      }
-    })
+    // Scanner (fixed center)
+    const scannerNode: SimNode = { id: '__scanner__', _kind: 'scanner', fx: cx, fy: cy }
+    simNodes.push(scannerNode)
 
-    const sim = d3.forceSimulation(allNodes as any)
-      .force('link', d3.forceLink(links)
-        .id((d: any) => d.id)
-        .distance((d: any) => d.source.id === '__scanner__' ? 140 : 80)
-        .strength((d: any) => d.source.id === '__scanner__' ? 0.12 : 0.05)
-      )
-      .force('charge', d3.forceManyBody().strength(-260))
-      .force('collision', d3.forceCollide().radius((d: any) => d._isScanner ? 28 : nodeRadius(d.openPorts) + 10))
-      .alphaDecay(0.02)
-
-    const g = svg.append('g')
-
-    svg.call(d3.zoom<SVGSVGElement, unknown>()
-      .scaleExtent([0.15, 6])
-      .on('zoom', e => { g.attr('transform', e.transform.toString()) }) as any)
-
-    // Subnet hulls (behind everything)
-    const subnetRingGroup = g.append('g')
-
-    // Edges — thin lines from scanner to each host
-    const linkGroup = g.append('g')
-      .selectAll('line')
-      .data(links.filter((l: any) => l.source === '__scanner__' || (typeof l.source === 'object' && (l.source as any).id === '__scanner__')))
-      .enter().append('line')
-      .attr('stroke', '#1f2937')
-      .attr('stroke-width', 1)
-      .attr('stroke-opacity', 0.6)
+    // Subnet gateway nodes (only when multiple subnets)
+    if (multiSubnet) {
+      subnets.forEach(s => {
+        simNodes.push({ id: `__subnet__${s}`, _kind: 'subnet', subnet: s, label: s + '.0/24' })
+      })
+    }
 
     // Host nodes
-    const hostGroup = g.append('g')
-      .selectAll('g')
-      .data(nodes).enter().append('g')
+    hosts.forEach(h => {
+      simNodes.push({
+        id: h.id, _kind: 'host',
+        ip: h.ip, subnet: subnet24(h.ip),
+        openPorts: (h.ports ?? []).filter(p => p.state === 'open').length,
+        severity: hostSeverity(h.ip, findingsByHost),
+        hostData: h,
+      })
+    })
+
+    // Build links
+    const links: { source: string; target: string; _kind: 'trunk' | 'branch' }[] = []
+
+    if (multiSubnet) {
+      // Scanner → subnet gateways (trunk lines, stronger/longer)
+      subnets.forEach(s => {
+        links.push({ source: '__scanner__', target: `__subnet__${s}`, _kind: 'trunk' })
+      })
+      // Subnet gateway → hosts (branch lines)
+      hosts.forEach(h => {
+        links.push({ source: `__subnet__${subnet24(h.ip)}`, target: h.id, _kind: 'branch' })
+      })
+    } else {
+      // Single subnet — all hosts connect directly to scanner
+      hosts.forEach(h => {
+        links.push({ source: '__scanner__', target: h.id, _kind: 'trunk' })
+      })
+    }
+
+    const sim = d3.forceSimulation(simNodes as any)
+      .force('link', d3.forceLink(links as any)
+        .id((d: any) => d.id)
+        .distance((d: any) => d._kind === 'trunk' ? 180 : 90)
+        .strength((d: any) => d._kind === 'trunk' ? 0.18 : 0.25)
+      )
+      .force('charge', d3.forceManyBody().strength((d: any) => d._kind === 'subnet' ? -400 : -220))
+      .force('collision', d3.forceCollide().radius((d: any) => {
+        if (d._kind === 'scanner') return 30
+        if (d._kind === 'subnet') return 22
+        return nodeRadius(d.openPorts ?? 0) + 12
+      }))
+      .alphaDecay(0.018)
+
+    const g = svg.append('g')
+    svg.call(d3.zoom<SVGSVGElement, unknown>()
+      .scaleExtent([0.1, 8])
+      .on('zoom', e => g.attr('transform', e.transform.toString())) as any)
+
+    // ── Draw layers (back to front) ──
+
+    // 1. All edges
+    const edgeGroup = g.append('g')
+    const edges = edgeGroup.selectAll('line')
+      .data(links).enter().append('line')
+      .attr('stroke', (d: any) => d._kind === 'trunk' ? '#1e3a5f' : '#1a2535')
+      .attr('stroke-width', (d: any) => d._kind === 'trunk' ? 1.5 : 1)
+      .attr('stroke-opacity', (d: any) => d._kind === 'trunk' ? 0.8 : 0.5)
+      .attr('stroke-dasharray', (d: any) => d._kind === 'trunk' ? 'none' : '3,2')
+
+    // 2. Subnet gateway nodes
+    const subnetGroup = g.append('g')
+    if (multiSubnet) {
+      const subnetNodes = simNodes.filter(n => n._kind === 'subnet')
+      const subnetGs = subnetGroup.selectAll('g')
+        .data(subnetNodes).enter().append('g')
+        .attr('cursor', 'default')
+
+      // Outer dashed ring
+      subnetGs.append('circle')
+        .attr('r', 18)
+        .attr('fill', 'none')
+        .attr('stroke', '#1e3a5f')
+        .attr('stroke-width', 1)
+        .attr('stroke-dasharray', '4,3')
+
+      // Inner fill
+      subnetGs.append('circle')
+        .attr('r', 13)
+        .attr('fill', '#0d1420')
+        .attr('stroke', '#1e4d7b')
+        .attr('stroke-width', 1.5)
+
+      // Subnet label
+      subnetGs.append('text')
+        .text((d: any) => (d.subnet ?? '').split('.').slice(0, 3).join('.') + '.x')
+        .attr('text-anchor', 'middle')
+        .attr('dy', '0.35em')
+        .attr('font-size', 7.5)
+        .attr('font-family', 'var(--font-mono, monospace)')
+        .attr('fill', '#38bdf8')
+        .attr('fill-opacity', 0.8)
+        .attr('pointer-events', 'none')
+
+      // /24 label below
+      subnetGs.append('text')
+        .text((_d: any) => '/24')
+        .attr('text-anchor', 'middle')
+        .attr('dy', 28)
+        .attr('font-size', 8.5)
+        .attr('font-family', 'var(--font-mono, monospace)')
+        .attr('fill', '#38bdf8')
+        .attr('fill-opacity', 0.4)
+        .attr('pointer-events', 'none')
+    }
+
+    // 3. Host nodes
+    const hostSimNodes = simNodes.filter(n => n._kind === 'host')
+    const hostGs = g.append('g').selectAll('g')
+      .data(hostSimNodes).enter().append('g')
       .attr('cursor', 'pointer')
       .call(d3.drag<SVGGElement, any>()
-        .on('start', (event, d: any) => { if (!event.active) sim.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y })
-        .on('drag', (event, d: any) => { d.fx = event.x; d.fy = event.y })
-        .on('end', (event, d: any) => { if (!event.active) sim.alphaTarget(0); d.fx = null; d.fy = null })
+        .on('start', (ev, d: any) => { if (!ev.active) sim.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y })
+        .on('drag',  (ev, d: any) => { d.fx = ev.x; d.fy = ev.y })
+        .on('end',   (ev, d: any) => { if (!ev.active) sim.alphaTarget(0); d.fx = null; d.fy = null })
       )
 
     // Glow ring for critical/high
-    hostGroup.filter((d: any) => d.severity === 'critical' || d.severity === 'high')
+    hostGs.filter((d: any) => d.severity === 'critical' || d.severity === 'high')
       .append('circle')
-      .attr('r', (d: any) => nodeRadius(d.openPorts) + 5)
+      .attr('r', (d: any) => nodeRadius(d.openPorts ?? 0) + 5)
       .attr('fill', 'none')
-      .attr('stroke', (d: any) => SEV_HEX[d.severity])
+      .attr('stroke', (d: any) => SEV_HEX[d.severity ?? 'none'] as string)
       .attr('stroke-width', 1.5)
-      .attr('stroke-opacity', 0.4)
+      .attr('stroke-opacity', 0.35)
 
-    hostGroup.append('circle')
-      .attr('r', (d: any) => nodeRadius(d.openPorts))
-      .attr('fill', (d: any) => SEV_HEX[d.severity])
-      .attr('fill-opacity', 0.9)
+    hostGs.append('circle')
+      .attr('r', (d: any) => nodeRadius(d.openPorts ?? 0))
+      .attr('fill', (d: any) => SEV_HEX[d.severity ?? 'none'])
+      .attr('fill-opacity', 0.88)
       .attr('stroke', '#0d1117')
       .attr('stroke-width', 1.5)
 
-    hostGroup.append('text')
-      .text((d: any) => d.ip)
+    hostGs.append('text')
+      .text((d: any) => d.ip ?? '')
       .attr('text-anchor', 'middle')
-      .attr('dy', (d: any) => nodeRadius(d.openPorts) + 12)
+      .attr('dy', (d: any) => nodeRadius(d.openPorts ?? 0) + 12)
       .attr('font-size', 9)
       .attr('font-family', 'var(--font-mono, monospace)')
       .attr('fill', '#6b7280')
       .attr('pointer-events', 'none')
 
-    hostGroup
-      .on('mouseenter', (event, d: any) => {
-        const rect = svgRef.current!.getBoundingClientRect()
-        setTooltip({ x: event.clientX - rect.left, y: event.clientY - rect.top, host: d })
+    hostGs
+      .on('mouseenter', (ev, d: any) => {
+        if (!svgRef.current || !d.hostData) return
+        const rect = svgRef.current.getBoundingClientRect()
+        setTooltip({ x: ev.clientX - rect.left, y: ev.clientY - rect.top, host: d.hostData })
       })
       .on('mouseleave', () => setTooltip(null))
-      .on('click', (_, d: any) => { onSelectHost?.(d) })
+      .on('click', (_, d: any) => { if (d.hostData) onSelectHost?.(d.hostData) })
 
-    // Center scanner node (drawn on top)
+    // 4. Scanner node (topmost)
     const scannerG = g.append('g').attr('cursor', 'default')
-
-    // Outer pulse ring
-    scannerG.append('circle')
-      .attr('r', 22)
-      .attr('fill', 'none')
-      .attr('stroke', '#38bdf8')
-      .attr('stroke-width', 1)
-      .attr('stroke-opacity', 0.25)
-      .attr('stroke-dasharray', '4,3')
-
-    scannerG.append('circle')
-      .attr('r', 16)
-      .attr('fill', '#0d1117')
-      .attr('stroke', '#38bdf8')
-      .attr('stroke-width', 2)
-
-    // Scanner crosshair icon
-    scannerG.append('line').attr('x1', -8).attr('x2', 8).attr('y1', 0).attr('y2', 0)
+    scannerG.append('circle').attr('r', 22).attr('fill', 'none')
+      .attr('stroke', '#38bdf8').attr('stroke-width', 1).attr('stroke-opacity', 0.2).attr('stroke-dasharray', '4,3')
+    scannerG.append('circle').attr('r', 15).attr('fill', '#0d1117').attr('stroke', '#38bdf8').attr('stroke-width', 2)
+    scannerG.append('line').attr('x1', -7).attr('x2', 7).attr('y1', 0).attr('y2', 0)
       .attr('stroke', '#38bdf8').attr('stroke-width', 1.5).attr('stroke-linecap', 'round')
-    scannerG.append('line').attr('x1', 0).attr('x2', 0).attr('y1', -8).attr('y2', 8)
+    scannerG.append('line').attr('x1', 0).attr('x2', 0).attr('y1', -7).attr('y2', 7)
       .attr('stroke', '#38bdf8').attr('stroke-width', 1.5).attr('stroke-linecap', 'round')
     scannerG.append('circle').attr('r', 3).attr('fill', 'none').attr('stroke', '#38bdf8').attr('stroke-width', 1.5)
-
-    scannerG.append('text')
-      .text('scanner')
-      .attr('text-anchor', 'middle')
-      .attr('dy', 28)
-      .attr('font-size', 9)
-      .attr('font-family', 'var(--font-mono, monospace)')
-      .attr('fill', '#38bdf8')
-      .attr('fill-opacity', 0.6)
+    scannerG.append('text').text('scanner')
+      .attr('text-anchor', 'middle').attr('dy', 27).attr('font-size', 9)
+      .attr('font-family', 'var(--font-mono, monospace)').attr('fill', '#38bdf8').attr('fill-opacity', 0.55)
       .attr('pointer-events', 'none')
 
+    // ── Tick ──
+    const subnetNodeEls = multiSubnet
+      ? subnetGroup.selectAll<SVGGElement, SimNode>('g')
+      : null
+
     sim.on('tick', () => {
-      // Position scanner node
-      scannerG.attr('transform', `translate(${width / 2},${height / 2})`)
+      scannerG.attr('transform', `translate(${cx},${cy})`)
 
-      // Position host nodes
-      hostGroup.attr('transform', (d: any) => `translate(${d.x},${d.y})`)
+      edges
+        .attr('x1', (d: any) => (typeof d.source === 'object' ? d.source.x : cx) ?? cx)
+        .attr('y1', (d: any) => (typeof d.source === 'object' ? d.source.y : cy) ?? cy)
+        .attr('x2', (d: any) => (typeof d.target === 'object' ? d.target.x : 0) ?? 0)
+        .attr('y2', (d: any) => (typeof d.target === 'object' ? d.target.y : 0) ?? 0)
 
-      // Update edge lines
-      linkGroup
-        .attr('x1', width / 2)
-        .attr('y1', height / 2)
-        .attr('x2', (d: any) => {
-          const target = typeof d.target === 'object' ? d.target : allNodes.find(n => n.id === d.target)
-          return target?.x ?? 0
-        })
-        .attr('y2', (d: any) => {
-          const target = typeof d.target === 'object' ? d.target : allNodes.find(n => n.id === d.target)
-          return target?.y ?? 0
-        })
-
-      // Subnet hulls
-      subnetRingGroup.selectAll('*').remove()
-      const subnets = Object.entries(subnetMap)
-      if (subnets.length > 1) {
-        subnets.forEach(([subnet, ids]) => {
-          const pts = ids.map(id => {
-            const n = (nodes as any[]).find(n => n.id === id)
-            return n ? [n.x, n.y] as [number, number] : null
-          }).filter(Boolean) as [number, number][]
-          if (pts.length < 3) return
-          const hull = d3.polygonHull(pts)
-          if (!hull) return
-          const cx = d3.mean(hull, d => d[0])!
-          const cy = d3.mean(hull, d => d[1])!
-          const expanded = hull.map(([x, y]) => {
-            const dx = x - cx, dy = y - cy
-            const dist = Math.sqrt(dx * dx + dy * dy) || 1
-            return [x + (dx / dist) * 20, y + (dy / dist) * 20] as [number, number]
-          })
-          subnetRingGroup.append('path')
-            .attr('d', `M${expanded.map(p => p.join(',')).join('L')}Z`)
-            .attr('fill', '#0ea5e920')
-            .attr('stroke', '#0ea5e9')
-            .attr('stroke-opacity', 0.18)
-            .attr('stroke-width', 1)
-            .attr('stroke-dasharray', '4,3')
-          subnetRingGroup.append('text')
-            .attr('x', cx).attr('y', cy - 8)
-            .attr('text-anchor', 'middle')
-            .attr('font-size', 10)
-            .attr('font-family', 'var(--font-mono, monospace)')
-            .attr('fill', '#0ea5e9')
-            .attr('fill-opacity', 0.4)
-            .attr('pointer-events', 'none')
-            .text(subnet + '.0/24')
-        })
+      if (subnetNodeEls) {
+        subnetNodeEls.attr('transform', (d: any) => `translate(${d.x ?? cx},${d.y ?? cy})`)
       }
+
+      hostGs.attr('transform', (d: any) => `translate(${d.x ?? 0},${d.y ?? 0})`)
     })
 
     return () => { sim.stop() }
   }, [hosts, findingsByHost])
+
+  const sevLegend = ['critical', 'high', 'medium', 'low', 'info', 'none']
 
   return (
     <div ref={containerRef} style={{ position: 'relative', width: '100%', height: '100%', background: 'var(--bg-1)', borderRadius: 8, overflow: 'hidden' }}>
@@ -305,16 +309,16 @@ export default function NetworkTopology({ hosts, findingsByHost, onSelectHost }:
       <div style={{
         position: 'absolute', top: 12, right: 12,
         background: 'var(--bg-2)', border: '1px solid var(--border)',
-        borderRadius: 8, padding: '10px 12px',
-        fontSize: 11, display: 'flex', flexDirection: 'column', gap: 4,
+        borderRadius: 8, padding: '10px 12px', fontSize: 11,
+        display: 'flex', flexDirection: 'column', gap: 4,
       }}>
-        {SEV_ORDER.concat(['none']).map(sev => (
+        {sevLegend.map(sev => (
           <div key={sev} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
             <span style={{ width: 10, height: 10, borderRadius: '50%', background: SEV_HEX[sev], flexShrink: 0 }} />
             <span style={{ color: 'var(--text-2)', textTransform: 'capitalize' }}>{sev}</span>
           </div>
         ))}
-        <div style={{ borderTop: '1px solid var(--border)', marginTop: 4, paddingTop: 4, color: 'var(--text-3)', lineHeight: 1.6 }}>
+        <div style={{ borderTop: '1px solid var(--border)', marginTop: 4, paddingTop: 4, color: 'var(--text-3)', lineHeight: 1.7 }}>
           <div>Node size = open ports</div>
           <div>Scroll to zoom · drag to pan</div>
         </div>
