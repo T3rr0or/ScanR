@@ -14,13 +14,18 @@ interface Props {
   onClose: () => void
 }
 
+type DeltaTab = 'new' | 'resolved' | 'persisting' | 'hosts' | 'ports'
+
 export default function ScanDelta({ scanId, scanName, onClose }: Props) {
   const [baselineId, setBaselineId] = useState<string>('')
-  const [tab, setTab] = useState<'new' | 'resolved' | 'persisting' | 'hosts' | 'ports'>('new')
+  const [tab, setTab] = useState<DeltaTab>('new')
 
-  const { data: scans = [] } = useQuery({ queryKey: ['scans', 0], queryFn: () => scansApi.list({ limit: 200, offset: 0 }) })
-  const candidates = scans.filter(s =>
-    s.id !== scanId && (s.status === 'completed' || s.status === 'failed')
+  const { data: scans = [] } = useQuery({
+    queryKey: ['scans', 0],
+    queryFn: () => scansApi.list({ limit: 200, offset: 0 }),
+  })
+  const candidates = scans.filter(
+    s => s.id !== scanId && (s.status === 'completed' || s.status === 'failed')
   )
 
   const { data: delta, isLoading, error } = useQuery({
@@ -32,33 +37,85 @@ export default function ScanDelta({ scanId, scanName, onClose }: Props) {
   const baselineName = candidates.find(s => s.id === baselineId)?.name ?? ''
 
   return (
-    <div className="fixed inset-0 z-50 flex">
-      <div className="flex-1 bg-black/40" onClick={onClose} />
-      <div className="w-full max-w-5xl bg-white border-l border-gray-200 flex flex-col overflow-hidden shadow-2xl">
+    <div style={{ position: 'fixed', inset: 0, zIndex: 50, display: 'flex' }}>
+      {/* Backdrop */}
+      <div
+        style={{ flex: 1, background: 'oklch(0.05 0.01 255 / 0.55)' }}
+        onClick={onClose}
+      />
+
+      {/* Slide-over panel */}
+      <div
+        style={{
+          width: '100%',
+          maxWidth: 900,
+          background: 'var(--bg-1)',
+          borderLeft: '1px solid var(--border)',
+          display: 'flex',
+          flexDirection: 'column',
+          overflow: 'hidden',
+          boxShadow: 'var(--shadow-2)',
+        }}
+      >
         {/* Header */}
-        <div className="flex items-center gap-3 px-6 py-4 border-b border-gray-200 bg-gray-50 flex-shrink-0">
-          <div className="flex-1 min-w-0">
-            <h2 className="font-semibold text-gray-900 text-lg">Scan Comparison</h2>
-            <div className="text-sm text-gray-500 flex items-center gap-2 mt-0.5 flex-wrap">
-              <span className="font-medium text-gray-700">{scanName}</span>
-              {baselineName && <>
-                <ArrowRight size={14} />
-                <span className="text-gray-500">{baselineName} (baseline)</span>
-              </>}
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 12,
+            padding: '14px 20px',
+            borderBottom: '1px solid var(--border)',
+            background: 'var(--bg-2)',
+            flexShrink: 0,
+          }}
+        >
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <h2 style={{ fontWeight: 600, color: 'var(--text-0)', fontSize: 15, margin: 0 }}>
+              Scan Comparison
+            </h2>
+            <div
+              style={{
+                fontSize: 12,
+                color: 'var(--text-3)',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
+                marginTop: 2,
+                flexWrap: 'wrap',
+              }}
+            >
+              <span style={{ color: 'var(--text-1)', fontWeight: 500 }}>{scanName}</span>
+              {baselineName && (
+                <>
+                  <ArrowRight size={13} />
+                  <span>{baselineName} (baseline)</span>
+                </>
+              )}
             </div>
           </div>
-          <button onClick={onClose} className="p-2 text-gray-400 hover:text-gray-600 rounded">
-            <X size={18} />
+          <button
+            onClick={onClose}
+            className="btn btn-ghost btn-icon"
+            title="Close"
+          >
+            <X size={16} />
           </button>
         </div>
 
         {/* Baseline selector */}
-        <div className="px-6 py-4 border-b border-gray-200 bg-white flex-shrink-0">
-          <label className="block text-xs font-medium text-gray-600 mb-1.5">Compare against baseline scan</label>
+        <div
+          style={{
+            padding: '12px 20px',
+            borderBottom: '1px solid var(--border)',
+            background: 'var(--bg-1)',
+            flexShrink: 0,
+          }}
+        >
+          <label className="label">Compare against baseline scan</label>
           <select
             value={baselineId}
             onChange={e => setBaselineId(e.target.value)}
-            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+            className="select-field"
           >
             <option value="">— select a baseline —</option>
             {candidates.map(s => (
@@ -68,41 +125,185 @@ export default function ScanDelta({ scanId, scanName, onClose }: Props) {
             ))}
           </select>
           {candidates.length === 0 && (
-            <p className="mt-1 text-xs text-gray-400">No other completed scans available to compare against.</p>
+            <p style={{ marginTop: 6, fontSize: 11, color: 'var(--text-3)' }}>
+              No other completed scans available to compare against.
+            </p>
           )}
         </div>
 
         {/* Content */}
-        <div className="flex-1 overflow-hidden flex flex-col min-h-0">
+        <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
           {!baselineId && (
-            <div className="flex-1 flex items-center justify-center text-gray-400 text-sm">
+            <div
+              style={{
+                flex: 1,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                color: 'var(--text-3)',
+                fontSize: 13,
+              }}
+            >
               Select a baseline scan above to see the delta
             </div>
           )}
+
           {baselineId && isLoading && (
-            <div className="flex-1 flex items-center justify-center text-gray-400 text-sm">Loading comparison…</div>
+            <div
+              style={{
+                flex: 1,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                color: 'var(--text-3)',
+                fontSize: 13,
+              }}
+            >
+              Loading comparison…
+            </div>
           )}
+
           {baselineId && error && (
-            <div className="flex-1 flex items-center justify-center text-red-500 text-sm">Failed to load delta</div>
+            <div
+              style={{
+                flex: 1,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                color: 'var(--sev-high)',
+                fontSize: 13,
+              }}
+            >
+              Failed to load delta
+            </div>
           )}
+
           {delta && (
             <>
               {/* Summary cards */}
-              <div className="grid grid-cols-2 md:grid-cols-6 gap-3 px-6 py-4 border-b border-gray-200 flex-shrink-0">
-                <SummaryCard label="New Findings" value={delta.summary.new_findings} color="text-red-600 bg-red-50" icon={<TrendingUp size={16} />} onClick={() => setTab('new')} active={tab === 'new'} />
-                <SummaryCard label="Resolved" value={delta.summary.resolved_findings} color="text-green-600 bg-green-50" icon={<TrendingDown size={16} />} onClick={() => setTab('resolved')} active={tab === 'resolved'} />
-                <SummaryCard label="Persisting" value={delta.summary.persisting_findings} color="text-orange-600 bg-orange-50" icon={<Minus size={16} />} onClick={() => setTab('persisting')} active={tab === 'persisting'} />
-                <SummaryCard label="New Hosts" value={delta.summary.new_hosts} color="text-blue-600 bg-blue-50" icon={<Server size={16} />} onClick={() => setTab('hosts')} active={tab === 'hosts'} />
-                <SummaryCard label="Lost Hosts" value={delta.summary.removed_hosts} color="text-gray-600 bg-gray-100" icon={<Server size={16} />} onClick={() => setTab('hosts')} active={tab === 'hosts'} />
-                <SummaryCard label="Port Changes" value={delta.summary.port_changes} color="text-purple-600 bg-purple-50" icon={<Unlock size={16} />} onClick={() => setTab('ports')} active={tab === 'ports'} />
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(6, 1fr)',
+                  gap: 10,
+                  padding: '14px 20px',
+                  borderBottom: '1px solid var(--border)',
+                  flexShrink: 0,
+                }}
+              >
+                <SummaryCard
+                  label="New Findings"
+                  value={delta.summary.new_findings}
+                  valueColor={delta.summary.new_findings > 0 ? 'var(--sev-critical)' : 'var(--text-1)'}
+                  bgColor={delta.summary.new_findings > 0 ? 'oklch(0.70 0.22 352 / 0.08)' : 'var(--bg-2)'}
+                  borderColor={delta.summary.new_findings > 0 ? 'oklch(0.70 0.22 352 / 0.3)' : 'var(--border)'}
+                  icon={<TrendingUp size={14} />}
+                  onClick={() => setTab('new')}
+                  active={tab === 'new'}
+                />
+                <SummaryCard
+                  label="Resolved"
+                  value={delta.summary.resolved_findings}
+                  valueColor="var(--ok)"
+                  bgColor="oklch(0.75 0.15 145 / 0.08)"
+                  borderColor="oklch(0.75 0.15 145 / 0.3)"
+                  icon={<TrendingDown size={14} />}
+                  onClick={() => setTab('resolved')}
+                  active={tab === 'resolved'}
+                />
+                <SummaryCard
+                  label="Persisting"
+                  value={delta.summary.persisting_findings}
+                  valueColor="var(--sev-high)"
+                  bgColor="oklch(0.68 0.21 27 / 0.08)"
+                  borderColor="oklch(0.68 0.21 27 / 0.3)"
+                  icon={<Minus size={14} />}
+                  onClick={() => setTab('persisting')}
+                  active={tab === 'persisting'}
+                />
+                <SummaryCard
+                  label="New Hosts"
+                  value={delta.summary.new_hosts}
+                  valueColor="var(--accent)"
+                  bgColor="var(--accent-soft)"
+                  borderColor="oklch(0.78 0.14 200 / 0.3)"
+                  icon={<Server size={14} />}
+                  onClick={() => setTab('hosts')}
+                  active={tab === 'hosts'}
+                />
+                <SummaryCard
+                  label="Lost Hosts"
+                  value={delta.summary.removed_hosts}
+                  valueColor="var(--text-2)"
+                  bgColor="var(--bg-2)"
+                  borderColor="var(--border)"
+                  icon={<Server size={14} />}
+                  onClick={() => setTab('hosts')}
+                  active={tab === 'hosts'}
+                />
+                <SummaryCard
+                  label="Port Changes"
+                  value={delta.summary.port_changes}
+                  valueColor="var(--sev-medium)"
+                  bgColor="oklch(0.80 0.16 70 / 0.08)"
+                  borderColor="oklch(0.80 0.16 70 / 0.3)"
+                  icon={<Unlock size={14} />}
+                  onClick={() => setTab('ports')}
+                  active={tab === 'ports'}
+                />
+              </div>
+
+              {/* Tabs */}
+              <div className="tabs">
+                {(
+                  [
+                    { key: 'new' as DeltaTab, label: 'New', count: delta.summary.new_findings },
+                    { key: 'resolved' as DeltaTab, label: 'Resolved', count: delta.summary.resolved_findings },
+                    { key: 'persisting' as DeltaTab, label: 'Persisting', count: delta.summary.persisting_findings },
+                    { key: 'hosts' as DeltaTab, label: 'Hosts', count: delta.summary.new_hosts + delta.summary.removed_hosts },
+                    { key: 'ports' as DeltaTab, label: 'Ports', count: delta.summary.port_changes },
+                  ]
+                ).map(t => (
+                  <button
+                    key={t.key}
+                    className={`tab${tab === t.key ? ' active' : ''}`}
+                    onClick={() => setTab(t.key)}
+                  >
+                    {t.label}
+                    {t.count > 0 && <span className="count">{t.count}</span>}
+                  </button>
+                ))}
               </div>
 
               {/* Tab body */}
-              <div className="flex-1 overflow-y-auto px-6 py-4">
-                {tab === 'new' && <FindingList findings={delta.new_findings} label="New Findings" emptyMsg="No new findings — great!" badge="new" />}
-                {tab === 'resolved' && <FindingList findings={delta.resolved_findings} label="Resolved Findings" emptyMsg="No findings resolved." badge="resolved" />}
-                {tab === 'persisting' && <FindingList findings={delta.persisting_findings} label="Persisting Findings" emptyMsg="No persisting findings." badge="persisting" />}
-                {tab === 'hosts' && <HostDelta newHosts={delta.new_hosts} removedHosts={delta.removed_hosts} />}
+              <div style={{ flex: 1, overflowY: 'auto', padding: '16px 20px' }}>
+                {tab === 'new' && (
+                  <FindingList
+                    findings={delta.new_findings}
+                    label="New Findings"
+                    emptyMsg="No new findings — great!"
+                    badge="new"
+                  />
+                )}
+                {tab === 'resolved' && (
+                  <FindingList
+                    findings={delta.resolved_findings}
+                    label="Resolved Findings"
+                    emptyMsg="No findings resolved."
+                    badge="resolved"
+                  />
+                )}
+                {tab === 'persisting' && (
+                  <FindingList
+                    findings={delta.persisting_findings}
+                    label="Persisting Findings"
+                    emptyMsg="No persisting findings."
+                    badge="persisting"
+                  />
+                )}
+                {tab === 'hosts' && (
+                  <HostDelta newHosts={delta.new_hosts} removedHosts={delta.removed_hosts} />
+                )}
                 {tab === 'ports' && <PortChanges changes={delta.port_changes} />}
               </div>
             </>
@@ -113,54 +314,142 @@ export default function ScanDelta({ scanId, scanName, onClose }: Props) {
   )
 }
 
-function SummaryCard({ label, value, color, icon, onClick, active }: {
-  label: string; value: number; color: string; icon: React.ReactNode
-  onClick: () => void; active: boolean
+/* ── Summary card ──────────────────────────────────────────────────────────── */
+
+function SummaryCard({
+  label, value, valueColor, bgColor, borderColor, icon, onClick, active,
+}: {
+  label: string
+  value: number
+  valueColor: string
+  bgColor: string
+  borderColor: string
+  icon: React.ReactNode
+  onClick: () => void
+  active: boolean
 }) {
   return (
     <button
       onClick={onClick}
-      className={`rounded-lg p-3 text-left transition-all border-2 ${active ? 'border-blue-400 ring-1 ring-blue-200' : 'border-transparent'} ${color}`}
+      style={{
+        background: bgColor,
+        border: `1px solid ${active ? 'var(--accent)' : borderColor}`,
+        borderRadius: 'var(--radius)',
+        padding: '10px 12px',
+        textAlign: 'left',
+        cursor: 'pointer',
+        boxShadow: active ? '0 0 0 2px var(--accent-soft)' : 'none',
+        transition: 'box-shadow 120ms, border-color 120ms',
+      }}
     >
-      <div className="flex items-center gap-1.5 mb-1 opacity-70">{icon}<span className="text-xs font-medium">{label}</span></div>
-      <div className="text-2xl font-bold">{value}</div>
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 5,
+          marginBottom: 4,
+          color: 'var(--text-2)',
+        }}
+      >
+        {icon}
+        <span style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: '0.04em', textTransform: 'uppercase' }}>
+          {label}
+        </span>
+      </div>
+      <div style={{ fontSize: 22, fontWeight: 700, color: valueColor, lineHeight: 1 }}>{value}</div>
     </button>
   )
 }
 
-function FindingList({ findings, label, emptyMsg, badge }: {
-  findings: any[]; label: string; emptyMsg: string; badge: 'new' | 'resolved' | 'persisting'
+/* ── Finding list ──────────────────────────────────────────────────────────── */
+
+const BADGE_STYLES: Record<string, { color: string; bg: string; border: string }> = {
+  new: {
+    color: 'var(--sev-critical)',
+    bg: 'oklch(0.70 0.22 352 / 0.12)',
+    border: 'oklch(0.70 0.22 352 / 0.3)',
+  },
+  resolved: {
+    color: 'var(--ok)',
+    bg: 'oklch(0.75 0.15 145 / 0.12)',
+    border: 'oklch(0.75 0.15 145 / 0.3)',
+  },
+  persisting: {
+    color: 'var(--sev-high)',
+    bg: 'oklch(0.68 0.21 27 / 0.12)',
+    border: 'oklch(0.68 0.21 27 / 0.3)',
+  },
+}
+
+function FindingList({
+  findings,
+  label,
+  emptyMsg,
+  badge,
+}: {
+  findings: any[]
+  label: string
+  emptyMsg: string
+  badge: 'new' | 'resolved' | 'persisting'
 }) {
-  const badgeStyle = {
-    new: 'bg-red-100 text-red-700',
-    resolved: 'bg-green-100 text-green-700',
-    persisting: 'bg-orange-100 text-orange-700',
-  }[badge]
+  const bs = BADGE_STYLES[badge]
 
   if (findings.length === 0) {
-    return <p className="text-gray-400 text-sm text-center py-8">{emptyMsg}</p>
+    return (
+      <p style={{ color: 'var(--text-3)', fontSize: 13, textAlign: 'center', padding: '32px 0' }}>
+        {emptyMsg}
+      </p>
+    )
   }
+
   return (
     <div>
-      <h3 className="text-sm font-semibold text-gray-700 mb-3">{label} ({findings.length})</h3>
-      <table className="w-full text-sm border-collapse">
+      <p style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-2)', marginBottom: 10 }}>
+        {label} ({findings.length})
+      </p>
+      <table className="tbl">
         <thead>
-          <tr className="bg-gray-50 border-b border-gray-200">
-            {['', 'Severity', 'Title', 'Host', 'Port'].map(h => (
-              <th key={h} className="px-3 py-2 text-left text-xs font-medium text-gray-500">{h}</th>
+          <tr>
+            {['Status', 'Severity', 'Title', 'Host', 'Port'].map(h => (
+              <th key={h}>{h}</th>
             ))}
           </tr>
         </thead>
         <tbody>
           {findings.map((f, i) => (
-            <tr key={i} className="border-b border-gray-100 hover:bg-gray-50">
-              <td className="px-3 py-2">
-                <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${badgeStyle}`}>{badge}</span>
+            <tr key={i}>
+              <td>
+                <span
+                  style={{
+                    fontSize: 10,
+                    fontWeight: 700,
+                    padding: '2px 6px',
+                    borderRadius: 3,
+                    color: bs.color,
+                    background: bs.bg,
+                    border: `1px solid ${bs.border}`,
+                    letterSpacing: '0.04em',
+                    textTransform: 'uppercase',
+                    fontFamily: 'var(--font-mono)',
+                  }}
+                >
+                  {badge}
+                </span>
               </td>
-              <td className="px-3 py-2"><SeverityBadge severity={f.severity} /></td>
-              <td className="px-3 py-2 text-gray-800 max-w-xs"><div className="truncate">{f.title}</div></td>
-              <td className="px-3 py-2 text-gray-500 font-mono text-xs">{f.host_ip || '—'}</td>
-              <td className="px-3 py-2 text-gray-500 font-mono text-xs">{f.port_number ?? '—'}</td>
+              <td>
+                <SeverityBadge severity={f.severity} />
+              </td>
+              <td style={{ color: 'var(--text-0)', maxWidth: 280 }}>
+                <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {f.title}
+                </div>
+              </td>
+              <td className="mono" style={{ fontSize: 11, color: 'var(--text-2)' }}>
+                {f.host_ip || '—'}
+              </td>
+              <td className="mono" style={{ fontSize: 11, color: 'var(--text-2)' }}>
+                {f.port_number ?? '—'}
+              </td>
             </tr>
           ))}
         </tbody>
@@ -169,61 +458,159 @@ function FindingList({ findings, label, emptyMsg, badge }: {
   )
 }
 
-function HostDelta({ newHosts, removedHosts }: { newHosts: any[]; removedHosts: any[] }) {
+/* ── Host delta ────────────────────────────────────────────────────────────── */
+
+function HostDelta({
+  newHosts,
+  removedHosts,
+}: {
+  newHosts: any[]
+  removedHosts: any[]
+}) {
+  if (newHosts.length === 0 && removedHosts.length === 0) {
+    return (
+      <p style={{ color: 'var(--text-3)', fontSize: 13, textAlign: 'center', padding: '32px 0' }}>
+        No host changes between scans.
+      </p>
+    )
+  }
+
   return (
-    <div className="space-y-6">
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
       {newHosts.length > 0 && (
         <div>
-          <h3 className="text-sm font-semibold text-blue-700 mb-2">New Hosts ({newHosts.length})</h3>
-          <div className="space-y-1">
+          <p style={{ fontSize: 12, fontWeight: 600, color: 'var(--accent)', marginBottom: 8 }}>
+            New Hosts ({newHosts.length})
+          </p>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
             {newHosts.map((h, i) => (
-              <div key={i} className="flex items-center gap-3 bg-blue-50 border border-blue-200 rounded px-3 py-2 text-sm">
-                <span className="font-mono text-blue-700">{h.ip}</span>
-                {h.hostname && <span className="text-gray-500">{h.hostname}</span>}
+              <div
+                key={i}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 10,
+                  background: 'var(--accent-soft)',
+                  border: '1px solid oklch(0.78 0.14 200 / 0.3)',
+                  borderRadius: 'var(--radius)',
+                  padding: '7px 12px',
+                  fontSize: 12.5,
+                }}
+              >
+                <span className="mono" style={{ color: 'var(--accent)', fontSize: 12 }}>
+                  {h.ip}
+                </span>
+                {h.hostname && (
+                  <span style={{ color: 'var(--text-2)' }}>{h.hostname}</span>
+                )}
               </div>
             ))}
           </div>
         </div>
       )}
+
       {removedHosts.length > 0 && (
         <div>
-          <h3 className="text-sm font-semibold text-gray-600 mb-2">Removed Hosts ({removedHosts.length})</h3>
-          <div className="space-y-1">
+          <p style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-2)', marginBottom: 8 }}>
+            Removed Hosts ({removedHosts.length})
+          </p>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
             {removedHosts.map((h, i) => (
-              <div key={i} className="flex items-center gap-3 bg-gray-100 border border-gray-200 rounded px-3 py-2 text-sm">
-                <span className="font-mono text-gray-500 line-through">{h.ip}</span>
-                {h.hostname && <span className="text-gray-400">{h.hostname}</span>}
+              <div
+                key={i}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 10,
+                  background: 'var(--bg-2)',
+                  border: '1px solid var(--border)',
+                  borderRadius: 'var(--radius)',
+                  padding: '7px 12px',
+                  fontSize: 12.5,
+                }}
+              >
+                <span
+                  className="mono"
+                  style={{ color: 'var(--text-3)', fontSize: 12, textDecoration: 'line-through' }}
+                >
+                  {h.ip}
+                </span>
+                {h.hostname && (
+                  <span style={{ color: 'var(--text-3)' }}>{h.hostname}</span>
+                )}
               </div>
             ))}
           </div>
         </div>
-      )}
-      {newHosts.length === 0 && removedHosts.length === 0 && (
-        <p className="text-gray-400 text-sm text-center py-8">No host changes between scans.</p>
       )}
     </div>
   )
 }
 
+/* ── Port changes ──────────────────────────────────────────────────────────── */
+
 function PortChanges({ changes }: { changes: any[] }) {
   if (changes.length === 0) {
-    return <p className="text-gray-400 text-sm text-center py-8">No port changes between scans.</p>
+    return (
+      <p style={{ color: 'var(--text-3)', fontSize: 13, textAlign: 'center', padding: '32px 0' }}>
+        No port changes between scans.
+      </p>
+    )
   }
+
   return (
     <div>
-      <h3 className="text-sm font-semibold text-gray-700 mb-3">Port Changes ({changes.length} hosts)</h3>
-      <div className="space-y-3">
+      <p style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-2)', marginBottom: 10 }}>
+        Port Changes ({changes.length} hosts)
+      </p>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
         {changes.map((c, i) => (
-          <div key={i} className="border border-gray-200 rounded-lg p-3">
-            <div className="font-mono text-sm font-semibold text-gray-800 mb-2">{c.ip}</div>
-            <div className="flex flex-wrap gap-2">
+          <div
+            key={i}
+            style={{
+              background: 'var(--bg-2)',
+              border: '1px solid var(--border)',
+              borderRadius: 'var(--radius)',
+              padding: 12,
+            }}
+          >
+            <div
+              className="mono"
+              style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text-0)', marginBottom: 8 }}
+            >
+              {c.ip}
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
               {c.opened.map((p: any, j: number) => (
-                <span key={j} className="bg-blue-100 text-blue-700 text-xs font-mono px-2 py-0.5 rounded">
+                <span
+                  key={j}
+                  className="mono"
+                  style={{
+                    fontSize: 11,
+                    padding: '2px 8px',
+                    borderRadius: 3,
+                    color: 'var(--accent)',
+                    background: 'var(--accent-soft)',
+                    border: '1px solid oklch(0.78 0.14 200 / 0.3)',
+                  }}
+                >
                   +{p.port}/{p.protocol}
                 </span>
               ))}
               {c.closed.map((p: any, j: number) => (
-                <span key={j} className="bg-gray-200 text-gray-600 text-xs font-mono px-2 py-0.5 rounded line-through">
+                <span
+                  key={j}
+                  className="mono"
+                  style={{
+                    fontSize: 11,
+                    padding: '2px 8px',
+                    borderRadius: 3,
+                    color: 'var(--text-3)',
+                    background: 'var(--bg-3)',
+                    border: '1px solid var(--border)',
+                    textDecoration: 'line-through',
+                  }}
+                >
                   {p.port}/{p.protocol}
                 </span>
               ))}

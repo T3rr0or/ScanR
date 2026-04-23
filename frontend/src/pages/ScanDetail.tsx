@@ -17,6 +17,8 @@ import ScreenshotGallery from '@/components/ScreenshotGallery'
 import ScanDelta from '@/pages/ScanDelta'
 import { useScanConsole } from '@/hooks/useScanConsole'
 import NetworkTopology from '@/components/NetworkTopology'
+import HostDetail from '@/components/HostDetail'
+import type { HostRead } from '@/api/hosts'
 import {
   StatusPill, SevTag, Meter, relTime, fmtDuration,
 } from '@/components/ui'
@@ -147,7 +149,7 @@ export default function ScanDetail({ scanId, onBack }: Props) {
           <FindingsTab findings={findings} scanId={scanId} onGoToHost={goToHost} />
         )}
         {tab === 'hosts' && (
-          <HostsTab hosts={hosts} loading={hostsLoading} highlightIp={highlightHostIp} findings={findings} />
+          <HostsTab hosts={hosts} loading={hostsLoading} highlightIp={highlightHostIp} findings={findings} scanId={scanId} />
         )}
         {tab === 'topology' && (
           <div style={{ flex: 1, padding: 20, minHeight: 0 }}>
@@ -201,12 +203,12 @@ function FindingsTab({ findings, scanId, onGoToHost }: { findings: Finding[]; sc
   const [triageFilter, setTriageFilter] = useState<'all' | 'open' | 'false_positive' | 'accepted_risk'>('all')
 
   const updateMut = useMutation({
-    mutationFn: ({ id, data }: { id: string; data: any }) => findingsApi.update(id, data),
+    mutationFn: ({ id, data }: { id: string; data: Parameters<typeof findingsApi.update>[1] }) => findingsApi.update(id, data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['findings', scanId] }),
   })
 
   const bulkMut = useMutation({
-    mutationFn: (data: any) => findingsApi.bulkUpdate([...selected], data),
+    mutationFn: (data: { false_positive?: boolean; remediation_status?: string }) => findingsApi.bulkUpdate([...selected], data),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['findings', scanId] }); setSelected(new Set()) },
   })
 
@@ -356,7 +358,7 @@ function FindingsTab({ findings, scanId, onGoToHost }: { findings: Finding[]; sc
   )
 }
 
-function FindingDrawer({ finding, onClose, onUpdate }: { finding: Finding; onClose: () => void; onUpdate: (d: any) => void }) {
+function FindingDrawer({ finding, onClose, onUpdate }: { finding: Finding; onClose: () => void; onUpdate: (d: Parameters<typeof findingsApi.update>[1]) => void }) {
   function safeParse(s?: string | null): string[] {
     if (!s) return []; try { return JSON.parse(s) } catch { return [] }
   }
@@ -510,67 +512,116 @@ function MiniField({ label, value, mono, accent, small }: { label: string; value
 }
 
 /* ── Hosts tab ─────────────────────────────────────────────── */
-function HostsTab({ hosts, loading, highlightIp, findings }: {
-  hosts: ScannedHost[]; loading: boolean; highlightIp: string | null; findings: Finding[]
+function HostsTab({ hosts, loading, highlightIp, findings, scanId }: {
+  hosts: ScannedHost[]
+  loading: boolean
+  highlightIp: string | null
+  findings: Finding[]
+  scanId: string
 }) {
+  const [selectedHost, setSelectedHost] = useState<HostRead | null>(null)
+
   if (loading) {
-    return <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-3)', fontSize: 12 }}>Loading hosts…</div>
+    return (
+      <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-3)', fontSize: 12 }}>
+        Loading hosts…
+      </div>
+    )
   }
+
   const findingsPerHost = Object.fromEntries(
     hosts.map(h => [h.ip, findings.filter(f => f.host_ip === h.ip)])
   )
+
+  // Convert ScannedHost to HostRead shape for HostDetail
+  function toHostRead(h: ScannedHost): HostRead {
+    return {
+      id: h.id,
+      ip: h.ip,
+      hostname: h.hostname,
+      os_name: h.os_name,
+      status: h.status,
+      ports: (h.ports ?? []).map(p => ({
+        number: p.number,
+        protocol: p.protocol,
+        state: p.state,
+        service: p.service?.name,
+        version: [p.service?.product, p.service?.version].filter(Boolean).join(' ') || undefined,
+      })),
+    }
+  }
+
   return (
-    <div style={{ padding: 20 }}>
-      <div className="panel" style={{ overflow: 'hidden' }}>
-        <table className="tbl">
-          <thead>
-            <tr>
-              <th style={{ width: 4 }}></th>
-              <th>Host</th>
-              <th>Hostname</th>
-              <th>OS</th>
-              <th>Open Ports</th>
-              <th>Findings</th>
-              <th>Severity</th>
-            </tr>
-          </thead>
-          <tbody>
-            {hosts.map(h => {
-              const hf = findingsPerHost[h.ip] ?? []
-              const maxSev = hf[0]?.severity ?? 'info'
-              const openPorts = (h.ports ?? []).filter(p => p.state === 'open')
-              const isHighlighted = h.ip === highlightIp
-              return (
-                <tr key={h.ip} style={{ background: isHighlighted ? 'var(--accent-soft)' : undefined }}>
-                  <td style={{ padding: 0 }}>
-                    <span className={`sev-bar ${maxSev}`} style={{ height: 26, width: 3, display: 'block' }} />
+    <>
+      <div style={{ padding: 20 }}>
+        <div className="panel" style={{ overflow: 'hidden' }}>
+          <table className="tbl">
+            <thead>
+              <tr>
+                <th style={{ width: 4 }}></th>
+                <th>Host</th>
+                <th>Hostname</th>
+                <th>OS</th>
+                <th>Open Ports</th>
+                <th>Findings</th>
+                <th>Severity</th>
+              </tr>
+            </thead>
+            <tbody>
+              {hosts.map(h => {
+                const hf = findingsPerHost[h.ip] ?? []
+                const maxSev = hf[0]?.severity ?? 'info'
+                const openPorts = (h.ports ?? []).filter(p => p.state === 'open')
+                const isHighlighted = h.ip === highlightIp
+                return (
+                  <tr
+                    key={h.ip}
+                    style={{ background: isHighlighted ? 'var(--accent-soft)' : undefined }}
+                    onClick={() => setSelectedHost(toHostRead(h))}
+                  >
+                    <td style={{ padding: 0 }}>
+                      <span className={`sev-bar ${maxSev}`} style={{ height: 26, width: 3, display: 'block' }} />
+                    </td>
+                    <td className="mono" style={{ color: 'var(--accent)', fontSize: 12 }}>{h.ip}</td>
+                    <td style={{ fontSize: 12.5 }}>{h.hostname ?? <span className="dimmer">—</span>}</td>
+                    <td className="dim" style={{ fontSize: 11.5 }}>{h.os_name ?? '—'}</td>
+                    <td className="mono" style={{ fontSize: 11, color: 'var(--text-1)' }}>
+                      {openPorts.slice(0, 6).map(p => (
+                        <span key={p.number} style={{ marginRight: 6 }}>
+                          {p.number}<span className="dim">/tcp</span>
+                        </span>
+                      ))}
+                      {openPorts.length > 6 && <span className="dim">+{openPorts.length - 6}</span>}
+                      {openPorts.length === 0 && <span className="dimmer">—</span>}
+                    </td>
+                    <td className="mono" style={{ fontSize: 12, fontWeight: 600, color: hf.length > 0 ? `var(--sev-${maxSev})` : 'var(--text-3)' }}>
+                      {hf.length}
+                    </td>
+                    <td>{hf.length > 0 ? <SevTag severity={maxSev} /> : <span className="dimmer">—</span>}</td>
+                  </tr>
+                )
+              })}
+              {hosts.length === 0 && (
+                <tr>
+                  <td colSpan={7} style={{ padding: '40px 20px', textAlign: 'center', color: 'var(--text-3)', fontSize: 12 }}>
+                    No hosts discovered
                   </td>
-                  <td className="mono" style={{ color: 'var(--accent)', fontSize: 12 }}>{h.ip}</td>
-                  <td style={{ fontSize: 12.5 }}>{h.hostname ?? <span className="dimmer">—</span>}</td>
-                  <td className="dim" style={{ fontSize: 11.5 }}>{h.os_name ?? '—'}</td>
-                  <td className="mono" style={{ fontSize: 11, color: 'var(--text-1)' }}>
-                    {openPorts.slice(0, 6).map(p => (
-                      <span key={p.number} style={{ marginRight: 6 }}>
-                        {p.number}<span className="dim">/tcp</span>
-                      </span>
-                    ))}
-                    {openPorts.length > 6 && <span className="dim">+{openPorts.length - 6}</span>}
-                    {openPorts.length === 0 && <span className="dimmer">—</span>}
-                  </td>
-                  <td className="mono" style={{ fontSize: 12, fontWeight: 600, color: hf.length > 0 ? `var(--sev-${maxSev})` : 'var(--text-3)' }}>
-                    {hf.length}
-                  </td>
-                  <td>{hf.length > 0 ? <SevTag severity={maxSev} /> : <span className="dimmer">—</span>}</td>
                 </tr>
-              )
-            })}
-            {hosts.length === 0 && (
-              <tr><td colSpan={7} style={{ padding: '40px 20px', textAlign: 'center', color: 'var(--text-3)', fontSize: 12 }}>No hosts discovered</td></tr>
-            )}
-          </tbody>
-        </table>
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
-    </div>
+
+      {/* HostDetail slide-over */}
+      {selectedHost && (
+        <HostDetail
+          host={selectedHost}
+          scanId={scanId}
+          onClose={() => setSelectedHost(null)}
+        />
+      )}
+    </>
   )
 }
 
@@ -583,42 +634,91 @@ function ExclusionsPanel({ scanId }: { scanId: string }) {
   })
   const [type, setType] = useState('ip')
   const [value, setValue] = useState('')
+  const [reason, setReason] = useState('')
 
   const addMut = useMutation({
-    mutationFn: () => api.post(`/scans/${scanId}/exclusions`, { type, value }),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['exclusions', scanId] }); setValue('') },
+    mutationFn: () => api.post(`/scans/${scanId}/exclusions`, { type, value, reason: reason || undefined }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['exclusions', scanId] }); setValue(''); setReason('') },
   })
   const delMut = useMutation({
     mutationFn: (id: string) => api.delete(`/scans/${scanId}/exclusions/${id}`),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['exclusions', scanId] }),
   })
 
+  interface Exclusion { id: string; type: string; value: string; reason?: string; created_at: string }
+
   return (
-    <div style={{ padding: 20, maxWidth: 600 }}>
+    <div style={{ padding: 20, maxWidth: 640 }}>
       <div className="panel">
         <div className="panel-head">
           <span className="panel-title">Exclusions</span>
+          <span className="dim" style={{ fontSize: 11, marginLeft: 'auto' }}>
+            Applied at scan time — IPs, CIDRs, ports, or hostnames to skip
+          </span>
         </div>
-        <div style={{ padding: 14, display: 'flex', gap: 8 }}>
-          <select className="select-field" style={{ width: 100 }} value={type} onChange={e => setType(e.target.value)}>
-            {['ip', 'cidr', 'port', 'host'].map(t => <option key={t} value={t}>{t}</option>)}
-          </select>
-          <input className="input" style={{ flex: 1 }} value={value} onChange={e => setValue(e.target.value)}
-            placeholder={type === 'ip' ? '192.168.1.5' : type === 'cidr' ? '10.0.0.0/8' : type === 'port' ? '22' : 'hostname'} />
-          <button className="btn btn-primary" disabled={!value} onClick={() => addMut.mutate()}>Add</button>
+        <div style={{ padding: 14, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-end', borderBottom: '1px solid var(--border)' }}>
+          <div>
+            <label className="label">Type</label>
+            <select className="select-field" style={{ width: 100 }} value={type} onChange={e => setType(e.target.value)}>
+              {['ip', 'cidr', 'port', 'host'].map(t => <option key={t} value={t}>{t}</option>)}
+            </select>
+          </div>
+          <div style={{ flex: 1, minWidth: 140 }}>
+            <label className="label">Value</label>
+            <input
+              className="input mono"
+              value={value}
+              onChange={e => setValue(e.target.value)}
+              placeholder={type === 'ip' ? '192.168.1.5' : type === 'cidr' ? '10.0.0.0/8' : type === 'port' ? '22' : 'hostname'}
+              onKeyDown={e => { if (e.key === 'Enter' && value) addMut.mutate() }}
+            />
+          </div>
+          <div style={{ flex: 2, minWidth: 160 }}>
+            <label className="label">Reason (optional)</label>
+            <input
+              className="input"
+              value={reason}
+              onChange={e => setReason(e.target.value)}
+              placeholder="Why this exclusion?"
+            />
+          </div>
+          <button
+            className="btn btn-primary"
+            disabled={!value || addMut.isPending}
+            onClick={() => addMut.mutate()}
+            style={{ marginTop: 20 }}
+          >
+            Add
+          </button>
         </div>
         <table className="tbl">
-          <thead><tr><th>Type</th><th>Value</th><th></th></tr></thead>
+          <thead>
+            <tr>
+              <th>Type</th>
+              <th>Value</th>
+              <th>Reason</th>
+              <th></th>
+            </tr>
+          </thead>
           <tbody>
-            {exclusions.map((e: any) => (
-              <tr key={e.id}>
+            {(exclusions as Exclusion[]).map(e => (
+              <tr key={e.id} style={{ cursor: 'default' }}>
                 <td><span className="pill" style={{ fontSize: 10 }}>{e.type}</span></td>
                 <td className="mono">{e.value}</td>
-                <td><button className="btn btn-ghost btn-icon" onClick={() => delMut.mutate(e.id)}><X size={12} /></button></td>
+                <td className="dim" style={{ fontSize: 11.5 }}>{e.reason ?? <span className="dimmer">—</span>}</td>
+                <td>
+                  <button className="btn btn-ghost btn-icon btn-sm" onClick={() => delMut.mutate(e.id)}>
+                    <X size={12} />
+                  </button>
+                </td>
               </tr>
             ))}
             {exclusions.length === 0 && (
-              <tr><td colSpan={3} style={{ padding: '20px', textAlign: 'center', color: 'var(--text-3)', fontSize: 12 }}>No exclusions</td></tr>
+              <tr>
+                <td colSpan={4} style={{ padding: '24px 20px', textAlign: 'center', color: 'var(--text-3)', fontSize: 12 }}>
+                  No exclusions — all targets will be scanned
+                </td>
+              </tr>
             )}
           </tbody>
         </table>

@@ -1,12 +1,11 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Plus, Play, StopCircle, Trash2, Terminal, GitCompare, Search, Activity, X, AlertCircle } from 'lucide-react'
+import { Plus, Play, StopCircle, Trash2, Terminal, GitCompare } from 'lucide-react'
 import { scansApi, type ScanCreate } from '@/api/scans'
 import { templatesApi, type ScanTemplate } from '@/api/templates'
 import { credentialsApi } from '@/api/credentials'
 import { ProfileEditor, ALL_CATEGORIES, PORT_RANGES, configToJson, jsonToConfig, type ProfileConfig } from '@/components/ProfileEditor'
 import ScanDelta from './ScanDelta'
-import { StatusPill, CHML, SeverityBar, Meter, relTime, fmtDuration } from '@/components/ui'
 
 interface Props {
   onOpenScan?: (id: string) => void
@@ -14,229 +13,111 @@ interface Props {
 
 const PAGE_SIZE = 50
 
-type StatusFilter = 'all' | 'running' | 'completed' | 'pending' | 'failed'
-
 export default function Scans({ onOpenScan }: Props) {
   const qc = useQueryClient()
   const [showForm, setShowForm] = useState(false)
   const [deltaScan, setDeltaScan] = useState<{ id: string; name: string } | null>(null)
   const [page, setPage] = useState(0)
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
-  const [search, setSearch] = useState('')
-
   const { data: scans = [] } = useQuery({
     queryKey: ['scans', page],
     queryFn: () => scansApi.list({ limit: PAGE_SIZE, offset: page * PAGE_SIZE }),
     refetchInterval: 5000,
   })
 
-  const [mutError, setMutError] = useState<string | null>(null)
-
   const createMut = useMutation({
     mutationFn: (body: ScanCreate) => scansApi.create(body),
-    onSuccess: (scan) => {
-      setShowForm(false)
-      scansApi.launch(scan.id).finally(() => qc.invalidateQueries({ queryKey: ['scans'] }))
-    },
-    onError: (e: Error) => setMutError(e.message || 'Failed to create scan'),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['scans'] }); setShowForm(false) },
   })
   const launchMut = useMutation({
     mutationFn: (id: string) => scansApi.launch(id),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['scans'] }),
-    onError: (e: Error) => setMutError(e.message || 'Failed to launch scan'),
   })
   const cancelMut = useMutation({
     mutationFn: (id: string) => scansApi.cancel(id),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['scans'] }),
-    onError: (e: Error) => setMutError(e.message || 'Failed to cancel scan'),
   })
   const deleteMut = useMutation({
     mutationFn: (id: string) => scansApi.delete(id),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['scans'] }),
-    onError: (e: Error) => setMutError(e.message || 'Failed to delete scan'),
   })
 
-  const counts: Record<StatusFilter, number> = {
-    all: scans.length,
-    running: scans.filter(s => s.status === 'running').length,
-    completed: scans.filter(s => s.status === 'completed').length,
-    pending: scans.filter(s => s.status === 'pending').length,
-    failed: scans.filter(s => s.status === 'failed').length,
-  }
-
-  const filtered = scans
-    .filter(s => statusFilter === 'all' || s.status === statusFilter)
-    .filter(s => !search || s.name.toLowerCase().includes(search.toLowerCase()))
-
   return (
-    <div style={{ padding: 20, maxWidth: 1480, margin: '0 auto' }}>
+    <div className="p-8">
       {deltaScan && (
         <ScanDelta scanId={deltaScan.id} scanName={deltaScan.name} onClose={() => setDeltaScan(null)} />
       )}
 
-      {mutError && (
-        <div style={{ marginBottom: 12, padding: '8px 12px', background: 'var(--sev-critical-bg)', border: '1px solid var(--sev-critical)', borderRadius: 6, color: 'var(--sev-critical)', fontSize: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
-          <AlertCircle size={13} /> {mutError}
-          <button className="btn btn-ghost btn-icon" style={{ marginLeft: 'auto', color: 'inherit' }} onClick={() => setMutError(null)}><X size={12} /></button>
-        </div>
-      )}
-
-      {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
-        <div>
-          <h1 style={{ margin: 0, fontSize: 20, fontWeight: 600 }}>Scans</h1>
-          <div className="mono dim" style={{ fontSize: 11, marginTop: 2 }}>
-            {scans.length} total · last updated {relTime(new Date().toISOString())}
-          </div>
-        </div>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn btn-primary" onClick={() => setShowForm(true)}>
-            <Plus size={12} /> New Scan
-          </button>
-        </div>
-      </div>
-
-      {/* Status filter tabs + search */}
-      <div style={{ display: 'flex', gap: 6, marginBottom: 12, alignItems: 'center' }}>
-        {(['all', 'running', 'completed', 'pending', 'failed'] as StatusFilter[]).map(f => (
-          <button
-            key={f}
-            onClick={() => setStatusFilter(f)}
-            style={{
-              padding: '5px 10px', borderRadius: 6, fontSize: 11.5, textTransform: 'capitalize',
-              background: statusFilter === f ? 'var(--bg-3)' : 'transparent',
-              color: statusFilter === f ? 'var(--text-0)' : 'var(--text-2)',
-              border: '1px solid ' + (statusFilter === f ? 'var(--border-strong)' : 'transparent'),
-              cursor: 'pointer',
-            }}
-          >
-            {f} <span className="mono dim" style={{ marginLeft: 4 }}>{counts[f]}</span>
-          </button>
-        ))}
-        <div style={{ flex: 1 }} />
-        <div className="search" style={{ width: 260 }}>
-          <Search size={13} color="var(--text-3)" />
-          <input
-            placeholder="Search by name, target…"
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-          />
-        </div>
-      </div>
-
-      {/* New scan modal */}
-      {showForm && (
-        <div style={{
-          position: 'fixed', inset: 0, background: 'oklch(0.06 0.01 255 / 0.7)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, padding: 20,
-        }}
-          onClick={() => setShowForm(false)}
+      <div className="flex items-center justify-between mb-6">
+        <h1 className="text-2xl font-bold">Scans</h1>
+        <button
+          onClick={() => setShowForm(!showForm)}
+          className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium"
         >
-          <div className="panel" style={{ width: 640, maxHeight: '92vh', overflow: 'auto' }}
-            onClick={e => e.stopPropagation()}>
-            <ScanForm
-              onSubmit={b => createMut.mutate(b)}
-              onCancel={() => setShowForm(false)}
-              loading={createMut.isPending}
-            />
-          </div>
-        </div>
-      )}
+          <Plus size={16} /> New Scan
+        </button>
+      </div>
 
-      {/* Table */}
-      <div className="panel" style={{ overflow: 'hidden' }}>
-        <table className="tbl">
+      {showForm && <ScanForm onSubmit={b => createMut.mutate(b)} onCancel={() => setShowForm(false)} loading={createMut.isPending} />}
+
+      <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+        <table className="w-full text-sm">
           <thead>
-            <tr>
-              <th style={{ width: 28 }}></th>
-              <th>Name</th>
-              <th>Targets</th>
-              <th>Profile</th>
-              <th>Status</th>
-              <th>Hosts</th>
-              <th>Findings (C/H/M/L)</th>
-              <th>Severity</th>
-              <th>Duration</th>
-              <th>When</th>
-              <th style={{ width: 110 }}></th>
+            <tr className="bg-gray-50 border-b border-gray-200">
+              {['Name', 'Profile', 'Status', 'Hosts', 'C/H/M/L', 'Actions'].map(h => (
+                <th key={h} className="px-4 py-3 text-left font-medium text-gray-600">{h}</th>
+              ))}
             </tr>
           </thead>
           <tbody>
-            {filtered.map(s => (
-              <tr key={s.id} onClick={() => onOpenScan?.(s.id)}>
-                <td style={{ color: 'var(--text-3)', textAlign: 'center' }}>
-                  {s.status === 'running'
-                    ? <span className="live-dot" style={{ width: 6, height: 6, display: 'inline-block', margin: '0 auto' }} />
-                    : <Activity size={13} />
-                  }
+            {scans.map(s => (
+              <tr
+                key={s.id}
+                className="border-b border-gray-100 hover:bg-gray-50 cursor-pointer"
+                onClick={() => onOpenScan?.(s.id)}
+              >
+                <td className="px-4 py-3 font-medium">{s.name}</td>
+                <td className="px-4 py-3 text-gray-500">{s.profile}</td>
+                <td className="px-4 py-3"><StatusPill status={s.status} /></td>
+                <td className="px-4 py-3 text-gray-600">{s.hosts_up}/{s.hosts_total}</td>
+                <td className="px-4 py-3 font-mono text-xs">
+                  <span className="text-red-600">{s.findings_critical}</span>/
+                  <span className="text-orange-500">{s.findings_high}</span>/
+                  <span className="text-yellow-600">{s.findings_medium}</span>/
+                  <span className="text-green-600">{s.findings_low}</span>
                 </td>
-                <td>
-                  <div style={{ fontWeight: 500 }}>{s.name}</div>
-                  <div className="mono dim" style={{ fontSize: 10.5 }}>{s.id.slice(0, 8)}</div>
-                  {s.status === 'running' && (
-                    <div style={{ width: 80, marginTop: 4 }}>
-                      <Meter value={s.progress ?? 0.5} color="var(--accent-2)" />
-                    </div>
-                  )}
-                </td>
-                <td className="mono dim" style={{ fontSize: 11.5, maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                  {s.targets?.length
-                    ? <>{s.targets[0]}{s.targets.length > 1 && <span style={{ color: 'var(--text-3)' }}> +{s.targets.length - 1}</span>}</>
-                    : <span className="dimmer">—</span>
-                  }
-                </td>
-                <td className="mono dim" style={{ fontSize: 11.5 }}>{s.profile}</td>
-                <td><StatusPill status={s.status} /></td>
-                <td className="mono">
-                  <span style={{ color: 'var(--text-0)' }}>{s.hosts_up ?? 0}</span>
-                  <span className="dim">/{s.hosts_total ?? 0}</span>
-                </td>
-                <td>
-                  <CHML c={s.findings_critical} h={s.findings_high} m={s.findings_medium} l={s.findings_low} />
-                </td>
-                <td style={{ width: 110 }}>
-                  <SeverityBar c={s.findings_critical} h={s.findings_high} m={s.findings_medium} l={s.findings_low} i={s.findings_info} />
-                </td>
-                <td className="mono dim" style={{ fontSize: 11.5 }}>{fmtDuration(s.duration_s)}</td>
-                <td className="mono dim" style={{ fontSize: 11.5 }}>{relTime(s.created_at)}</td>
-                <td onClick={e => e.stopPropagation()}>
-                  <div style={{ display: 'flex', gap: 2 }}>
-                    <button className="btn btn-ghost btn-icon" title="Open console" onClick={() => onOpenScan?.(s.id)}>
-                      <Terminal size={13} />
+                <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
+                  <div className="flex gap-2">
+                    <button onClick={() => onOpenScan?.(s.id)} className="p-1 text-blue-500 hover:text-blue-700" title="Open console">
+                      <Terminal size={15} />
                     </button>
                     {s.status === 'pending' && (
-                      <button className="btn btn-ghost btn-icon" title="Launch" onClick={() => launchMut.mutate(s.id)}>
-                        <Play size={11} style={{ color: 'var(--ok)' }} />
+                      <button onClick={() => launchMut.mutate(s.id)} className="p-1 text-green-600 hover:text-green-700" title="Launch">
+                        <Play size={15} />
                       </button>
                     )}
                     {s.status === 'running' && (
-                      <button className="btn btn-ghost btn-icon" title="Cancel" onClick={() => cancelMut.mutate(s.id)}>
-                        <StopCircle size={10} style={{ color: 'var(--sev-high)' }} />
+                      <button onClick={() => cancelMut.mutate(s.id)} className="p-1 text-red-600 hover:text-red-700" title="Cancel">
+                        <StopCircle size={15} />
                       </button>
                     )}
                     {(s.status === 'completed' || s.status === 'failed') && (
-                      <button className="btn btn-ghost btn-icon" title="Compare" onClick={() => setDeltaScan({ id: s.id, name: s.name })}>
+                      <button
+                        onClick={() => setDeltaScan({ id: s.id, name: s.name })}
+                        className="btn btn-ghost btn-icon btn-sm"
+                        title="Compare with baseline"
+                      >
                         <GitCompare size={13} />
                       </button>
                     )}
-                    <button
-                      className="btn btn-ghost btn-icon"
-                      title="Delete"
-                      onClick={() => { if (confirm('Delete this scan?')) deleteMut.mutate(s.id) }}
-                    >
-                      <Trash2 size={13} />
+                    <button onClick={() => { if (confirm('Delete scan?')) deleteMut.mutate(s.id) }} className="p-1 text-gray-400 hover:text-red-600" title="Delete">
+                      <Trash2 size={15} />
                     </button>
                   </div>
                 </td>
               </tr>
             ))}
-            {filtered.length === 0 && (
-              <tr>
-                <td colSpan={11} style={{ padding: '40px 20px', textAlign: 'center', color: 'var(--text-3)', fontSize: 12 }}>
-                  <Activity size={24} style={{ margin: '0 auto 8px', color: 'var(--text-3)' }} />
-                  <div>No scans yet. Create your first scan to get started.</div>
-                </td>
-              </tr>
+            {scans.length === 0 && (
+              <tr><td colSpan={6} className="px-4 py-8 text-center text-gray-400">No scans yet</td></tr>
             )}
           </tbody>
         </table>
@@ -244,12 +125,20 @@ export default function Scans({ onOpenScan }: Props) {
 
       {/* Pagination */}
       {(page > 0 || scans.length === PAGE_SIZE) && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 12, justifyContent: 'flex-end' }}>
-          <button className="btn btn-sm" onClick={() => setPage(p => Math.max(0, p - 1))} disabled={page === 0}>
+        <div className="flex items-center gap-3 mt-4 justify-end">
+          <button
+            onClick={() => setPage(p => Math.max(0, p - 1))}
+            disabled={page === 0}
+            className="px-3 py-1.5 text-sm rounded border border-gray-300 disabled:opacity-40 hover:bg-gray-50"
+          >
             Previous
           </button>
-          <span className="mono dim" style={{ fontSize: 11.5 }}>Page {page + 1}</span>
-          <button className="btn btn-sm" onClick={() => setPage(p => p + 1)} disabled={scans.length < PAGE_SIZE}>
+          <span className="text-sm text-gray-500">Page {page + 1}</span>
+          <button
+            onClick={() => setPage(p => p + 1)}
+            disabled={scans.length < PAGE_SIZE}
+            className="px-3 py-1.5 text-sm rounded border border-gray-300 disabled:opacity-40 hover:bg-gray-50"
+          >
             Next
           </button>
         </div>
@@ -257,6 +146,17 @@ export default function Scans({ onOpenScan }: Props) {
     </div>
   )
 }
+
+function StatusPill({ status }: { status: string }) {
+  const c: Record<string, string> = {
+    running: 'bg-yellow-100 text-yellow-700', completed: 'bg-green-100 text-green-700',
+    failed: 'bg-red-100 text-red-700', pending: 'bg-blue-100 text-blue-700',
+    cancelled: 'bg-gray-100 text-gray-600',
+  }
+  return <span className={`px-2 py-0.5 rounded text-xs font-medium ${c[status] ?? 'bg-gray-100 text-gray-600'}`}>{status}</span>
+}
+
+// ── Scan creation form ──────────────────────────────────────────────────────
 
 function ScanForm({ onSubmit, onCancel, loading }: {
   onSubmit: (b: ScanCreate) => void; onCancel: () => void; loading: boolean
@@ -281,7 +181,6 @@ function ScanForm({ onSubmit, onCancel, loading }: {
   }
 
   function handleSubmit() {
-    if (loading) return
     const pj = configToJson(profileConfig)
     onSubmit({
       name,
@@ -292,132 +191,122 @@ function ScanForm({ onSubmit, onCancel, loading }: {
     })
   }
 
-  const tplIcons: Record<string, string> = {
-    'Quick Scan': '⚡', 'Full Scan': '◎', 'Web Audit': '🌐', 'Internal Network Audit': '🏢',
-  }
-
   return (
-    <>
-      <div className="panel-head">
-        <span style={{ fontSize: 13, fontWeight: 600 }}>New Scan</span>
-        <button className="btn btn-ghost btn-icon" style={{ marginLeft: 'auto' }} onClick={onCancel}>
-          <X size={14} />
-        </button>
-      </div>
-      <div style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 16 }}>
-        {/* Template picker */}
-        {systemTemplates.length > 0 && (
-          <div>
-            <div className="label">Start from template</div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2,1fr)', gap: 8 }}>
-              {systemTemplates.map(t => {
-                const active = selectedTemplate?.id === t.id
-                return (
-                  <button key={t.id} onClick={() => applyTemplate(t)} style={{
-                    padding: 12, borderRadius: 8, textAlign: 'left', cursor: 'pointer',
-                    background: active ? 'var(--accent-soft)' : 'var(--bg-0)',
-                    border: '1px solid ' + (active ? 'var(--accent)' : 'var(--border)'),
-                    display: 'flex', alignItems: 'flex-start', gap: 10,
-                  }}>
-                    <span style={{
-                      width: 28, height: 28, borderRadius: 6, background: 'var(--bg-2)',
-                      color: active ? 'var(--accent)' : 'var(--text-1)',
-                      display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, fontSize: 14,
-                    }}>
-                      {tplIcons[t.name] ?? '◎'}
-                    </span>
-                    <div>
-                      <div style={{ fontSize: 12.5, fontWeight: 600 }}>{t.name}</div>
-                      <div className="mono dim" style={{ fontSize: 10.5, marginTop: 2 }}>{t.description ?? ''}</div>
-                    </div>
-                  </button>
-                )
-              })}
-            </div>
-          </div>
-        )}
+    <div className="bg-white border border-gray-200 rounded-xl p-6 mb-6">
+      <h2 className="text-lg font-semibold mb-4">New Scan</h2>
 
-        {/* Name */}
-        <div>
-          <div className="label">Scan name</div>
-          <input className="input" value={name} onChange={e => setName(e.target.value)} placeholder="Internal Network Q2 2026" />
+      {/* Quick-start templates */}
+      {systemTemplates.length > 0 && (
+        <div className="mb-5">
+          <p className="text-xs font-medium text-gray-500 mb-2">Start from a template</p>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+            {systemTemplates.map(t => (
+              <button
+                key={t.id}
+                type="button"
+                onClick={() => applyTemplate(t)}
+                className={`p-3 rounded-lg border text-left transition-colors ${
+                  selectedTemplate?.id === t.id
+                    ? 'border-blue-400 bg-blue-50 ring-1 ring-blue-300'
+                    : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
+                }`}
+              >
+                <div className="text-xs font-semibold text-gray-800 truncate">{t.name}</div>
+                {t.profile_json && (
+                  <div className="text-xs text-gray-400 mt-0.5 font-mono truncate">
+                    {PORT_RANGES.find(r => r.value === (t.profile_json as any).port_range)?.label.split(' —')[0]
+                      ?? (t.profile_json as any).port_range}
+                  </div>
+                )}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div className="space-y-4">
+        <div className="grid grid-cols-2 gap-4">
+          <div className="col-span-2 md:col-span-1">
+            <label className="block text-xs font-medium text-gray-600 mb-1.5">Scan Name</label>
+            <input value={name} onChange={e => setName(e.target.value)}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" placeholder="Internal Network Q4" />
+          </div>
         </div>
 
-        {/* Targets */}
         <div>
-          <div className="label">
-            Targets <span style={{ color: 'var(--text-3)', fontWeight: 400, textTransform: 'none', letterSpacing: 0 }}>
-              — one per line · IP, CIDR, hostname, range
-            </span>
-          </div>
-          <textarea
-            className="textarea"
-            rows={3}
-            value={targets}
-            onChange={e => setTargets(e.target.value)}
-            placeholder={'192.168.1.0/24\n10.0.0.1-10.0.0.50\nexample.com'}
-          />
+          <label className="block text-xs font-medium text-gray-600 mb-1.5">
+            Targets <span className="text-gray-400 font-normal">(one per line: IP, CIDR, hostname, range)</span>
+          </label>
+          <textarea value={targets} onChange={e => setTargets(e.target.value)} rows={3}
+            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono"
+            placeholder={"192.168.1.0/24\n10.0.0.1-10.0.0.50\nexample.com"} />
         </div>
 
-        {/* Credential */}
-        {credentials.length > 0 && (
-          <div>
-            <div className="label">Credential <span style={{ color: 'var(--text-3)', fontWeight: 400, textTransform: 'none', letterSpacing: 0 }}>(optional)</span></div>
-            <select className="select-field" value={credentialId} onChange={e => setCredentialId(e.target.value)}>
-              <option value="">None</option>
-              {credentials.map(c => (
-                <option key={c.id} value={c.id}>{c.name} ({c.type}{c.username ? ` — ${c.username}` : ''})</option>
-              ))}
-            </select>
-          </div>
-        )}
-
-        {/* Port range */}
         <div>
-          <div className="label">Port Range</div>
+          <label className="block text-xs font-medium text-gray-600 mb-1.5">
+            Credential <span className="text-gray-400 font-normal">(optional — required for authenticated plugins)</span>
+          </label>
+          <select value={credentialId} onChange={e => setCredentialId(e.target.value)}
+            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
+            <option value="">None</option>
+            {credentials.map(c => (
+              <option key={c.id} value={c.id}>
+                {c.name} ({c.type}{c.username ? ` — ${c.username}` : ''})
+              </option>
+            ))}
+          </select>
+        </div>
+
+        {/* Port Range — locked to template or manually selectable */}
+        <div>
+          <label className="block text-xs font-medium text-gray-600 mb-1.5">Port Range</label>
           {selectedTemplate ? (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', background: 'var(--accent-soft)', border: '1px solid oklch(0.78 0.14 200 / 0.3)', borderRadius: 'var(--radius)', fontSize: 11.5 }}>
-              <span className="mono" style={{ color: 'var(--accent)', flex: 1 }}>
-                {PORT_RANGES.find(r => r.value === profileConfig.port_range)?.label ?? profileConfig.port_range}
+            <div className="flex items-center gap-2 px-3 py-2 bg-blue-50 border border-blue-200 rounded-lg text-sm">
+              <span className="font-mono text-blue-700 text-xs flex-1">
+                {PORT_RANGES.find(r => r.value === profileConfig.port_range)?.label
+                  ?? `Custom: ${profileConfig.port_range}`}
               </span>
-              <span style={{ fontSize: 10.5, color: 'var(--accent-dim)' }}>set by {selectedTemplate.name}</span>
-              <button style={{ fontSize: 11, color: 'var(--text-2)', cursor: 'pointer', background: 'none', border: 'none' }}
-                onClick={() => setSelectedTemplate(null)}>unlock</button>
+              <span className="text-xs text-blue-500 flex-shrink-0">set by {selectedTemplate.name}</span>
+              <button
+                type="button"
+                onClick={() => setSelectedTemplate(null)}
+                className="text-xs text-gray-400 hover:text-gray-600 underline flex-shrink-0"
+              >
+                unlock
+              </button>
             </div>
           ) : (
-            <select className="select-field" value={profileConfig.port_range}
-              onChange={e => setProfileConfig(c => ({ ...c, port_range: e.target.value }))}>
+            <select
+              value={PORT_RANGES.find(r => r.value === profileConfig.port_range) ? profileConfig.port_range : '__custom__'}
+              onChange={e => {
+                if (e.target.value !== '__custom__') setProfileConfig(c => ({ ...c, port_range: e.target.value }))
+              }}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+            >
               {PORT_RANGES.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
+              {!PORT_RANGES.find(r => r.value === profileConfig.port_range) && (
+                <option value="__custom__" disabled>Custom: {profileConfig.port_range}</option>
+              )}
             </select>
           )}
         </div>
 
-        {/* Plugin categories */}
-        <div>
-          <div className="label">Plugin categories</div>
-          <div style={{ background: 'var(--bg-0)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: 12 }}>
-            <ProfileEditor config={profileConfig} onChange={setProfileConfig} hidePortRange />
-          </div>
+        <div className="border border-gray-200 rounded-lg p-4 bg-gray-50">
+          <p className="text-xs font-medium text-gray-600 mb-3">Plugin Categories</p>
+          <ProfileEditor config={profileConfig} onChange={setProfileConfig} hidePortRange />
         </div>
+      </div>
 
-        {/* Legal notice */}
-        <div style={{ background: 'var(--bg-0)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: 10, fontSize: 11.5, color: 'var(--text-2)', display: 'flex', gap: 8 }}>
-          <AlertCircle size={13} style={{ color: 'var(--sev-medium)', marginTop: 1, flexShrink: 0 }} />
-          <div>
-            <strong style={{ color: 'var(--text-1)' }}>Legal notice.</strong> Only scan networks and systems you own or have explicit written permission to test.
-          </div>
-        </div>
-      </div>
-      <div style={{ padding: '12px 18px', borderTop: '1px solid var(--border)', display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-        <button className="btn" onClick={onCancel}>Cancel</button>
+      <div className="flex gap-3 mt-5">
         <button
-          className="btn btn-primary"
-          disabled={loading || !name || !targets.trim()}
           onClick={handleSubmit}
+          disabled={loading || !name || !targets.trim()}
+          className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white px-4 py-2 rounded-lg text-sm font-medium"
         >
-          <Play size={11} /> {loading ? 'Creating…' : 'Create & Launch'}
+          {loading ? 'Creating...' : 'Create Scan'}
         </button>
+        <button onClick={onCancel} className="px-4 py-2 rounded-lg text-sm text-gray-600 hover:bg-gray-100">Cancel</button>
       </div>
-    </>
+    </div>
   )
 }
