@@ -16,7 +16,9 @@ class ScanContext:
     scan: Scan
     db: AsyncSession
     profile: str = "standard"
-    credential_data: dict | None = None  # decrypted from vault if provided
+    credential_data: dict | None = None  # decrypted from vault if provided (legacy single-credential)
+    scan_credentials: list[dict] = field(default_factory=list)
+    # scan_credentials entries: {"role": str, "type": str, "username": str, "domain": str, "password": str, ...}
 
     # Cancellation support
     cancelled: bool = False
@@ -42,6 +44,19 @@ class ScanContext:
     def check_cancelled(self) -> None:
         if self.cancelled:
             raise asyncio.CancelledError("Scan cancelled")
+
+    def credential(self, role: str) -> dict | None:
+        """Return first scan-scoped credential matching role, or fall back to credential_data."""
+        for c in self.scan_credentials:
+            if c.get("role") == role:
+                return c
+        # Backward compat: if old single credential_data exists and role is a generic match
+        if self.credential_data and role in ("primary_domain", "generic", "smb", "ssh"):
+            return self.credential_data
+        return None
+
+    def has_credential(self, role: str) -> bool:
+        return self.credential(role) is not None
 
     def get_port_range(self) -> str:
         """Return nmap port spec based on profile, with profile_json override support."""

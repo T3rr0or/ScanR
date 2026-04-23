@@ -68,20 +68,55 @@ class ScanEngine:
         )
 
         # Decrypt credentials if provided
+        from scanr.credentials.vault import decrypt
+        from scanr.utils.exceptions import VaultError
+
         if scan.credential_id:
+            from scanr.models.credential import Credential
             cred_result = await self.db.execute(
-                select(__import__("scanr.models", fromlist=["Credential"]).Credential)
-                .where(__import__("scanr.models", fromlist=["Credential"]).Credential.id == scan.credential_id)
+                select(Credential).where(Credential.id == scan.credential_id)
             )
             cred = cred_result.scalar_one_or_none()
             if cred:
-                from scanr.credentials.vault import decrypt
-                from scanr.utils.exceptions import VaultError
                 try:
                     context.credential_data = decrypt(cred.encrypted_data)
                     await scan_log.info(f"Credentials loaded: {cred.name}", phase="engine")
                 except VaultError as exc:
-                    await scan_log.error(f"Credential decrypt failed for '{cred.name}': {exc} — scanning without credentials", phase="engine")
+                    await scan_log.error(
+                        f"Credential decrypt failed for '{cred.name}': {exc} — scanning without credentials",
+                        phase="engine",
+                    )
+
+        # Load scan-scoped credentials (inline credentials attached at scan creation)
+        from scanr.models.scan_credential import ScanCredential
+
+        sc_result = await self.db.execute(
+            select(ScanCredential).where(ScanCredential.scan_id == scan.id)
+        )
+        scan_creds = sc_result.scalars().all()
+
+        decrypted_creds: list[dict] = []
+        for sc in scan_creds:
+            try:
+                data = decrypt(sc.encrypted_data)
+                decrypted_creds.append({
+                    "role": sc.role,
+                    "type": sc.type,
+                    "username": sc.username,
+                    "domain": sc.domain,
+                    **data,
+                })
+            except Exception as exc:
+                await scan_log.warning(
+                    f"Could not decrypt scan credential (role={sc.role}): {exc}",
+                    phase="engine",
+                )
+
+        context.scan_credentials = decrypted_creds
+        if decrypted_creds:
+            await scan_log.info(
+                f"Loaded {len(decrypted_creds)} scan-scoped credential(s)", phase="engine"
+            )
 
         collector = ResultCollector(self.scan_id, self.db, scan_log, user_id=scan.user_id)
         rate_limiter = RateLimiter()

@@ -50,10 +50,10 @@ class SshAuditPlugin(PluginBase):
     ]
 
     async def check(self, context: "ScanContext", host: "Host") -> list[FindingData]:
-        if not context.credential_data:
+        cred = context.credential("ssh") or context.credential("generic") or context.credential_data
+        if not cred:
             return []
-        cred = context.credential_data
-        if cred.get("type") not in (None, "ssh"):
+        if cred.get("type") not in (None, "ssh", "generic"):
             return []
 
         findings = []

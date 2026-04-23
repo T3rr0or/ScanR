@@ -11,10 +11,21 @@ export interface ScanSummary {
   progress?: number
 }
 
+export interface ScanCredentialIn {
+  role: string
+  type: string
+  username?: string
+  domain?: string
+  password?: string
+  save_to_vault?: boolean
+  vault_name?: string
+}
+
 export interface ScanCreate {
   name: string; targets: string[]; profile: string
   description?: string; credential_id?: string
   profile_json?: string
+  credentials?: ScanCredentialIn[]
 }
 
 export const scansApi = {

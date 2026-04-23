@@ -42,7 +42,7 @@ class AdPasswordPolicyPlugin(PluginBase):
         if not (88 in host_ports or 389 in host_ports):
             return []
 
-        creds = context.credential_data
+        creds = context.credential("primary_domain") or context.credential_data
         if not creds or not creds.get("username"):
             return []
 

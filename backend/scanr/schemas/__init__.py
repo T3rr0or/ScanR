@@ -4,13 +4,13 @@ from .finding import FindingBulkUpdate, FindingRead, FindingUpdate
 from .host import HostRead
 from .plugin import PluginRead, PluginUpdate
 from .report import ReportCreate, ReportRead
-from .scan import ScanCreate, ScanRead, ScanSummary
+from .scan import ScanCreate, ScanCredentialIn, ScanCredentialRead, ScanRead, ScanSummary
 from .schedule import ScheduleCreate, ScheduleRead
 from .user import UserCreate, UserRead
 
 __all__ = [
     "LoginRequest", "TokenResponse",
-    "ScanCreate", "ScanRead", "ScanSummary",
+    "ScanCreate", "ScanCredentialIn", "ScanCredentialRead", "ScanRead", "ScanSummary",
     "HostRead",
     "FindingRead", "FindingUpdate", "FindingBulkUpdate",
     "PluginRead", "PluginUpdate",

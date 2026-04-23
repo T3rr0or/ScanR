@@ -31,7 +31,7 @@ class SmbShareEnumPlugin(PluginBase):
         if not any(p.number == 445 and p.state == "open" for p in host.ports):
             return []
 
-        creds = context.credential_data
+        creds = context.credential("primary_domain") or context.credential("local_admin") or context.credential_data
         if not creds or not creds.get("username"):
             return []
 

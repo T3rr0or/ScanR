@@ -9,6 +9,7 @@ from .port import Port, PortProtocol, PortState
 from .report import Report, ReportFormat
 from .scan import Scan, ScanProfile, ScanStatus
 from .scan_agent import ScanAgent
+from .scan_credential import ScanCredential
 from .scan_template import ScanTemplate
 from .schedule import Schedule
 from .screenshot import Screenshot
@@ -27,6 +28,7 @@ __all__ = [
     "ScanProfile",
     "ScanTemplate",
     "ScanAgent",
+    "ScanCredential",
     "Target",
     "TargetType",
     "Host",

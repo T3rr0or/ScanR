@@ -14,6 +14,7 @@ from scanr.models import Host, Scan, ScanStatus, Target
 from scanr.models.base import new_uuid
 from scanr.models.user import User
 from scanr.schemas import ScanCreate, ScanRead, ScanSummary
+from scanr.schemas.scan import ScanCredentialRead
 from scanr.schemas.host import HostRead
 from scanr.core.limiter import limiter
 from scanr.utils.ip_utils import classify_target
@@ -104,6 +105,44 @@ async def create_scan(
         )
         db.add(target)
 
+    # Process inline scan-scoped credentials
+    if body.credentials:
+        from scanr.credentials.vault import encrypt
+        from scanr.models.credential import Credential
+        from scanr.models.scan_credential import ScanCredential
+
+        for cred_in in body.credentials:
+            enc_data = encrypt({
+                "password": cred_in.password or "",
+                "domain": cred_in.domain or "",
+                **(cred_in.extra or {}),
+            })
+
+            scan_cred = ScanCredential(
+                scan_id=scan.id,
+                role=cred_in.role,
+                type=cred_in.type,
+                username=cred_in.username,
+                domain=cred_in.domain,
+                encrypted_data=enc_data,
+            )
+
+            # Optionally save to global vault
+            if cred_in.save_to_vault:
+                vault_cred = Credential(
+                    user_id=current_user.id,
+                    name=cred_in.vault_name or f"{cred_in.role} — {scan.name}",
+                    type=cred_in.type,
+                    username=cred_in.username,
+                    encrypted_data=enc_data,
+                    description=f"Saved from scan: {scan.name}",
+                )
+                db.add(vault_cred)
+                await db.flush()
+                scan_cred.vault_credential_id = vault_cred.id
+
+            db.add(scan_cred)
+
     try:
         await db.commit()
     except Exception:
@@ -135,6 +174,22 @@ async def get_scan_hosts(
         select(Host)
         .where(Host.scan_id == scan_id)
         .options(selectinload(Host.ports).selectinload(Port.service))
+    )
+    return result.scalars().all()
+
+
+@router.get("/{scan_id}/credentials", response_model=list[ScanCredentialRead])
+async def get_scan_credentials(
+    scan_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_scope("scans:read")),
+):
+    """List credentials attached to a scan (passwords are never returned)."""
+    await _get_own_scan(scan_id, current_user.id, db)
+    from scanr.models.scan_credential import ScanCredential
+
+    result = await db.execute(
+        select(ScanCredential).where(ScanCredential.scan_id == scan_id)
     )
     return result.scalars().all()
 
