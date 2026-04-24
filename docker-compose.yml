@@ -45,11 +45,13 @@ services:
       ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@scanr.local}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:?ADMIN_PASSWORD must be set in .env}
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost}
+      WORDLIST_DIR: /app/wordlists
     ports:
       - "8000:8000"
     volumes:
       - reports_data:/app/reports
       - nvd_data:/app/nvd_cache
+      - wordlists_data:/app/wordlists
     command: uvicorn scanr.main:app --host 0.0.0.0 --port 8000
 
   worker:
@@ -71,12 +73,14 @@ services:
       VAULT_KEY: ${VAULT_KEY:-}
       ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@scanr.local}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:?ADMIN_PASSWORD must be set in .env}
+      WORDLIST_DIR: /app/wordlists
     cap_add:
       - NET_ADMIN
       - NET_RAW
     volumes:
       - reports_data:/app/reports
       - nvd_data:/app/nvd_cache
+      - wordlists_data:/app/wordlists
     command: celery -A scanr.tasks.celery_app worker --beat --loglevel=info --concurrency=4
 
   frontend:
@@ -94,3 +98,4 @@ volumes:
   postgres_data:
   reports_data:
   nvd_data:
+  wordlists_data:

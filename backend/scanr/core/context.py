@@ -55,7 +55,7 @@ class ScanContext:
             "password_wordlist_id": None,
             "max_concurrent": 3,
             "delay_ms": 500,
-            "stop_on_success": True,
+            "stop_on_success": False,
             "max_failures_per_account": 5,
         }
         if not self.scan.profile_json:
