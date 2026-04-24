@@ -44,3 +44,6 @@ test_scanr.db
 
 # Docker
 .docker/
+.claude/
+.codex
+design_handoff_scans_page/
