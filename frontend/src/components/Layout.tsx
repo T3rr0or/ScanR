@@ -146,7 +146,10 @@ export default function Layout() {
         <div style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
           {activeScanId
             ? <ScanDetail scanId={activeScanId} onBack={() => setActiveScanId(null)} />
-            : <PageComponent onOpenScan={page === 'scans' ? (id: string) => setActiveScanId(id) : undefined} />
+            : <PageComponent
+                onOpenScan={(id: string) => { setPage('scans'); setActiveScanId(id) }}
+                onNavigate={(p: PageId) => { setPage(p); setActiveScanId(null) }}
+              />
           }
         </div>
       </main>
