@@ -3,65 +3,70 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Upload, Trash2, Eye, X } from 'lucide-react'
 import { wordlistsApi, type Wordlist, type WordlistPreview } from '@/api/wordlists'
 
+const TYPE_COLOR: Record<string, string> = {
+  usernames:   'var(--accent)',
+  passwords:   'var(--sev-medium)',
+  credentials: 'var(--sev-high)',
+  paths:       'var(--text-3)',
+}
+const TYPE_BG: Record<string, string> = {
+  usernames:   'var(--accent-soft)',
+  passwords:   'oklch(0.24 0.08 85 / 0.25)',
+  credentials: 'oklch(0.24 0.08 30 / 0.25)',
+  paths:       'var(--bg-3)',
+}
+
 function TypePill({ type }: { type: Wordlist['type'] }) {
-  const styles: Record<string, string> = {
-    usernames: 'bg-blue-100 text-blue-700',
-    passwords: 'bg-orange-100 text-orange-700',
-    credentials: 'bg-red-100 text-red-700',
-    paths: 'bg-gray-100 text-gray-600',
-  }
   return (
-    <span className={`px-2 py-0.5 rounded text-xs font-mono font-medium ${styles[type] ?? 'bg-gray-100 text-gray-600'}`}>
+    <span className="mono" style={{
+      fontSize: 10.5, fontWeight: 600,
+      padding: '2px 7px', borderRadius: 4,
+      background: TYPE_BG[type] ?? 'var(--bg-3)',
+      color: TYPE_COLOR[type] ?? 'var(--text-3)',
+    }}>
       {type}
     </span>
   )
 }
 
-function WordlistTable({
-  wordlists,
-  showDelete,
-  onPreview,
-  onDelete,
-}: {
+function WordlistTable({ wordlists, showDelete, onPreview, onDelete }: {
   wordlists: Wordlist[]
   showDelete: boolean
   onPreview: (id: string) => void
   onDelete?: (id: string) => void
 }) {
-  const cols = ['Name', 'Type', 'Entries', 'Description', '']
   return (
-    <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-      <table className="w-full text-sm">
+    <div className="panel" style={{ overflow: 'hidden' }}>
+      <table className="tbl">
         <thead>
-          <tr className="bg-gray-50 border-b border-gray-200">
-            {cols.map(h => (
-              <th key={h} className="px-4 py-3 text-left font-medium text-gray-600">{h}</th>
-            ))}
+          <tr>
+            <th>Name</th>
+            <th>Type</th>
+            <th>Entries</th>
+            <th>Description</th>
+            <th />
           </tr>
         </thead>
         <tbody>
           {wordlists.map(w => (
-            <tr key={w.id} className="border-b border-gray-100 hover:bg-gray-50">
-              <td className="px-4 py-3 font-medium">{w.name}</td>
-              <td className="px-4 py-3"><TypePill type={w.type} /></td>
-              <td className="px-4 py-3 font-mono text-xs text-gray-600">{w.entry_count.toLocaleString()}</td>
-              <td className="px-4 py-3 text-gray-400 text-xs">{w.description ?? '—'}</td>
-              <td className="px-4 py-3 text-right">
-                <div className="flex items-center justify-end gap-1">
-                  <button
-                    onClick={() => onPreview(w.id)}
-                    className="p-1 text-gray-400 hover:text-blue-600"
-                    title="Preview"
-                  >
-                    <Eye size={14} />
+            <tr key={w.id}>
+              <td style={{ fontWeight: 500, color: 'var(--text-0)' }}>{w.name}</td>
+              <td><TypePill type={w.type} /></td>
+              <td className="mono" style={{ fontSize: 11.5, color: 'var(--text-2)' }}>{w.entry_count.toLocaleString()}</td>
+              <td className="dimmer" style={{ fontSize: 12 }}>{w.description ?? '—'}</td>
+              <td style={{ textAlign: 'right' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 4 }}>
+                  <button onClick={() => onPreview(w.id)} className="btn btn-ghost btn-icon btn-sm" title="Preview">
+                    <Eye size={13} />
                   </button>
                   {showDelete && onDelete && (
                     <button
-                      onClick={() => { if (confirm(`Delete wordlist "${w.name}"?`)) onDelete(w.id) }}
-                      className="p-1 text-gray-400 hover:text-red-600"
+                      onClick={() => { if (confirm(`Delete "${w.name}"?`)) onDelete(w.id) }}
+                      className="btn btn-ghost btn-icon btn-sm"
                       title="Delete"
+                      style={{ color: 'var(--sev-high)' }}
                     >
-                      <Trash2 size={14} />
+                      <Trash2 size={13} />
                     </button>
                   )}
                 </div>
@@ -70,7 +75,7 @@ function WordlistTable({
           ))}
           {wordlists.length === 0 && (
             <tr>
-              <td colSpan={5} className="px-4 py-6 text-center text-gray-400 text-sm">
+              <td colSpan={5} style={{ padding: '24px 16px', textAlign: 'center', color: 'var(--text-3)', fontSize: 12 }}>
                 None
               </td>
             </tr>
@@ -84,52 +89,33 @@ function WordlistTable({
 function PreviewModal({ preview, onClose }: { preview: WordlistPreview; onClose: () => void }) {
   return (
     <div
-      style={{
-        position: 'fixed',
-        inset: 0,
-        background: 'rgba(0,0,0,0.5)',
-        zIndex: 50,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        padding: 24,
-      }}
+      style={{ position: 'fixed', inset: 0, background: 'oklch(0.05 0.01 255 / 0.7)', zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}
       onClick={onClose}
     >
       <div
-        className="bg-white rounded-xl shadow-2xl w-full max-w-2xl overflow-hidden"
+        className="panel"
+        style={{ width: '100%', maxWidth: 640, overflow: 'hidden', boxShadow: '0 24px 80px #0009', padding: 0 }}
         onClick={e => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200">
-          <div>
-            <span className="font-semibold text-sm">{preview.name}</span>
-            <span className="text-xs text-gray-400 ml-3 font-mono">{preview.entry_count.toLocaleString()} entries</span>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', borderBottom: '1px solid var(--border)', background: 'var(--bg-2)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <span style={{ fontWeight: 600, fontSize: 13, color: 'var(--text-0)' }}>{preview.name}</span>
+            <span className="mono dimmer" style={{ fontSize: 11 }}>{preview.entry_count.toLocaleString()} entries</span>
           </div>
-          <button onClick={onClose} className="p-1 text-gray-400 hover:text-gray-700">
-            <X size={16} />
-          </button>
+          <button onClick={onClose} className="btn btn-ghost btn-icon btn-sm"><X size={14} /></button>
         </div>
-        <div
-          style={{
-            background: '#0d1117',
-            color: '#c9d1d9',
-            fontFamily: 'var(--font-mono, monospace)',
-            fontSize: 12,
-            padding: '12px 16px',
-            maxHeight: 400,
-            overflowY: 'auto',
-            lineHeight: 1.6,
-          }}
-        >
+        <div className="console" style={{ maxHeight: 400, overflowY: 'auto', borderRadius: 0 }}>
           {preview.preview.map((line, i) => (
-            <div key={i}>{line}</div>
+            <div key={i} className="ln" style={{ padding: '1px 14px' }}>
+              <span className="mono" style={{ color: 'var(--text-1)', fontSize: 12 }}>{line}</span>
+            </div>
           ))}
           {preview.preview.length === 0 && (
-            <div style={{ color: '#6e7681' }}>No entries to preview.</div>
+            <div style={{ padding: 14, color: 'var(--text-3)', fontSize: 12 }}>No entries to preview.</div>
           )}
         </div>
-        <div className="px-5 py-3 bg-gray-50 text-xs text-gray-400 border-t border-gray-200">
-          Showing first {preview.preview.length} of {preview.entry_count.toLocaleString()} entries
+        <div style={{ padding: '8px 16px', borderTop: '1px solid var(--border)', background: 'var(--bg-2)' }}>
+          <span className="dimmer" style={{ fontSize: 11 }}>Showing first {preview.preview.length} of {preview.entry_count.toLocaleString()} entries</span>
         </div>
       </div>
     </div>
@@ -143,10 +129,7 @@ export default function Wordlists() {
   const [form, setForm] = useState({ name: '', type: 'passwords', description: '' })
   const fileRef = useRef<HTMLInputElement>(null)
 
-  const { data: wordlists = [], isLoading } = useQuery({
-    queryKey: ['wordlists'],
-    queryFn: wordlistsApi.list,
-  })
+  const { data: wordlists = [], isLoading } = useQuery({ queryKey: ['wordlists'], queryFn: wordlistsApi.list })
 
   const uploadMut = useMutation({
     mutationFn: () => {
@@ -169,56 +152,42 @@ export default function Wordlists() {
 
   const previewMut = useMutation({
     mutationFn: wordlistsApi.preview,
-    onSuccess: (data) => setPreview(data),
+    onSuccess: data => setPreview(data),
   })
 
   const builtins = wordlists.filter(w => w.is_builtin)
-  const custom = wordlists.filter(w => !w.is_builtin)
+  const custom   = wordlists.filter(w => !w.is_builtin)
 
   return (
-    <div className="p-8 max-w-5xl">
-      {preview && (
-        <PreviewModal preview={preview} onClose={() => setPreview(null)} />
-      )}
+    <div style={{ padding: '24px 28px', maxWidth: 960 }}>
+      {preview && <PreviewModal preview={preview} onClose={() => setPreview(null)} />}
 
       {/* Header */}
-      <div className="flex items-start justify-between mb-6">
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 24 }}>
         <div>
-          <h1 className="text-2xl font-bold">Wordlists</h1>
-          <p className="text-sm text-gray-500 mt-1">
+          <h1 style={{ fontSize: 20, fontWeight: 700, color: 'var(--text-0)', margin: 0 }}>Wordlists</h1>
+          <p style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 4 }}>
             Custom username, password and credential lists for brute-force testing
           </p>
         </div>
-        <button
-          onClick={() => setShowUpload(v => !v)}
-          className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium"
-        >
-          <Upload size={15} /> Upload
+        <button onClick={() => setShowUpload(v => !v)} className="btn btn-primary btn-sm">
+          <Upload size={13} /> Upload
         </button>
       </div>
 
       {/* Upload form */}
       {showUpload && (
-        <div className="bg-white border border-gray-200 rounded-xl p-5 mb-6 space-y-4">
-          <h2 className="font-semibold text-sm">Upload Wordlist</h2>
-
-          <div className="grid grid-cols-2 gap-4">
+        <div className="panel" style={{ padding: 16, marginBottom: 20 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-0)', marginBottom: 14 }}>Upload Wordlist</div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 10 }}>
             <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1.5">Name *</label>
-              <input
-                value={form.name}
-                onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
-                placeholder="e.g. Top 1000 passwords"
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
-              />
+              <label className="label">Name</label>
+              <input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
+                placeholder="e.g. Top 1000 passwords" className="input" />
             </div>
             <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1.5">Type</label>
-              <select
-                value={form.type}
-                onChange={e => setForm(f => ({ ...f, type: e.target.value }))}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
-              >
+              <label className="label">Type</label>
+              <select value={form.type} onChange={e => setForm(f => ({ ...f, type: e.target.value }))} className="select-field">
                 <option value="usernames">Usernames</option>
                 <option value="passwords">Passwords</option>
                 <option value="credentials">Credentials (user:password)</option>
@@ -226,76 +195,41 @@ export default function Wordlists() {
               </select>
             </div>
           </div>
-
-          <div>
-            <label className="block text-xs font-medium text-gray-600 mb-1.5">Description <span className="font-normal text-gray-400">(optional)</span></label>
-            <input
-              value={form.description}
-              onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
-              placeholder="Brief note about this list"
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
-            />
+          <div style={{ marginBottom: 10 }}>
+            <label className="label">Description <span className="dimmer" style={{ fontWeight: 400 }}>(optional)</span></label>
+            <input value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
+              placeholder="Brief note about this list" className="input" />
           </div>
-
-          <div>
-            <label className="block text-xs font-medium text-gray-600 mb-1.5">File *</label>
-            <input
-              ref={fileRef}
-              type="file"
-              accept=".txt,.csv,text/plain"
-              className="text-sm text-gray-600 file:mr-3 file:py-1.5 file:px-3 file:rounded file:border-0 file:bg-gray-100 file:text-gray-700 file:text-xs file:font-medium hover:file:bg-gray-200"
-            />
-            <p className="text-xs text-gray-400 mt-1.5">
-              One entry per line. For credentials: <span className="font-mono">user:password</span> format.
-            </p>
+          <div style={{ marginBottom: 14 }}>
+            <label className="label">File (.txt, one entry per line)</label>
+            <input ref={fileRef} type="file" accept=".txt,.csv,text/plain"
+              style={{ fontSize: 12, color: 'var(--text-2)' }} />
+            <div className="dimmer" style={{ fontSize: 11, marginTop: 4 }}>
+              For credentials: <span className="mono">user:password</span> format per line.
+            </div>
           </div>
-
-          <div className="flex gap-3">
-            <button
-              onClick={() => uploadMut.mutate()}
-              disabled={!form.name || uploadMut.isPending}
-              className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
-            >
-              {uploadMut.isPending ? 'Uploading...' : 'Upload'}
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button onClick={() => uploadMut.mutate()} disabled={!form.name || uploadMut.isPending} className="btn btn-primary btn-sm">
+              {uploadMut.isPending ? 'Uploading…' : 'Upload'}
             </button>
-            <button
-              onClick={() => {
-                setShowUpload(false)
-                setForm({ name: '', type: 'passwords', description: '' })
-                if (fileRef.current) fileRef.current.value = ''
-              }}
-              className="px-4 py-2 text-gray-600 rounded-lg text-sm hover:bg-gray-100"
-            >
-              Cancel
-            </button>
+            <button onClick={() => { setShowUpload(false); setForm({ name: '', type: 'passwords', description: '' }); if (fileRef.current) fileRef.current.value = '' }}
+              className="btn btn-ghost btn-sm">Cancel</button>
           </div>
         </div>
       )}
 
       {isLoading ? (
-        <div className="text-sm text-gray-400 py-8 text-center">Loading wordlists…</div>
+        <div className="dimmer" style={{ fontSize: 13, padding: '20px 0' }}>Loading…</div>
       ) : (
-        <div className="space-y-8">
-          {/* Built-in section */}
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-widest text-gray-400 mb-3">Built-in</p>
-            <WordlistTable
-              wordlists={builtins}
-              showDelete={false}
-              onPreview={(id) => previewMut.mutate(id)}
-            />
-          </div>
-
-          {/* My Wordlists section */}
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-widest text-gray-400 mb-3">My Wordlists</p>
-            <WordlistTable
-              wordlists={custom}
-              showDelete={true}
-              onPreview={(id) => previewMut.mutate(id)}
-              onDelete={(id) => deleteMut.mutate(id)}
-            />
-          </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
+          <section>
+            <div style={{ fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-3)', marginBottom: 8 }}>Built-in</div>
+            <WordlistTable wordlists={builtins} showDelete={false} onPreview={id => previewMut.mutate(id)} />
+          </section>
+          <section>
+            <div style={{ fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-3)', marginBottom: 8 }}>My Wordlists</div>
+            <WordlistTable wordlists={custom} showDelete onPreview={id => previewMut.mutate(id)} onDelete={id => deleteMut.mutate(id)} />
+          </section>
         </div>
       )}
     </div>
