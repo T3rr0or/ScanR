@@ -1,26 +1,39 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
+from pathlib import Path
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from scanr.auth.password import hash_password
 from scanr.config import get_settings
-from scanr.db.session import engine
-from scanr.models import Base, Plugin, User, UserRole
+from scanr.models import Plugin, User, UserRole
 from scanr.models.base import new_uuid
 from scanr.models.scan_template import ScanTemplate
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
+_ALEMBIC_INI = Path(__file__).parent.parent.parent / "alembic.ini"
 
-async def create_tables() -> None:
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    logger.info("Database tables created")
+
+def _sync_upgrade() -> None:
+    from alembic.config import Config
+    from alembic import command
+
+    cfg = Config(str(_ALEMBIC_INI))
+    cfg.set_main_option("sqlalchemy.url", settings.database_url)
+    command.upgrade(cfg, "head")
+
+
+async def run_migrations() -> None:
+    """Apply all pending Alembic migrations. Safe to call on every startup."""
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(None, _sync_upgrade)
+    logger.info("Database migrations applied")
 
 
 async def seed_admin(session: AsyncSession) -> None:
@@ -125,6 +138,32 @@ async def seed_plugins(session: AsyncSession) -> None:
         dict(id="web.broken_access_control", name="Broken Access Control", category="web", default_severity="high", description="Detect admin/management pages accessible without authentication"),
         # Network
         dict(id="network.subdomain_enum", name="Subdomain Enumeration", category="network", default_severity="info", description="Brute-force DNS subdomains for the target hostname"),
+        # Phase 1 — Network fingerprints (no auth)
+        dict(id="services.ms17_010_check", name="MS17-010 EternalBlue (Precise Check)", category="services", default_severity="critical", cve_ids='["CVE-2017-0144","CVE-2017-0145","CVE-2017-0146"]', description="Detect MS17-010 EternalBlue using Trans2 fingerprint technique"),
+        dict(id="services.bluekeep_check", name="BlueKeep CVE-2019-0708 RDP Vulnerability", category="services", default_severity="critical", cve_ids='["CVE-2019-0708"]', description="Detect BlueKeep RDP vulnerability using MS_T120 channel probe (detection only)"),
+        dict(id="services.llmnr_nbns_check", name="LLMNR/NBT-NS Poisoning Risk", category="services", default_severity="medium", description="Detect LLMNR and NetBIOS Name Service enabled — susceptible to Responder poisoning"),
+        dict(id="services.memcached_unauth", name="Memcached Unauthenticated Access", category="services", default_severity="high", description="Detect Memcached instances accessible without authentication (also flags UDP amplification risk)"),
+        dict(id="services.etcd_unauth", name="etcd Unauthenticated Access", category="services", default_severity="critical", description="Detect unauthenticated etcd API access exposing cluster configuration and Kubernetes secrets"),
+        dict(id="services.mssql_unauth", name="MSSQL Default/Blank SA Credentials", category="services", default_severity="critical", description="Test MSSQL for default and blank SA credentials"),
+        dict(id="services.mysql_unauth", name="MySQL Anonymous/Default Root Access", category="services", default_severity="critical", description="Detect MySQL with anonymous or default root access"),
+        dict(id="services.postgres_unauth", name="PostgreSQL Default Credentials", category="services", default_severity="high", description="Detect PostgreSQL with default or trust-authenticated access"),
+        # Phase 2 — Active Directory (require domain credentials)
+        dict(id="services.dcsync_check", name="DCSync Privilege Check", category="services", default_severity="critical", description="Check if non-DC accounts have DCSync privileges (DS-Replication-Get-Changes-All)", requires_auth=True),
+        dict(id="services.unconstrained_delegation", name="Kerberos Unconstrained Delegation", category="services", default_severity="high", description="Find computers with Kerberos unconstrained delegation set (TRUSTED_FOR_DELEGATION)", requires_auth=True),
+        dict(id="services.gmsa_readable", name="gMSA Password Readable", category="services", default_severity="high", description="Check if gMSA (Group Managed Service Account) passwords are readable by current user", requires_auth=True),
+        dict(id="services.admin_share_access", name="Local Admin via SMB Admin Shares", category="services", default_severity="high", description="Test if domain credentials grant local admin access via ADMIN$/C$ shares", requires_auth=True),
+        # Phase 3 — Web detection
+        dict(id="web.api_key_exposure", name="Hardcoded API Key Exposure", category="web", default_severity="critical", description="Scan HTML/JS responses for hardcoded API keys, tokens, and secrets"),
+        dict(id="web.log4shell_check", name="Log4Shell CVE-2021-44228", category="web", default_severity="critical", cve_ids='["CVE-2021-44228","CVE-2021-45046"]', description="Detect Log4Shell via error-based and version-interpolation probes (no external callback required)"),
+        dict(id="web.spring4shell_check", name="Spring4Shell CVE-2022-22965", category="web", default_severity="critical", cve_ids='["CVE-2022-22965"]', description="Detect Spring4Shell and exposed Spring Boot Actuator endpoints"),
+        dict(id="web.exchange_autodiscover", name="Microsoft Exchange Exposed", category="web", default_severity="high", cve_ids='["CVE-2021-26855","CVE-2021-34473","CVE-2022-41082"]', description="Detect exposed Microsoft Exchange and cross-reference with ProxyLogon/ProxyShell/ProxyNotShell CVEs"),
+        dict(id="web.xxe_detect", name="XML External Entity (XXE) Injection", category="web", default_severity="high", description="Detect XXE injection via error-based file read and SSRF probes on XML/SOAP endpoints"),
+        # Phase 4 — OT/ICS
+        dict(id="services.modbus_detect", name="Modbus Industrial Protocol Exposed", category="services", default_severity="critical", description="Detect exposed Modbus/TCP industrial control system protocol (no auth, read/write capable)"),
+        dict(id="services.bacnet_detect", name="BACnet Building Automation Exposed", category="services", default_severity="high", description="Detect exposed BACnet building automation protocol via UDP Who-Is probe"),
+        # Phase 5 — Cloud/Container
+        dict(id="web.aws_metadata_ssrf", name="AWS IMDSv1 / Metadata SSRF", category="web", default_severity="critical", description="Check for direct IMDSv1 access and SSRF to AWS instance metadata endpoint"),
+        dict(id="authenticated.docker_privileged_check", name="Privileged Container Detection", category="authenticated", default_severity="high", description="Detect privileged Docker containers via SSH inspection of Linux capabilities", requires_auth=True),
     ]
 
     for p in BUILTIN_PLUGINS:

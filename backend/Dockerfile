@@ -41,6 +41,8 @@ RUN playwright install --with-deps chromium
 
 # Copy source
 COPY scanr/ ./scanr/
+COPY alembic/ ./alembic/
+COPY alembic.ini .
 
 # Built-in wordlists
 RUN mkdir -p /app/wordlists/builtin

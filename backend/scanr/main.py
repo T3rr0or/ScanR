@@ -14,7 +14,7 @@ from slowapi.middleware import SlowAPIMiddleware
 from scanr.api.router import api_router, ws_router_outer
 from scanr.api.websocket import router as ws_router
 from scanr.config import get_settings
-from scanr.db.init_db import create_tables, seed_admin, seed_plugins, seed_templates, _seed_builtin_wordlists
+from scanr.db.init_db import run_migrations, seed_admin, seed_plugins, seed_templates, _seed_builtin_wordlists
 from scanr.db.session import AsyncSessionLocal
 from scanr.utils.logging import configure_logging
 
@@ -47,7 +47,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("ScanR starting up...")
-    await create_tables()
+    await run_migrations()
     async with AsyncSessionLocal() as db:
         await seed_admin(db)
         await seed_plugins(db)
