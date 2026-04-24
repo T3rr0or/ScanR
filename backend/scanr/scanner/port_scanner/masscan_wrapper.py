@@ -90,13 +90,32 @@ class MasscanWrapper:
             f"$ masscan {target_summary} {' '.join(port_args)} --rate {effective_rate} --output-format json --wait 3",
             phase="portscan",
         )
+        proc = None
         try:
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdout=asyncio.subprocess.DEVNULL,
                 stderr=asyncio.subprocess.PIPE,
             )
-            _, stderr = await asyncio.wait_for(proc.communicate(), timeout=3600.0)
+
+            async def _stream_stderr() -> bytes:
+                chunks: list[bytes] = []
+                assert proc is not None
+                while True:
+                    line = await proc.stderr.readline()
+                    if not line:
+                        break
+                    chunks.append(line)
+                    text = line.decode(errors="replace").rstrip()
+                    if text:
+                        await context.log.debug(f"masscan: {text}", phase="portscan")
+                return b"".join(chunks)
+
+            stderr_bytes, _ = await asyncio.wait_for(
+                asyncio.gather(_stream_stderr(), proc.wait()),
+                timeout=3600.0,
+            )
+            stderr = stderr_bytes
             if proc.returncode not in (0, None):
                 logger.warning("masscan exited %s: %s", proc.returncode, stderr.decode()[:200])
 

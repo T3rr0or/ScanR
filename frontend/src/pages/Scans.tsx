@@ -276,12 +276,17 @@ export default function Scans({ onOpenScan }: Props) {
                 {/* Profile */}
                 <td className="dim" style={{ fontSize: 12.5 }}>{s.profile}</td>
 
-                {/* Status pill + progress meter */}
+                {/* Status pill + progress meter / error */}
                 <td>
                   <StatusPill status={s.status} />
                   {s.status === 'running' && (
                     <div style={{ width: 80, marginTop: 4 }}>
                       <Meter value={s.progress ?? 0} color="var(--accent-2)" />
+                    </div>
+                  )}
+                  {s.status === 'failed' && s.error_message && (
+                    <div className="mono" style={{ fontSize: 10, color: 'var(--sev-high)', marginTop: 3, maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={s.error_message}>
+                      {s.error_message}
                     </div>
                   )}
                 </td>

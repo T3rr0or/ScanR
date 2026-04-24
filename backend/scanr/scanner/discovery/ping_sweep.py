@@ -35,6 +35,7 @@ class PingSweep:
                 timeout=5.0,
             )
             if result:
+                await context.log.debug(f"{target} — up (nmap ping)", phase="discovery", host=target)
                 return True
         except Exception:
             pass
@@ -51,12 +52,15 @@ class PingSweep:
                     await writer.wait_closed()
                 except Exception:
                     pass
+                await context.log.debug(f"{target} — up (TCP:{port})", phase="discovery", host=target)
                 return True
             except (ConnectionRefusedError, OSError):
                 # Port closed — host is up
+                await context.log.debug(f"{target} — up (TCP:{port} refused)", phase="discovery", host=target)
                 return True
             except asyncio.TimeoutError:
                 continue
+        await context.log.debug(f"{target} — no response", phase="discovery", host=target)
         return False
 
     async def _nmap_ping(self, target: str) -> bool:

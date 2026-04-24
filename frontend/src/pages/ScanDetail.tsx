@@ -126,6 +126,20 @@ export default function ScanDetail({ scanId, onBack }: Props) {
             <Meter value={(scan as any)?.progress ?? 0.5} color="var(--accent-2)" />
           </div>
         )}
+        {scan?.status === 'failed' && (scan as any)?.error_message && (
+          <div style={{
+            marginTop: 10,
+            padding: '8px 12px',
+            borderRadius: 6,
+            background: 'oklch(0.25 0.05 20 / 0.4)',
+            border: '1px solid oklch(0.5 0.15 20 / 0.4)',
+            fontSize: 12,
+            color: 'var(--sev-high)',
+            fontFamily: 'var(--font-mono)',
+          }}>
+            {(scan as any).error_message}
+          </div>
+        )}
       </div>
 
       {/* Tabs */}

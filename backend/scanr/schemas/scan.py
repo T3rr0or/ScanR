@@ -55,13 +55,13 @@ class ScanSummary(BaseModel):
     findings_medium: int
     findings_low: int
     findings_info: int
+    error_message: str | None = None
 
     model_config = {"from_attributes": True}
 
 
 class ScanRead(ScanSummary):
     description: str | None
-    error_message: str | None
     user_id: str
 
     model_config = {"from_attributes": True}

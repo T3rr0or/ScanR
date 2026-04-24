@@ -9,6 +9,7 @@ export interface ScanSummary {
   targets?: string[]
   duration_s?: number
   progress?: number
+  error_message?: string | null
 }
 
 export interface ScanCredentialIn {
