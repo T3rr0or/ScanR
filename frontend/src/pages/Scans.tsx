@@ -1,7 +1,7 @@
 import { useState, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
-  Activity, Scan, Plus, Download, Search, Filter,
+  Activity, Scan, Plus, Download, Search,
   Terminal, Play, StopCircle, GitCompare, Trash2,
   Radar, Globe, Zap, SlidersHorizontal,
   X, FileText, AlertTriangle, Check,
@@ -97,6 +97,15 @@ export default function Scans({ onOpenScan }: Props) {
     mutationFn: (body: ScanCreate) => scansApi.create(body),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['scans'] }); setShowForm(false) },
   })
+
+  const createAndLaunchMut = useMutation({
+    mutationFn: async (body: ScanCreate) => {
+      const scan = await scansApi.create(body)
+      await scansApi.launch(scan.id)
+      return scan
+    },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['scans'] }); setShowForm(false) },
+  })
   const launchMut = useMutation({
     mutationFn: (id: string) => scansApi.launch(id),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['scans'] }),
@@ -147,8 +156,9 @@ export default function Scans({ onOpenScan }: Props) {
       {showForm && (
         <NewScanModal
           onClose={() => setShowForm(false)}
-          onCreate={body => createMut.mutate(body)}
-          loading={createMut.isPending}
+          onSaveAsDraft={body => createMut.mutate(body)}
+          onCreateAndLaunch={body => createAndLaunchMut.mutate(body)}
+          loading={createMut.isPending || createAndLaunchMut.isPending}
         />
       )}
 
@@ -163,7 +173,16 @@ export default function Scans({ onOpenScan }: Props) {
           </div>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn">
+          <button className="btn" onClick={() => {
+            const csv = ['Name,Status,Hosts,Critical,High,Medium,Low,Created',
+              ...filtered.map(s => [s.name, s.status, `${s.hosts_up}/${s.hosts_total}`,
+                s.findings_critical, s.findings_high, s.findings_medium, s.findings_low,
+                new Date(s.created_at).toISOString()].join(','))
+            ].join('\n')
+            const a = document.createElement('a')
+            a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }))
+            a.download = 'scans.csv'; a.click()
+          }}>
             <Download size={12} /> Export
           </button>
           <button className="btn btn-primary" onClick={() => setShowForm(true)}>
@@ -209,9 +228,6 @@ export default function Scans({ onOpenScan }: Props) {
           <span className="kbd">⌘K</span>
         </div>
 
-        <button className="btn">
-          <Filter size={12} /> Filters
-        </button>
       </div>
 
       {/* ── Table ── */}
@@ -398,11 +414,13 @@ export default function Scans({ onOpenScan }: Props) {
    ───────────────────────────────────────────────────────────────── */
 function NewScanModal({
   onClose,
-  onCreate,
+  onSaveAsDraft,
+  onCreateAndLaunch,
   loading,
 }: {
   onClose: () => void
-  onCreate: (body: ScanCreate) => void
+  onSaveAsDraft: (body: ScanCreate) => void
+  onCreateAndLaunch: (body: ScanCreate) => void
   loading: boolean
 }) {
   const [selectedDesignTemplate, setSelectedDesignTemplate] = useState('quick')
@@ -474,7 +492,7 @@ function NewScanModal({
     setCredentials(prev => prev.filter(c => c.id !== id))
   }
 
-  function handleCreate() {
+  function buildPayload(): ScanCreate {
     const credPayload: ScanCredentialIn[] = credentials.map(c => ({
       role: c.role,
       type: c.type,
@@ -484,7 +502,6 @@ function NewScanModal({
       save_to_vault: c.saveToVault,
       vault_name: c.vaultName || undefined,
     }))
-
     const pj: Record<string, unknown> = { ...configToJson(profileConfig) }
     if (bruteForce.enabled) {
       pj.brute_force = {
@@ -496,14 +513,13 @@ function NewScanModal({
         stop_on_success: bruteForce.stop_on_success,
       }
     }
-
-    onCreate({
+    return {
       name,
       targets: targets.split('\n').map(t => t.trim()).filter(Boolean),
       profile: 'custom',
       profile_json: JSON.stringify(pj),
       credentials: credPayload.length > 0 ? credPayload : undefined,
-    })
+    }
   }
 
   const canSubmit = name.trim() && targets.trim() && !loading
@@ -792,12 +808,16 @@ function NewScanModal({
           justifyContent: 'flex-end',
         }}>
           <button className="btn" onClick={onClose}>Cancel</button>
-          <button className="btn">
+          <button
+            className="btn"
+            onClick={() => canSubmit && onSaveAsDraft(buildPayload())}
+            disabled={!canSubmit}
+          >
             <FileText size={12} /> Save as draft
           </button>
           <button
             className="btn btn-primary"
-            onClick={handleCreate}
+            onClick={() => canSubmit && onCreateAndLaunch(buildPayload())}
             disabled={!canSubmit}
           >
             <Play size={11} /> Create &amp; Launch
