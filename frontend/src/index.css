@@ -1,5 +1,5 @@
-@import '@fontsource-variable/inter';
-@import '@fontsource-variable/jetbrains-mono';
+@import '@fontsource-variable/inter' layer(base);
+@import '@fontsource-variable/jetbrains-mono' layer(base);
 
 @tailwind base;
 @tailwind components;
@@ -36,8 +36,8 @@
   --sev-info:     oklch(0.65 0.02 255);
   --ok:           oklch(0.75 0.15 145);
 
-  --font-sans: 'Inter Variable', Inter, system-ui, -apple-system, 'Segoe UI', sans-serif;
-  --font-mono: 'JetBrains Mono Variable', 'JetBrains Mono', 'SF Mono', ui-monospace, Menlo, monospace;
+  --font-sans: 'Inter Variable', 'Inter', sans-serif;
+  --font-mono: 'JetBrains Mono Variable', 'JetBrains Mono', monospace;
 
   --radius: 6px;
   --radius-lg: 10px;
