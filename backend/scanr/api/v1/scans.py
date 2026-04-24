@@ -145,9 +145,11 @@ async def create_scan(
 
     try:
         await db.commit()
-    except Exception:
+    except Exception as exc:
         await db.rollback()
-        raise HTTPException(status_code=500, detail="Failed to create scan")
+        import logging as _log
+        _log.getLogger(__name__).exception("create_scan commit failed: %s", exc)
+        raise HTTPException(status_code=500, detail=f"Failed to create scan: {exc}")
     await db.refresh(scan)
     return scan
 

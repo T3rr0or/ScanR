@@ -522,7 +522,7 @@ function NewScanModal({
     }
   }
 
-  const canSubmit = name.trim() && targets.trim() && !loading
+  const canSubmit = Boolean(name.trim() && targets.trim() && !loading)
 
   return (
     <div
