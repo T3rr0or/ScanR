@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import shutil
 import tempfile
 from typing import TYPE_CHECKING
@@ -98,6 +99,14 @@ class MasscanWrapper:
                 stderr=asyncio.subprocess.PIPE,
             )
 
+            # Regex to parse masscan progress lines:
+            # "rate: 10.00-kpps, 5.12% done, 0:12:30 remaining, found=47"
+            _progress_re = re.compile(
+                r"rate:\s*([\d.]+)-kpps,\s*([\d.]+)%\s*done,\s*([\d:]+)\s*remaining,\s*found=(\d+)",
+                re.IGNORECASE,
+            )
+            _last_pct_logged = [-5.0]  # emit at most every 5%
+
             async def _stream_stderr() -> bytes:
                 chunks: list[bytes] = []
                 assert proc is not None
@@ -107,7 +116,23 @@ class MasscanWrapper:
                         break
                     chunks.append(line)
                     text = line.decode(errors="replace").rstrip()
-                    if text:
+                    if not text:
+                        continue
+
+                    m = _progress_re.search(text)
+                    if m:
+                        rate_kpps, pct, remaining, found = m.group(1), float(m.group(2)), m.group(3), m.group(4)
+                        # Emit progress every ~5% to give live feedback without spamming
+                        if pct - _last_pct_logged[0] >= 5.0 or pct >= 99.0:
+                            _last_pct_logged[0] = pct
+                            await context.log.info(
+                                f"masscan: {pct:.1f}% done — {found} open port(s) found so far, {remaining} remaining",
+                                phase="portscan",
+                            )
+                    elif "Scanning" in text and "hosts" in text:
+                        # "Scanning 254 hosts [65535 ports/host]"
+                        await context.log.info(f"masscan: {text}", phase="portscan")
+                    else:
                         await context.log.debug(f"masscan: {text}", phase="portscan")
                 return b"".join(chunks)
 
@@ -136,6 +161,13 @@ class MasscanWrapper:
                 pass
 
         logger.info("masscan: %d hosts with open ports", len(open_ports))
+        # Emit per-host port summary so console shows live results immediately
+        for ip, ports in sorted(open_ports.items()):
+            await context.log.info(
+                f"{ip} — {len(ports)} open port(s): {', '.join(str(p) for p in sorted(ports)[:20])}"
+                + ("…" if len(ports) > 20 else ""),
+                phase="portscan",
+            )
         return open_ports
 
     def _parse_json(self, path: str) -> dict[str, list[int]]:

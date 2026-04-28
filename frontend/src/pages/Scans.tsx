@@ -269,7 +269,7 @@ export default function Scans({ onOpenScan }: Props) {
               <th>Severity</th>
               <th>Duration</th>
               <th>When</th>
-              <th style={{ width: 120 }}></th>
+              <th style={{ width: 100, position: 'sticky', right: 0, background: 'var(--bg-1)', zIndex: 2 }}></th>
             </tr>
           </thead>
           <tbody>
@@ -348,8 +348,9 @@ export default function Scans({ onOpenScan }: Props) {
                 {/* When */}
                 <td className="mono dim">{relTime(s.created_at)}</td>
 
-                {/* Actions — stop propagation */}
-                <td onClick={e => e.stopPropagation()}>
+                {/* Actions — sticky right so always visible on narrow screens */}
+                <td onClick={e => e.stopPropagation()}
+                  style={{ position: 'sticky', right: 0, background: 'var(--bg-1)', zIndex: 1 }}>
                   <div style={{ display: 'flex', gap: 2 }}>
                     <button
                       className="btn btn-ghost btn-icon"

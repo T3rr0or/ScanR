@@ -329,9 +329,11 @@ async def delete_scan(
 ):
     await _get_own_scan(scan_id, current_user.id, db)
 
-    # Delete in FK dependency order inside a single transaction.
+    # Delete in FK dependency order. The session already has an implicit transaction
+    # (auto-begun by FastAPI's get_db), so use begin_nested() for a savepoint rather
+    # than begin() which raises InvalidRequestError on an already-open transaction.
     sid = {"scan_id": scan_id}
-    async with db.begin():
+    async with db.begin_nested():
         # 1. services → ports → hosts
         await db.execute(text(
             "DELETE FROM services WHERE port_id IN "
@@ -357,3 +359,4 @@ async def delete_scan(
         await db.execute(text("DELETE FROM exclusions WHERE scan_id = :scan_id"), sid)
         # 5. scan itself
         await db.execute(text("DELETE FROM scans WHERE id = :scan_id"), sid)
+    await db.commit()

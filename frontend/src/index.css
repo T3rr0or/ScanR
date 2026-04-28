@@ -235,6 +235,7 @@ input, select, textarea { font: inherit; color: inherit; }
 }
 .tbl tbody tr { cursor: pointer; transition: background 80ms ease; }
 .tbl tbody tr:hover { background: var(--bg-2); }
+.tbl tbody tr:hover td[style*="sticky"] { background: var(--bg-2); }
 .tbl tbody tr.selected { background: var(--accent-soft); }
 .tbl tbody tr.selected td { border-bottom-color: oklch(0.78 0.14 200 / 0.25); }
 .tbl tbody tr:last-child td { border-bottom: none; }
