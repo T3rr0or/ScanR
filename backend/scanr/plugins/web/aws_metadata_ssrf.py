@@ -46,10 +46,13 @@ class AwsMetadataSsrfPlugin(PluginBase):
     async def check(self, context: "ScanContext", host: "Host") -> list[FindingData]:
         findings = []
 
-        # Check 1: Direct metadata access (if scanner is on cloud network)
-        direct = await self._check_direct_metadata()
-        if direct:
-            findings.append(direct)
+        # Check 1: Direct metadata access — result is scanner-wide, run once per scan
+        _cache_attr = "_aws_direct_meta_checked"
+        if not getattr(context, _cache_attr, False):
+            setattr(context, _cache_attr, True)
+            direct = await self._check_direct_metadata()
+            if direct:
+                findings.append(direct)
 
         # Check 2: SSRF via web app
         for port in host.ports:

@@ -75,7 +75,6 @@ services:
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:?ADMIN_PASSWORD must be set in .env}
       WORDLIST_DIR: /app/wordlists
     cap_add:
-      - NET_ADMIN
       - NET_RAW
     volumes:
       - reports_data:/app/reports

@@ -49,6 +49,16 @@ class DefaultCredsWebPlugin(PluginBase):
     ports = HTTP_PORTS
 
     async def check(self, context: "ScanContext", host: "Host") -> list[FindingData]:
+        import json as _json
+        _pj: dict = {}
+        if context.scan.profile_json:
+            try:
+                _pj = _json.loads(context.scan.profile_json) if isinstance(context.scan.profile_json, str) else context.scan.profile_json
+            except Exception:
+                pass
+        if not _pj.get("brute_force", {}).get("enabled", False):
+            return []
+
         findings = []
         cfg = context.get_brute_config()
         cred_wl_id = cfg.get("credential_wordlist_id")
@@ -71,7 +81,8 @@ class DefaultCredsWebPlugin(PluginBase):
             if port.number not in HTTP_PORTS or port.state != "open":
                 continue
             scheme = "https" if port.number in (443, 8443) else "http"
-            found = await self._try_default_creds(host.ip, port.number, scheme, creds_to_try)
+            delay_s = cfg.get("delay_ms", 500) / 1000.0
+            found = await self._try_default_creds(host.ip, port.number, scheme, creds_to_try, delay_s)
             for username, password, path in found:
                 findings.append(FindingData(
                     plugin_id=self.id,
@@ -85,7 +96,9 @@ class DefaultCredsWebPlugin(PluginBase):
                 ))
         return findings
 
-    async def _try_default_creds(self, ip: str, port: int, scheme: str, creds: list[tuple[str, str]]) -> list[tuple]:
+    async def _try_default_creds(
+        self, ip: str, port: int, scheme: str, creds: list[tuple[str, str]], delay_s: float = 0.5
+    ) -> list[tuple]:
         found = []
         async with httpx.AsyncClient(verify=False, timeout=5.0, follow_redirects=True) as client:
             for path in ADMIN_PATHS:
@@ -98,6 +111,7 @@ class DefaultCredsWebPlugin(PluginBase):
                     continue
 
                 for username, password in creds:
+                    await asyncio.sleep(delay_s)
                     try:
                         resp = await client.post(
                             url,

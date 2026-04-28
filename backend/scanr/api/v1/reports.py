@@ -97,7 +97,7 @@ async def download_report(
         raise HTTPException(status_code=400, detail="Report not ready")
     path = Path(report.file_path).resolve()
     reports_dir = Path(get_settings().reports_dir).resolve()
-    if not str(path).startswith(str(reports_dir) + "/"):
+    if not path.is_relative_to(reports_dir):
         raise HTTPException(status_code=403, detail="Invalid report path")
     if not path.exists():
         raise HTTPException(status_code=404, detail="Report file missing")

@@ -16,10 +16,11 @@ logger = logging.getLogger(__name__)
 class ModbusDetectPlugin(PluginBase):
     id = "services.modbus_detect"
     name = "Modbus/TCP Industrial Protocol Detection"
-    description = "Detect exposed Modbus/TCP industrial control system protocol"
+    description = "Detect exposed Modbus/TCP industrial control system protocol (detection only — read-only FC01/FC03/FC17 probes)"
     category = PluginCategory.services
     severity = Severity.critical
     ports = [502]
+    destructive = False  # FC01/FC03/FC17 are read-only; no write functions used
 
     async def check(self, context: "ScanContext", host: "Host") -> list[FindingData]:
         findings = []

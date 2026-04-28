@@ -13,6 +13,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     perl \
     wget \
     unzip \
+    libcap2-bin \
     && rm -rf /var/lib/apt/lists/*
 
 # SecLists wordlists for web content discovery (best-effort — plugin falls back to embedded list)
@@ -24,10 +25,12 @@ RUN mkdir -p /usr/share/seclists/Discovery/Web-Content && \
     wget -q -O /usr/share/seclists/Discovery/Web-Content/directory-list-2.3-medium.txt \
       https://raw.githubusercontent.com/danielmiessler/SecLists/master/Discovery/Web-Content/directory-list-2.3-medium.txt || true
 
-# Install Nuclei (separate layer — cached unless version changes)
-RUN wget -q https://github.com/projectdiscovery/nuclei/releases/download/v3.3.9/nuclei_3.3.9_linux_amd64.zip \
+# Install Nuclei — verify checksum against official checksums file before executing
+RUN wget -q https://github.com/projectdiscovery/nuclei/releases/download/v3.3.9/nuclei_3.3.9_checksums.txt \
+    && wget -q https://github.com/projectdiscovery/nuclei/releases/download/v3.3.9/nuclei_3.3.9_linux_amd64.zip \
+    && grep "nuclei_3.3.9_linux_amd64.zip" nuclei_3.3.9_checksums.txt | sha256sum -c - \
     && unzip nuclei_3.3.9_linux_amd64.zip -d /usr/local/bin/ \
-    && rm nuclei_3.3.9_linux_amd64.zip \
+    && rm nuclei_3.3.9_linux_amd64.zip nuclei_3.3.9_checksums.txt \
     && nuclei -update-templates -silent 2>/dev/null || true
 
 WORKDIR /app
@@ -48,5 +51,14 @@ COPY alembic.ini .
 RUN mkdir -p /app/wordlists/builtin
 COPY scanr/wordlists/builtin/ /app/wordlists/builtin/
 
+# Non-root user — grant nmap/masscan raw socket access via file capabilities
+# so the worker can run scans without NET_ADMIN or running as root.
+RUN groupadd -r scanr && useradd -r -g scanr -d /app -s /bin/false scanr \
+    && chown -R scanr:scanr /app \
+    && setcap cap_net_raw+ep /usr/bin/nmap \
+    && (setcap cap_net_raw+ep /usr/bin/masscan || true)
+
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
+
+USER scanr

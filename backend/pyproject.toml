@@ -27,6 +27,7 @@ dependencies = [
     "celery[redis]>=5.4.0",
     "redis>=5.0.0",
     # Scanning
+    "aiomysql>=0.2.0",
     "python-nmap>=0.7.1",
     "scapy>=2.6.0",
     "paramiko>=3.4.0",

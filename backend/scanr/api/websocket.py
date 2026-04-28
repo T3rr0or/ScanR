@@ -26,21 +26,45 @@ router = APIRouter(tags=["websocket"])
 _HISTORY_LIMIT = 2000  # max events replayed on connect
 
 
+def _extract_token(websocket: WebSocket, query_token: str | None) -> str | None:
+    """Extract JWT from Sec-WebSocket-Protocol subprotocol header (preferred)
+    or fall back to ?token= query param (deprecated — logged in nginx access logs)."""
+    subprotocol_header = websocket.headers.get("sec-websocket-protocol", "")
+    for part in subprotocol_header.split(","):
+        part = part.strip()
+        if part.startswith("token."):
+            return part[len("token."):]
+    if query_token:
+        logger.debug("WS auth via query param (deprecated — use Sec-WebSocket-Protocol)")
+    return query_token
+
+
 @router.websocket("/ws/scans/{scan_id}/progress")
 async def scan_progress_ws(
     websocket: WebSocket,
     scan_id: str,
     token: str | None = Query(None),
 ):
-    await websocket.accept()
+    # Extract token before accepting so we can reject cleanly
+    raw_token = _extract_token(websocket, token)
 
-    # --- Auth: require valid JWT passed as ?token= query param ---
-    if not token:
+    # Accept, echoing the subprotocol if the client sent one
+    subprotocol_header = websocket.headers.get("sec-websocket-protocol", "")
+    accepted_subprotocol = None
+    for part in subprotocol_header.split(","):
+        part = part.strip()
+        if part.startswith("token."):
+            accepted_subprotocol = part
+            break
+    await websocket.accept(subprotocol=accepted_subprotocol)
+
+    # --- Auth: require valid access JWT ---
+    if not raw_token:
         await websocket.send_text(json.dumps({"type": "error", "msg": "authentication required"}))
         await websocket.close(code=4401)
         return
     try:
-        payload = decode_token(token)
+        payload = decode_token(raw_token)
         user_id: str = payload.get("sub", "")
         if not user_id or payload.get("type") != "access":
             raise ValueError("invalid token type")
@@ -74,36 +98,60 @@ async def scan_progress_ws(
 
     redis_client = aioredis.from_url(settings.redis_url, decode_responses=True)
 
-    # Replay persisted history (capped) before subscribing to live events
-    try:
-        history = await redis_client.lrange(history_key, -_HISTORY_LIMIT, -1)
-        for item in history:
-            await websocket.send_text(item)
-        await websocket.send_text(json.dumps({"type": "history_end", "count": len(history)}))
-    except Exception as exc:
-        logger.debug("WS history replay failed: %s", exc)
+    # Fix M28: subscribe FIRST, buffer into queue, then fetch LRANGE.
+    # Messages published between LRANGE and SUBSCRIBE are captured in the queue
+    # and deduplicated against history before forwarding to the client.
+    queue: asyncio.Queue[str] = asyncio.Queue()
 
     pubsub = redis_client.pubsub()
     await pubsub.subscribe(channel)
 
+    async def _drain_pubsub_to_queue():
+        async for message in pubsub.listen():
+            if message["type"] == "message":
+                await queue.put(message["data"])
+
+    drain_task = asyncio.create_task(_drain_pubsub_to_queue())
+
     try:
+        # Fetch and replay history
+        history: list[str] = []
+        try:
+            history = await redis_client.lrange(history_key, -_HISTORY_LIMIT, -1)
+            for item in history:
+                await websocket.send_text(item)
+            await websocket.send_text(json.dumps({"type": "history_end", "count": len(history)}))
+        except Exception as exc:
+            logger.debug("WS history replay failed: %s", exc)
+
+        history_set = set(history)
+
+        # Flush any buffered live events that arrived during history fetch, deduped
+        while not queue.empty():
+            item = queue.get_nowait()
+            if item not in history_set:
+                try:
+                    await websocket.send_text(item)
+                except Exception:
+                    return
+
         async def _redis_reader():
-            async for message in pubsub.listen():
-                if message["type"] == "message":
-                    try:
-                        await websocket.send_text(message["data"])
-                    except Exception:
-                        return
+            while True:
+                item = await queue.get()
+                try:
+                    await websocket.send_text(item)
+                except Exception:
+                    drain_task.cancel()
+                    return
 
         async def _ws_reader():
-            """Keep connection alive; handle client pings/disconnects."""
             try:
                 while True:
                     data = await websocket.receive_text()
                     if data == "ping":
                         await websocket.send_text(json.dumps({"type": "pong"}))
             except WebSocketDisconnect:
-                pass
+                drain_task.cancel()
 
         await asyncio.gather(_redis_reader(), _ws_reader(), return_exceptions=True)
 
@@ -112,6 +160,10 @@ async def scan_progress_ws(
     except Exception as exc:
         logger.debug("WS scan_progress error: %s", exc)
     finally:
+        drain_task.cancel()
         await pubsub.unsubscribe(channel)
-        await pubsub.aclose()
+        try:
+            await pubsub.aclose()
+        except Exception:
+            pass
         await redis_client.aclose()

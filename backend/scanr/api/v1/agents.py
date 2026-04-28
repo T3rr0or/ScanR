@@ -8,7 +8,7 @@ import hashlib
 import secrets
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -54,14 +54,14 @@ class AgentCreated(AgentRead):
 
 @router.get("", response_model=list[AgentRead])
 async def list_agents(
+    include_disabled: bool = False,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    result = await db.execute(
-        select(ScanAgent)
-        .where(ScanAgent.user_id == current_user.id, ScanAgent.enabled == True)
-        .order_by(ScanAgent.name)
-    )
+    q = select(ScanAgent).where(ScanAgent.user_id == current_user.id)
+    if not include_disabled:
+        q = q.where(ScanAgent.enabled == True)
+    result = await db.execute(q.order_by(ScanAgent.name))
     return result.scalars().all()
 
 
@@ -87,6 +87,36 @@ async def register_agent(
     out = AgentCreated.model_validate(agent)
     out.token = raw
     return out
+
+
+class AgentUpdate(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    enabled: bool | None = None
+
+
+@router.patch("/{agent_id}", response_model=AgentRead)
+async def update_agent(
+    agent_id: str,
+    body: AgentUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    result = await db.execute(
+        select(ScanAgent).where(ScanAgent.id == agent_id, ScanAgent.user_id == current_user.id)
+    )
+    agent = result.scalar_one_or_none()
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    if body.name is not None:
+        agent.name = body.name
+    if body.description is not None:
+        agent.description = body.description
+    if body.enabled is not None:
+        agent.enabled = body.enabled
+    await db.commit()
+    await db.refresh(agent)
+    return agent
 
 
 @router.delete("/{agent_id}", status_code=204)

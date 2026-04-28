@@ -150,20 +150,23 @@ function ApiKeysSection() {
     })
   }
 
+  const [keyErr, setKeyErr] = useState<string | null>(null)
+  const _onKeyErr = (e: unknown) => setKeyErr(e instanceof Error ? e.message : String(e))
+
   const createMut = useMutation({
     mutationFn: () => apiKeysApi.create({ name: newKeyName, scopes: selectedScopes }),
     onSuccess: (key) => {
-      setCreatedKey(key)
-      setShowCreate(false)
-      setNewKeyName('')
+      setCreatedKey(key); setShowCreate(false); setNewKeyName('')
       setSelectedScopes(['scans:read', 'findings:read'])
-      qc.invalidateQueries({ queryKey: ['api-keys'] })
+      qc.invalidateQueries({ queryKey: ['api-keys'] }); setKeyErr(null)
     },
+    onError: _onKeyErr,
   })
 
   const revokeMut = useMutation({
     mutationFn: apiKeysApi.revoke,
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['api-keys'] }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['api-keys'] }); setKeyErr(null) },
+    onError: _onKeyErr,
   })
 
   const copyKey = (key: string) => {
@@ -174,6 +177,7 @@ function ApiKeysSection() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      {keyErr && <div style={{ background: 'var(--sev-high)', color: '#fff', padding: '6px 10px', borderRadius: 4, fontSize: 12 }}>{keyErr}</div>}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <p style={{ fontSize: 12, color: 'var(--text-3)' }}>API keys allow CI/CD pipelines and external tools to authenticate with ScanR.</p>
         <button onClick={() => setShowCreate(true)} className="btn btn-primary btn-sm">
@@ -295,21 +299,26 @@ function WebhooksSection() {
 
   const { data: webhooks = [] } = useQuery({ queryKey: ['webhooks'], queryFn: webhooksApi.list })
 
+  const [whErr, setWhErr] = useState<string | null>(null)
+  const _onWhErr = (e: unknown) => setWhErr(e instanceof Error ? e.message : String(e))
+
   const createMut = useMutation({
     mutationFn: () => webhooksApi.create({ ...form, secret: form.secret || undefined }),
     onSuccess: () => {
       setShowCreate(false)
       setForm({ name: '', url: '', secret: '', events: ['scan.completed', 'finding.critical'] })
-      qc.invalidateQueries({ queryKey: ['webhooks'] })
+      qc.invalidateQueries({ queryKey: ['webhooks'] }); setWhErr(null)
     },
+    onError: _onWhErr,
   })
 
   const deleteMut = useMutation({
     mutationFn: webhooksApi.delete,
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['webhooks'] }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['webhooks'] }); setWhErr(null) },
+    onError: _onWhErr,
   })
 
-  const testMut = useMutation({ mutationFn: webhooksApi.test })
+  const testMut = useMutation({ mutationFn: webhooksApi.test, onError: _onWhErr })
 
   const toggleEvent = (event: string) => {
     setForm(f => ({
@@ -320,6 +329,7 @@ function WebhooksSection() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      {whErr && <div style={{ background: 'var(--sev-high)', color: '#fff', padding: '6px 10px', borderRadius: 4, fontSize: 12 }}>{whErr}</div>}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <p style={{ fontSize: 12, color: 'var(--text-3)' }}>Webhooks send HTTP POST requests to external URLs when scan events occur.</p>
         <button onClick={() => setShowCreate(true)} className="btn btn-primary btn-sm">

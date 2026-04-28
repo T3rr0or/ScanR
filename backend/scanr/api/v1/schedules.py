@@ -17,6 +17,10 @@ from scanr.models.user import User
 router = APIRouter(prefix="/schedules", tags=["schedules"])
 
 
+_MIN_INTERVAL_SECONDS = 3600  # schedules must be at least 1 hour apart
+_MAX_SCHEDULES_PER_USER = 20
+
+
 def _calc_next_run(cron_expr: str) -> datetime | None:
     try:
         from apscheduler.triggers.cron import CronTrigger
@@ -24,6 +28,27 @@ def _calc_next_run(cron_expr: str) -> datetime | None:
         return trigger.get_next_fire_time(None, datetime.now(timezone.utc))
     except Exception:
         return None
+
+
+def _validate_cron_interval(cron_expr: str) -> None:
+    """Reject cron expressions that fire more often than once per hour."""
+    try:
+        from apscheduler.triggers.cron import CronTrigger
+        trigger = CronTrigger.from_crontab(cron_expr, timezone="UTC")
+        now = datetime.now(timezone.utc)
+        first = trigger.get_next_fire_time(None, now)
+        second = trigger.get_next_fire_time(first, first) if first else None
+        if first and second:
+            gap = (second - first).total_seconds()
+            if gap < _MIN_INTERVAL_SECONDS:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Schedule interval too frequent ({int(gap)}s). Minimum interval is 1 hour.",
+                )
+    except HTTPException:
+        raise
+    except Exception:
+        pass
 
 
 class ScheduleCreate(BaseModel):
@@ -94,9 +119,18 @@ async def create_schedule(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    # Enforce per-user schedule quota
+    count_result = await db.execute(
+        select(Schedule).where(Schedule.user_id == current_user.id)
+    )
+    if len(count_result.scalars().all()) >= _MAX_SCHEDULES_PER_USER:
+        raise HTTPException(status_code=400, detail=f"Maximum {_MAX_SCHEDULES_PER_USER} schedules per user")
+
     next_run = _calc_next_run(body.cron_expr)
     if next_run is None:
         raise HTTPException(status_code=400, detail=f"Invalid cron expression: {body.cron_expr!r}")
+
+    _validate_cron_interval(body.cron_expr)
 
     schedule = Schedule(
         id=new_uuid(),
@@ -141,6 +175,7 @@ async def update_schedule(
         next_run = _calc_next_run(body.cron_expr)
         if next_run is None:
             raise HTTPException(status_code=400, detail=f"Invalid cron expression: {body.cron_expr!r}")
+        _validate_cron_interval(body.cron_expr)
         sched.cron_expr = body.cron_expr
         sched.next_run = next_run
     if body.enabled is not None:

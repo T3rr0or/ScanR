@@ -29,7 +29,7 @@ _PATTERNS = [
     ("Slack Token", re.compile(r"xox[baprs]-[0-9a-zA-Z\-]{10,48}")),
     ("Twilio API Key", re.compile(r"SK[0-9a-fA-F]{32}")),
     ("SendGrid API Key", re.compile(r"SG\.[a-zA-Z0-9]{22}\.[a-zA-Z0-9]{43}")),
-    ("Generic Secret", re.compile(r'(?i)(?:password|secret|token|api_key|apikey|api-key)\s*[=:]\s*["\'][^"\']{8,}["\']')),
+    ("Generic Secret", re.compile(r'(?i)(?:secret|token|api_key|apikey|api-key)\s*[=:]\s*["\']([^"\']{8,})["\']')),
     ("Bearer Token", re.compile(r'(?i)authorization["\s]*:\s*["\s]*bearer\s+[a-zA-Z0-9._\-]{20,}')),
 ]
 
@@ -133,9 +133,29 @@ class ApiKeyExposurePlugin(PluginBase):
             protocol="tcp",
         )
 
+    _PLACEHOLDERS = frozenset({
+        "password", "your_password", "changeme", "xxxxxxxx", "placeholder",
+        "example", "test", "secret", "token", "api_key", "apikey", "your_token",
+        "your_secret", "your_api_key", "insert_key_here", "replace_me",
+    })
+
+    def _has_entropy(self, val: str) -> bool:
+        """Reject low-entropy / placeholder values for the Generic Secret pattern."""
+        lower = val.lower().strip("'\"")
+        if lower in self._PLACEHOLDERS:
+            return False
+        if len(set(lower)) < 6:  # "aaaaaaaa" style
+            return False
+        return True
+
     def _scan_content(self, content: str, url: str, hits: list) -> None:
         for pattern_name, regex in _PATTERNS:
             for match in regex.finditer(content):
                 val = match.group()
+                # For Generic Secret, check the captured group (the value) for entropy
+                if pattern_name == "Generic Secret":
+                    captured = match.group(1) if match.lastindex else val
+                    if not self._has_entropy(captured):
+                        continue
                 masked = val[:6] + "..." + val[-4:] if len(val) > 12 else val[:3] + "..."
                 hits.append({"pattern": pattern_name, "url": url, "masked": masked})

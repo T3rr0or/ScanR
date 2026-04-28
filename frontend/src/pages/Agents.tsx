@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Bot, Plus, Trash2, Copy, Check } from 'lucide-react'
+import { Bot, Plus, Trash2, Copy, Check, RotateCcw, EyeOff } from 'lucide-react'
 import { agentsApi, type AgentCreated } from '@/api/agents'
 import { relTime, EmptyState } from '@/components/ui'
 
@@ -10,11 +10,15 @@ export default function Agents() {
   const [form, setForm] = useState({ name: '', description: '' })
   const [createdAgent, setCreatedAgent] = useState<AgentCreated | null>(null)
   const [copied, setCopied] = useState(false)
+  const [showDisabled, setShowDisabled] = useState(false)
 
   const { data: agents = [], isLoading } = useQuery({
-    queryKey: ['agents'],
-    queryFn: agentsApi.list,
+    queryKey: ['agents', showDisabled],
+    queryFn: () => agentsApi.list(showDisabled),
   })
+
+  const activeAgents = agents.filter(a => a.enabled)
+  const disabledAgents = agents.filter(a => !a.enabled)
 
   const createMut = useMutation({
     mutationFn: () => agentsApi.create({ name: form.name, description: form.description || undefined }),
@@ -28,6 +32,11 @@ export default function Agents() {
 
   const deleteMut = useMutation({
     mutationFn: agentsApi.delete,
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['agents'] }),
+  })
+
+  const enableMut = useMutation({
+    mutationFn: (id: string) => agentsApi.update(id, { enabled: true }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['agents'] }),
   })
 
@@ -54,9 +63,15 @@ export default function Agents() {
             Remote agents scan internal / firewalled networks and report findings back
           </p>
         </div>
-        <button onClick={() => setShowCreate(true)} className="btn btn-primary btn-sm">
-          <Plus size={13} /> Register Agent
-        </button>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button onClick={() => setShowDisabled(v => !v)} className="btn btn-ghost btn-sm" title={showDisabled ? 'Hide disabled' : 'Show disabled'}>
+            {showDisabled ? <EyeOff size={13} /> : <EyeOff size={13} style={{ opacity: 0.4 }} />}
+            {disabledAgents.length > 0 && !showDisabled && <span style={{ fontSize: 11 }}>{disabledAgents.length} disabled</span>}
+          </button>
+          <button onClick={() => setShowCreate(true)} className="btn btn-primary btn-sm">
+            <Plus size={13} /> Register Agent
+          </button>
+        </div>
       </div>
 
       {/* One-time token reveal */}
@@ -145,8 +160,9 @@ export default function Agents() {
           />
         </div>
       ) : (
+        <>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 14 }}>
-          {agents.map(a => {
+          {activeAgents.map(a => {
             const online = isOnline(a.last_seen_at)
             return (
               <div key={a.id} className="panel" style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -205,6 +221,30 @@ export default function Agents() {
             )
           })}
         </div>
+
+        {showDisabled && disabledAgents.length > 0 && (
+          <>
+            <div style={{ fontSize: 11, color: 'var(--text-3)', fontWeight: 600, marginTop: 12, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+              Disabled agents ({disabledAgents.length})
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 10, opacity: 0.6 }}>
+              {disabledAgents.map(a => (
+                <div key={a.id} className="panel" style={{ padding: '10px 14px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                  <span style={{ fontSize: 13, color: 'var(--text-1)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.name}</span>
+                  <button
+                    onClick={() => enableMut.mutate(a.id)}
+                    className="btn btn-ghost btn-sm"
+                    title="Re-enable agent"
+                    style={{ flexShrink: 0 }}
+                  >
+                    <RotateCcw size={12} /> Re-enable
+                  </button>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+        </>
       )}
     </div>
   )

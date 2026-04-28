@@ -35,12 +35,13 @@ def _validate_webhook_url(url: str) -> str:
     hostname = parsed.hostname
     if not hostname:
         raise ValueError("Invalid webhook URL")
-    # Resolve hostname to IP and block private/internal ranges
+    # Resolve all addresses (IPv4 + IPv6) and block private/internal ranges
     try:
-        addr_str = socket.gethostbyname(hostname)
-        addr = ipaddress.ip_address(addr_str)
-        if addr.is_private or addr.is_loopback or addr.is_link_local or addr.is_reserved or addr.is_multicast:
-            raise ValueError("Webhook URL cannot target private or internal addresses")
+        infos = socket.getaddrinfo(hostname, None)
+        for info in infos:
+            addr = ipaddress.ip_address(info[4][0])
+            if addr.is_private or addr.is_loopback or addr.is_link_local or addr.is_reserved or addr.is_multicast:
+                raise ValueError("Webhook URL cannot target private or internal addresses")
     except socket.gaierror:
         pass  # unresolvable hostname — allow it (will fail at dispatch time)
     except ValueError:

@@ -67,13 +67,33 @@ class GmsaReadablePlugin(PluginBase):
                 search_scope=ldap3.SUBTREE,
             )
 
+            # Get current user's SID to compare against GroupMSAMembership
+            current_user_sid = None
+            try:
+                conn.search(base_dn, f"(sAMAccountName={username})", attributes=["objectSid"])
+                if conn.entries:
+                    current_user_sid = str(conn.entries[0].objectSid)
+            except Exception:
+                pass
+
             readable_gmsas = []
             for entry in conn.entries:
                 name = str(entry.sAMAccountName)
-                # If msDS-ManagedPassword is readable (not empty/error), the current user can read it
                 pwd_data = entry["msDS-ManagedPassword"].raw_values if entry["msDS-ManagedPassword"] else None
-                if pwd_data:
-                    readable_gmsas.append(name)
+                if not pwd_data:
+                    continue
+
+                # Check if current user is an AUTHORISED reader of this gMSA.
+                # msDS-GroupMSAMembership holds the security descriptor of principals
+                # allowed to retrieve the password. If we can read the password but
+                # are NOT in the membership list, that's a misconfiguration finding.
+                # If we ARE in the list, reading it is expected — skip.
+                membership_raw = entry["msDS-GroupMSAMembership"].raw_values if entry["msDS-GroupMSAMembership"] else None
+                if membership_raw and current_user_sid:
+                    membership_str = str(membership_raw)
+                    if current_user_sid in membership_str:
+                        continue  # legitimate reader — not a finding
+                readable_gmsas.append(name)
 
             conn.unbind()
 

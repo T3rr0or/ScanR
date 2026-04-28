@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -20,9 +23,45 @@ from scanr.core.limiter import limiter
 from scanr.utils.ip_utils import classify_target
 
 router = APIRouter(prefix="/scans", tags=["scans"])
+logger = logging.getLogger(__name__)
 
-# Valid port range: top-N, all, single port, range, comma list
 _PORT_RANGE_RE = re.compile(r'^(top-\d{1,5}|all|\d{1,5}(-\d{1,5})?(,\d{1,5}(-\d{1,5})?)*)$')
+
+
+class _BruteForceConfig(BaseModel):
+    enabled: bool = False
+    credential_wordlist_id: str | None = None
+    username_wordlist_id: str | None = None
+    password_wordlist_id: str | None = None
+    max_concurrent: int = Field(default=3, ge=1, le=20)
+    delay_ms: int = Field(default=500, ge=0, le=30000)
+    stop_on_success: bool = False
+    max_failures_per_account: int = Field(default=5, ge=1, le=100)
+
+
+class _ProfileJson(BaseModel):
+    port_range: str | None = None
+    masscan_rate: int | None = Field(default=None, ge=1, le=100000)
+    plugins: list[str] | None = None
+    timeout: int | None = Field(default=None, ge=1, le=3600)
+    max_concurrent: int | None = Field(default=None, ge=1, le=100)
+    intrusive: bool = False
+    debug: bool = False
+    xxe_probe_file: str | None = Field(default=None, max_length=200)
+    brute_force: _BruteForceConfig | None = None
+
+    @field_validator("port_range")
+    @classmethod
+    def _check_port_range(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        if not _PORT_RANGE_RE.match(v):
+            raise ValueError(f"Invalid port_range: {v!r}. Use e.g. 'top-1000', '80,443', '1-1024', 'all'.")
+        if v.startswith("top-"):
+            n = int(v[4:])
+            if n > 65535:
+                raise ValueError(f"top-{n} exceeds nmap maximum of 65535")
+        return v
 
 
 def _validate_profile_json(raw: str) -> str:
@@ -32,14 +71,11 @@ def _validate_profile_json(raw: str) -> str:
         raise HTTPException(status_code=400, detail="profile_json is not valid JSON")
     if not isinstance(pj, dict):
         raise HTTPException(status_code=400, detail="profile_json must be a JSON object")
-    port_range = pj.get("port_range")
-    if port_range is not None:
-        if not isinstance(port_range, str) or not _PORT_RANGE_RE.match(port_range):
-            raise HTTPException(
-                status_code=400,
-                detail=f"Invalid port_range: {port_range!r}. Use e.g. 'top-1000', '80,443', '1-1024', 'all'.",
-            )
-    return raw
+    try:
+        validated = _ProfileJson.model_validate(pj)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid profile_json: {exc}")
+    return validated.model_dump_json(exclude_none=True)
 
 
 async def _get_own_scan(scan_id: str, user_id: str, db: AsyncSession) -> Scan:
@@ -147,9 +183,8 @@ async def create_scan(
         await db.commit()
     except Exception as exc:
         await db.rollback()
-        import logging as _log
-        _log.getLogger(__name__).exception("create_scan commit failed: %s", exc)
-        raise HTTPException(status_code=500, detail=f"Failed to create scan: {exc}")
+        logger.exception("create_scan commit failed")
+        raise HTTPException(status_code=500, detail="Internal error creating scan")
     await db.refresh(scan)
     return scan
 
@@ -256,32 +291,31 @@ async def delete_scan(
 ):
     await _get_own_scan(scan_id, current_user.id, db)
 
-    # Delete in FK dependency order (SQLAlchemy cascade doesn't fire without
-    # eagerly-loaded relationships, so we use raw DELETE statements).
+    # Delete in FK dependency order inside a single transaction.
     sid = {"scan_id": scan_id}
-    # 1. services → ports → hosts
-    await db.execute(text(
-        "DELETE FROM services WHERE port_id IN "
-        "(SELECT p.id FROM ports p JOIN hosts h ON p.host_id = h.id WHERE h.scan_id = :scan_id)"
-    ), sid)
-    await db.execute(text(
-        "DELETE FROM ports WHERE host_id IN (SELECT id FROM hosts WHERE scan_id = :scan_id)"
-    ), sid)
-    # 2. screenshots
-    await db.execute(text("DELETE FROM screenshots WHERE scan_id = :scan_id"), sid)
-    # 3. nullify first_seen/last_seen refs in findings from OTHER scans
-    await db.execute(text(
-        "UPDATE findings SET first_seen_scan_id = NULL WHERE first_seen_scan_id = :scan_id"
-    ), sid)
-    await db.execute(text(
-        "UPDATE findings SET last_seen_scan_id = NULL WHERE last_seen_scan_id = :scan_id"
-    ), sid)
-    # 4. findings, hosts, targets, reports, exclusions
-    await db.execute(text("DELETE FROM findings WHERE scan_id = :scan_id"), sid)
-    await db.execute(text("DELETE FROM hosts WHERE scan_id = :scan_id"), sid)
-    await db.execute(text("DELETE FROM targets WHERE scan_id = :scan_id"), sid)
-    await db.execute(text("DELETE FROM reports WHERE scan_id = :scan_id"), sid)
-    await db.execute(text("DELETE FROM exclusions WHERE scan_id = :scan_id"), sid)
-    # 5. scan itself
-    await db.execute(text("DELETE FROM scans WHERE id = :scan_id"), sid)
-    await db.commit()
+    async with db.begin():
+        # 1. services → ports → hosts
+        await db.execute(text(
+            "DELETE FROM services WHERE port_id IN "
+            "(SELECT p.id FROM ports p JOIN hosts h ON p.host_id = h.id WHERE h.scan_id = :scan_id)"
+        ), sid)
+        await db.execute(text(
+            "DELETE FROM ports WHERE host_id IN (SELECT id FROM hosts WHERE scan_id = :scan_id)"
+        ), sid)
+        # 2. screenshots
+        await db.execute(text("DELETE FROM screenshots WHERE scan_id = :scan_id"), sid)
+        # 3. nullify first_seen/last_seen refs in findings from OTHER scans
+        await db.execute(text(
+            "UPDATE findings SET first_seen_scan_id = NULL WHERE first_seen_scan_id = :scan_id"
+        ), sid)
+        await db.execute(text(
+            "UPDATE findings SET last_seen_scan_id = NULL WHERE last_seen_scan_id = :scan_id"
+        ), sid)
+        # 4. findings, hosts, targets, reports, exclusions
+        await db.execute(text("DELETE FROM findings WHERE scan_id = :scan_id"), sid)
+        await db.execute(text("DELETE FROM hosts WHERE scan_id = :scan_id"), sid)
+        await db.execute(text("DELETE FROM targets WHERE scan_id = :scan_id"), sid)
+        await db.execute(text("DELETE FROM reports WHERE scan_id = :scan_id"), sid)
+        await db.execute(text("DELETE FROM exclusions WHERE scan_id = :scan_id"), sid)
+        # 5. scan itself
+        await db.execute(text("DELETE FROM scans WHERE id = :scan_id"), sid)

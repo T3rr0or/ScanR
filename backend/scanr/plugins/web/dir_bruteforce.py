@@ -168,18 +168,21 @@ class DirBruteforcePlugin(PluginBase):
         found: list[tuple[str, int, int]] = []  # (path, status, size)
         sem = asyncio.Semaphore(20)
 
-        async def probe(path: str) -> None:
-            url = base + path.lstrip("/")
-            try:
-                async with sem:
-                    async with httpx.AsyncClient(verify=False, timeout=4.0, follow_redirects=False) as client:
+        async with httpx.AsyncClient(
+            verify=False, timeout=4.0, follow_redirects=False,
+            limits=httpx.Limits(max_connections=30, max_keepalive_connections=20),
+        ) as client:
+            async def probe(path: str) -> None:
+                url = base + path.lstrip("/")
+                try:
+                    async with sem:
                         resp = await client.get(url)
                         if resp.status_code in (200, 201, 204, 301, 302, 307, 308, 401, 403):
                             found.append((path, resp.status_code, len(resp.content)))
-            except Exception:
-                pass
+                except Exception:
+                    pass
 
-        await asyncio.gather(*[probe(p) for p in wordlist])
+            await asyncio.gather(*[probe(p) for p in wordlist])
 
         findings = []
         for path, status, size in found:

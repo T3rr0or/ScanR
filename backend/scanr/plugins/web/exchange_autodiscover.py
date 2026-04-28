@@ -90,12 +90,18 @@ class ExchangeAutodiscoverPlugin(PluginBase):
         if not detected_endpoints:
             return None
 
-        # Determine applicable CVEs
-        applicable_cves: list[str] = []
+        # Report CVE families as candidates to verify — we cannot confirm without
+        # comparing the exact CU version against Microsoft's fix tables.
+        all_cves = [cve for _, cves in _CVE_CHECKS for cve in cves]
+        applicable_cves = all_cves
         note = ""
         if version:
-            note = f"Exchange version: {version}. "
-            applicable_cves = [cve for _, cves in _CVE_CHECKS for cve in cves]
+            note = (
+                f"Detected OWA version: {version}. "
+                "Verify whether this version has received all required CUs and SUs. "
+            )
+        else:
+            note = "Version could not be determined — assume unpatched until confirmed otherwise. "
 
         evidence = f"Detected Exchange endpoints: {', '.join(detected_endpoints)}"
         if version:

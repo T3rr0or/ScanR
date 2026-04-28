@@ -54,6 +54,7 @@ class PluginBase(ABC):
     cvss_vector: str | None = None
     cve_ids: list[str] = []
     requires_auth: bool = False
+    destructive: bool = False  # True = plugin can modify target state (write ops, exploitation)
     ports: list[int] | None = None  # None = applicable to all ports
 
     @abstractmethod

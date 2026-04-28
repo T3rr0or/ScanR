@@ -35,12 +35,14 @@ class MssqlUnauthPlugin(PluginBase):
     async def check(self, context: "ScanContext", host: "Host") -> list[FindingData]:
         if not any(p.number == 1433 and p.state == "open" for p in host.ports):
             return []
-        result = await asyncio.get_event_loop().run_in_executor(
-            None, self._test_mssql, host.ip
+        loop = asyncio.get_event_loop()
+        sa_finding, browser_finding = await asyncio.gather(
+            loop.run_in_executor(None, self._test_sa_creds, host.ip),
+            loop.run_in_executor(None, self._check_sql_browser, host.ip),
         )
-        return [result] if result else []
+        return [f for f in [sa_finding, browser_finding] if f]
 
-    def _test_mssql(self, ip: str) -> FindingData | None:
+    def _test_sa_creds(self, ip: str) -> FindingData | None:
         try:
             from impacket.tds import MSSQL, DummyPrint
         except ImportError:
@@ -82,11 +84,9 @@ class MssqlUnauthPlugin(PluginBase):
                     "MSSQL login attempt failed (%s/%s): %s", username, password, exc
                 )
 
-        # Also check SQL Browser UDP 1434
-        self._check_sql_browser(ip)
         return None
 
-    def _check_sql_browser(self, ip: str) -> None:
+    def _check_sql_browser(self, ip: str) -> FindingData | None:
         """Enumerate MSSQL instances via SQL Server Browser (UDP 1434)."""
         try:
             sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -94,11 +94,25 @@ class MssqlUnauthPlugin(PluginBase):
             sock.sendto(b"\x02", (ip, 1434))
             data, _ = sock.recvfrom(4096)
             sock.close()
-            if data:
-                logger.info(
-                    "SQL Browser response from %s: %s",
-                    ip,
-                    data[3:].decode(errors="ignore")[:200],
+            if data and len(data) > 3:
+                info = data[3:].decode(errors="ignore")[:500]
+                return FindingData(
+                    plugin_id=self.id,
+                    severity=Severity.info,
+                    title="MSSQL Browser Service Exposed (UDP 1434)",
+                    description=(
+                        f"The SQL Server Browser service at {ip}:1434/UDP responded, "
+                        "exposing MSSQL instance names and port numbers. "
+                        "This aids attackers in discovering non-standard MSSQL instances."
+                    ),
+                    evidence=f"UDP 1434 Browser response:\n{info}",
+                    remediation=(
+                        "Disable SQL Server Browser if not required. "
+                        "Block UDP 1434 at the perimeter firewall."
+                    ),
+                    port_number=1434,
+                    protocol="udp",
                 )
         except Exception:
             pass
+        return None

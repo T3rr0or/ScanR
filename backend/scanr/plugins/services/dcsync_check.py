@@ -222,5 +222,8 @@ class DcSyncCheckPlugin(PluginBase):
             return []
 
     def _is_dc_sid(self, sid: str) -> bool:
-        """Domain Controllers have well-known SID S-1-5-9 or end in -516."""
-        return sid == "S-1-5-9" or sid.endswith("-516") or sid.endswith("-521")
+        """Domain Controllers: S-1-5-9 (Enterprise DCs), RID 516 (Domain Controllers group), RID 521 (Read-Only DCs)."""
+        if sid == "S-1-5-9":
+            return True
+        parts = sid.split("-")
+        return len(parts) > 1 and parts[-1] in ("516", "521")

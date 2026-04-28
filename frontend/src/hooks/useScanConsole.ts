@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, useCallback } from 'react'
 import { useAuthStore } from '@/store/auth'
 
 export type LogLevel = 'info' | 'warn' | 'error' | 'debug' | 'finding'
@@ -12,36 +12,50 @@ export interface LogEvent {
   phase?: LogPhase
   msg?: string
   meta?: Record<string, unknown>
-  // status event fields
   status?: string
   hosts_total?: number
   hosts_up?: number
-  // history_end
   count?: number
 }
 
 const MAX_LINES = 5000
+const MAX_RECONNECT = 5
 
 export function useScanConsole(scanId: string | null) {
   const [events, setEvents] = useState<LogEvent[]>([])
   const [connected, setConnected] = useState(false)
   const [scanStatus, setScanStatus] = useState<string | null>(null)
   const wsRef = useRef<WebSocket | null>(null)
+  const attemptsRef = useRef(0)
+  const pingRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const token = useAuthStore(s => s.token)
 
-  useEffect(() => {
+  const connect = useCallback(() => {
     if (!scanId || !token) return
 
-    setEvents([])
-    setScanStatus(null)
-
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const url = `${protocol}//${window.location.host}/ws/scans/${scanId}/progress?token=${encodeURIComponent(token)}`
-    const ws = new WebSocket(url)
+    const url = `${protocol}//${window.location.host}/ws/scans/${scanId}/progress`
+    const ws = new WebSocket(url, [`token.${token}`])
     wsRef.current = ws
 
-    ws.onopen = () => setConnected(true)
-    ws.onclose = () => setConnected(false)
+    ws.onopen = () => {
+      setConnected(true)
+      attemptsRef.current = 0
+      pingRef.current = setInterval(() => {
+        if (ws.readyState === WebSocket.OPEN) ws.send('ping')
+      }, 25_000)
+    }
+
+    ws.onclose = (e) => {
+      setConnected(false)
+      if (pingRef.current) { clearInterval(pingRef.current); pingRef.current = null }
+      // Don't reconnect on clean close (1000) or auth errors (4401/4404)
+      if (e.code === 1000 || e.code === 4401 || e.code === 4404) return
+      if (attemptsRef.current >= MAX_RECONNECT) return
+      const delay = Math.min(1000 * 2 ** attemptsRef.current, 30_000)
+      attemptsRef.current++
+      setTimeout(connect, delay)
+    }
 
     ws.onmessage = (e) => {
       try {
@@ -54,7 +68,6 @@ export function useScanConsole(scanId: string | null) {
 
         if (event.type === 'history_end') {
           if ((event.count ?? 0) > 0) {
-            // Insert a visual separator between history and live events
             setEvents(prev => [...prev, {
               type: 'history_marker',
               msg: `── ${event.count} events loaded from history ──`,
@@ -73,17 +86,20 @@ export function useScanConsole(scanId: string | null) {
         // ignore parse errors
       }
     }
+  }, [scanId, token])
 
-    // Keepalive ping every 25s
-    const ping = setInterval(() => {
-      if (ws.readyState === WebSocket.OPEN) ws.send('ping')
-    }, 25_000)
+  useEffect(() => {
+    if (!scanId || !token) return
+    setEvents([])
+    setScanStatus(null)
+    attemptsRef.current = 0
+    connect()
 
     return () => {
-      clearInterval(ping)
-      ws.close()
+      if (pingRef.current) { clearInterval(pingRef.current); pingRef.current = null }
+      wsRef.current?.close(1000)
     }
-  }, [scanId])
+  }, [scanId, token, connect])
 
   return { events, connected, scanStatus }
 }

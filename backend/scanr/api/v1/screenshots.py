@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from scanr.db import get_db
 from scanr.deps import get_current_user
 from scanr.models import Screenshot
+from scanr.models.scan import Scan
 from scanr.models.user import User
 
 router = APIRouter(prefix="/screenshots", tags=["screenshots"])
@@ -39,7 +40,12 @@ async def list_screenshots(
 ):
     result = await db.execute(
         select(Screenshot)
-        .where(Screenshot.scan_id == scan_id, Screenshot.file_path.isnot(None))
+        .join(Scan, Screenshot.scan_id == Scan.id)
+        .where(
+            Screenshot.scan_id == scan_id,
+            Screenshot.file_path.isnot(None),
+            Scan.user_id == current_user.id,
+        )
         .order_by(Screenshot.created_at)
     )
     return result.scalars().all()
@@ -51,7 +57,14 @@ async def get_screenshot_image(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    result = await db.execute(select(Screenshot).where(Screenshot.id == screenshot_id))
+    result = await db.execute(
+        select(Screenshot)
+        .join(Scan, Screenshot.scan_id == Scan.id)
+        .where(
+            Screenshot.id == screenshot_id,
+            Scan.user_id == current_user.id,
+        )
+    )
     shot = result.scalar_one_or_none()
     if not shot:
         raise HTTPException(status_code=404, detail="Screenshot not found")

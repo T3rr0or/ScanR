@@ -33,6 +33,10 @@ _INJECT_HEADERS = [
 _VERSION_PAYLOAD = "${java:version}"
 
 # Obfuscated JNDI payload — triggers error if processed but JNDI connection fails
+# 127.0.0.1:1099 is the scanner's own loopback — if Log4j processes this payload it
+# will attempt an outbound RMI lookup back to itself, which fails harmlessly.
+# Using loopback avoids external JNDI callbacks while still triggering the
+# "JNDI connection refused" error signature that vulnerable Log4j versions emit.
 _JNDI_PAYLOAD = "${${::-j}${::-n}${::-d}${::-i}:${::-r}${::-m}${::-i}://127.0.0.1:1099/x}"
 
 _LOG4J_SIGNATURES = [

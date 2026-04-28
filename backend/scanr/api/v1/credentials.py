@@ -34,6 +34,13 @@ async def create_credential(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    # Enforce per-user unique name
+    existing = await db.execute(
+        select(Credential).where(Credential.user_id == current_user.id, Credential.name == body.name)
+    )
+    if existing.scalar_one_or_none():
+        raise HTTPException(status_code=409, detail=f"Credential named '{body.name}' already exists")
+
     cred = Credential(
         id=new_uuid(),
         user_id=current_user.id,
@@ -44,7 +51,11 @@ async def create_credential(
         encrypted_data=encrypt(body.secret_data),
     )
     db.add(cred)
-    await db.commit()
+    try:
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        raise HTTPException(status_code=409, detail=f"Credential named '{body.name}' already exists")
     await db.refresh(cred)
     return cred
 

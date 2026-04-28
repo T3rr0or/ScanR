@@ -4,6 +4,7 @@ import { useAuthStore } from '@/store/auth'
 const api = axios.create({
   baseURL: '/api/v1',
   headers: { 'Content-Type': 'application/json' },
+  withCredentials: true, // send HttpOnly refresh token cookie automatically
 })
 
 api.interceptors.request.use((config) => {
@@ -29,14 +30,9 @@ api.interceptors.response.use(
       return Promise.reject(err)
     }
 
-    const { refreshToken, setTokens, logout } = useAuthStore.getState()
-    if (!refreshToken) {
-      logout()
-      return Promise.reject(err)
-    }
+    const { setToken, logout } = useAuthStore.getState()
 
     if (refreshing) {
-      // Wait for the in-flight refresh to finish
       return new Promise((resolve, reject) => {
         refreshQueue.push((token) => {
           if (token) {
@@ -53,9 +49,10 @@ api.interceptors.response.use(
     refreshing = true
 
     try {
-      const resp = await axios.post('/api/v1/auth/refresh', { refresh_token: refreshToken })
-      const { access_token, refresh_token } = resp.data
-      setTokens(access_token, refresh_token)
+      // Refresh token is sent automatically via HttpOnly cookie
+      const resp = await axios.post('/api/v1/auth/refresh', {}, { withCredentials: true })
+      const { access_token } = resp.data
+      setToken(access_token)
       drainQueue(access_token)
       originalRequest.headers.Authorization = `Bearer ${access_token}`
       return api(originalRequest)

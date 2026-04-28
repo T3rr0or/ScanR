@@ -38,7 +38,17 @@ def expand_targets(value: str) -> Iterator[str]:
         except ValueError:
             pass
 
-    # Single IP or hostname — yield as-is
+    # Single IP — validate and yield
+    try:
+        ipaddress.ip_address(value)
+        yield value
+        return
+    except ValueError:
+        pass
+
+    # Hostname — validate before yielding (defence against future shell=True regressions)
+    if not re.match(r'^[a-zA-Z0-9.\-]{1,253}$', value):
+        raise ValueError(f"Invalid target: {value!r}")
     yield value
 
 

@@ -3,7 +3,7 @@ import { useAuthStore } from '@/store/auth'
 import api from '@/api/client'
 
 export default function Login() {
-  const setTokens = useAuthStore((s) => s.setTokens)
+  const setToken = useAuthStore((s) => s.setToken)
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
@@ -15,7 +15,7 @@ export default function Login() {
     setError('')
     try {
       const { data } = await api.post('/auth/login', { email, password })
-      setTokens(data.access_token, data.refresh_token)
+      setToken(data.access_token)
     } catch {
       setError('Invalid credentials')
     } finally {

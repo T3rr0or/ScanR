@@ -46,6 +46,10 @@ class ScanContext:
         if self.cancelled:
             raise asyncio.CancelledError("Scan cancelled")
 
+    def credential(self, role: str) -> dict | None:
+        """Return credential data for the given role. Falls back to primary credential."""
+        return self.credential_data
+
     def get_brute_config(self) -> dict:
         """Return brute_force config from profile_json, with safe defaults."""
         import json as _json

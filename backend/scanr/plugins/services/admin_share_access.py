@@ -58,10 +58,16 @@ class AdminShareAccessPlugin(PluginBase):
             smb = SMBConnection(ip, ip, timeout=10)
             smb.login(username, password, domain=domain)
 
-            # Try ADMIN$ (most definitive admin check)
+            # Try ADMIN$ — connectTree alone can succeed for non-admins on some configs,
+            # so also attempt listPath to confirm actual filesystem access.
             try:
                 smb.connectTree("ADMIN$")
-                accessible_shares.append("ADMIN$")
+                try:
+                    files = smb.listPath("ADMIN$", "\\*")
+                    accessible_shares.append(f"ADMIN$ (listed {len(files)} items in Windows/)")
+                except Exception:
+                    # connectTree worked but listPath failed — not confirmed admin
+                    pass
             except Exception:
                 pass
 

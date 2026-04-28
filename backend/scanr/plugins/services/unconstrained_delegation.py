@@ -102,7 +102,7 @@ class UnconstrainedDelegationPlugin(PluginBase):
             # Find constrained delegation (msDS-AllowedToDelegateTo set)
             conn.search(
                 base_dn,
-                "(&(objectClass=user)(msDS-AllowedToDelegateTo=*))",
+                "(&(|(objectClass=user)(objectClass=computer))(msDS-AllowedToDelegateTo=*))",
                 attributes=["sAMAccountName", "msDS-AllowedToDelegateTo", "distinguishedName"],
                 search_scope=ldap3.SUBTREE,
             )

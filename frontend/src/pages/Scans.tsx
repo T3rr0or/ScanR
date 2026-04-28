@@ -87,15 +87,22 @@ export default function Scans({ onOpenScan }: Props) {
   const [search, setSearch]           = useState('')
   const [lastUpdated]                 = useState<Date>(new Date())
 
+  const [mutError, setMutError] = useState<string | null>(null)
+  const _onErr = (e: unknown) => setMutError(e instanceof Error ? e.message : String(e))
+
   const { data: scans = [] } = useQuery({
     queryKey: ['scans', page],
     queryFn: () => scansApi.list({ limit: PAGE_SIZE, offset: page * PAGE_SIZE }),
-    refetchInterval: 3000,
+    refetchInterval: (query) =>
+      query.state.data?.some((s: { status: string }) => s.status === 'running' || s.status === 'pending')
+        ? 3000
+        : false,
   })
 
   const createMut = useMutation({
     mutationFn: (body: ScanCreate) => scansApi.create(body),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['scans'] }); setShowForm(false) },
+    onError: _onErr,
   })
 
   const createAndLaunchMut = useMutation({
@@ -105,18 +112,22 @@ export default function Scans({ onOpenScan }: Props) {
       return scan
     },
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['scans'] }); setShowForm(false) },
+    onError: _onErr,
   })
   const launchMut = useMutation({
     mutationFn: (id: string) => scansApi.launch(id),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['scans'] }),
+    onError: _onErr,
   })
   const cancelMut = useMutation({
     mutationFn: (id: string) => scansApi.cancel(id),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['scans'] }),
+    onError: _onErr,
   })
   const deleteMut = useMutation({
     mutationFn: (id: string) => scansApi.delete(id),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['scans'] }),
+    onError: _onErr,
   })
 
   /* counts per status */
@@ -143,6 +154,14 @@ export default function Scans({ onOpenScan }: Props) {
 
   return (
     <div style={{ padding: 20, maxWidth: 1480, margin: '0 auto' }}>
+      {mutError && (
+        <div style={{ background: 'var(--sev-high)', color: '#fff', borderRadius: 6, padding: '8px 14px', marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
+          <AlertTriangle size={14} />
+          <span style={{ flex: 1 }}>{mutError}</span>
+          <button onClick={() => setMutError(null)} style={{ background: 'none', border: 'none', color: '#fff', cursor: 'pointer', padding: 0 }}><X size={14} /></button>
+        </div>
+      )}
+
       {/* Delta modal */}
       {deltaScan && (
         <ScanDelta
@@ -174,10 +193,15 @@ export default function Scans({ onOpenScan }: Props) {
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
           <button className="btn" onClick={() => {
+            const csvQ = (v: unknown) => {
+              const s = String(v ?? '')
+              const safe = /^[=+\-@\t\r]/.test(s) ? `'${s}` : s
+              return `"${safe.replace(/"/g, '""')}"`
+            }
             const csv = ['Name,Status,Hosts,Critical,High,Medium,Low,Created',
               ...filtered.map(s => [s.name, s.status, `${s.hosts_up}/${s.hosts_total}`,
                 s.findings_critical, s.findings_high, s.findings_medium, s.findings_low,
-                new Date(s.created_at).toISOString()].join(','))
+                new Date(s.created_at).toISOString()].map(csvQ).join(','))
             ].join('\n')
             const a = document.createElement('a')
             a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }))

@@ -20,7 +20,7 @@ class Settings(BaseSettings):
     # Security
     secret_key: str  # Required — no default; must be set in environment
     algorithm: str = "HS256"
-    access_token_expire_minutes: int = 60
+    access_token_expire_minutes: int = 15
     refresh_token_expire_days: int = 7
 
     # CORS — comma-separated origins allowed to call the API

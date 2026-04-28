@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import uuid
 from datetime import datetime, timedelta, timezone
 
 from jose import JWTError, jwt
@@ -25,7 +26,7 @@ def create_access_token(subject: str, role: str) -> str:
 def create_refresh_token(subject: str) -> str:
     expire = _now() + timedelta(days=settings.refresh_token_expire_days)
     return jwt.encode(
-        {"sub": subject, "exp": expire, "type": "refresh"},
+        {"sub": subject, "exp": expire, "type": "refresh", "jti": str(uuid.uuid4())},
         settings.secret_key,
         algorithm=settings.algorithm,
     )

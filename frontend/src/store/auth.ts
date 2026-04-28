@@ -3,8 +3,7 @@ import { persist, createJSONStorage } from 'zustand/middleware'
 
 interface AuthState {
   token: string | null
-  refreshToken: string | null
-  setTokens: (access: string, refresh: string) => void
+  setToken: (access: string) => void
   logout: () => void
 }
 
@@ -12,9 +11,8 @@ export const useAuthStore = create<AuthState>()(
   persist(
     (set) => ({
       token: null,
-      refreshToken: null,
-      setTokens: (access, refresh) => set({ token: access, refreshToken: refresh }),
-      logout: () => set({ token: null, refreshToken: null }),
+      setToken: (access) => set({ token: access }),
+      logout: () => set({ token: null }),
     }),
     {
       name: 'scanr-auth',

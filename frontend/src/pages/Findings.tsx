@@ -66,14 +66,19 @@ function FindingDrawer({
     setNotes(finding.analyst_notes ?? '')
   }, [finding.id])
 
+  const [drawerErr, setDrawerErr] = useState<string | null>(null)
+  const _onErr = (e: unknown) => setDrawerErr(e instanceof Error ? e.message : String(e))
+
   const notesMut = useMutation({
     mutationFn: (v: string) => findingsApi.update(finding.id, { analyst_notes: v }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['findings'] }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['findings'] }); setDrawerErr(null) },
+    onError: _onErr,
   })
 
   const fpMut = useMutation({
     mutationFn: () => findingsApi.update(finding.id, { false_positive: !finding.false_positive }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['findings'] }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['findings'] }); setDrawerErr(null) },
+    onError: _onErr,
   })
 
   const cveIds = safeParse(finding.cve_ids)
@@ -93,6 +98,7 @@ function FindingDrawer({
         maxHeight: '100%',
       }}
     >
+      {drawerErr && <div style={{ background: 'var(--sev-high)', color: '#fff', padding: '6px 10px', fontSize: 12 }}>{drawerErr}</div>}
       {/* Header */}
       <div
         style={{
@@ -420,20 +426,19 @@ export default function Findings() {
   })
 
   // Bulk mutations
+  const [bulkErr, setBulkErr] = useState<string | null>(null)
+  const _onBulkErr = (e: unknown) => setBulkErr(e instanceof Error ? e.message : String(e))
+
   const bulkFpMut = useMutation({
     mutationFn: (ids: string[]) => findingsApi.bulkUpdate(ids, { false_positive: true }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['findings'] })
-      setSelectedIds(new Set())
-    },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['findings'] }); setSelectedIds(new Set()); setBulkErr(null) },
+    onError: _onBulkErr,
   })
 
   const bulkArMut = useMutation({
     mutationFn: (ids: string[]) => findingsApi.bulkUpdate(ids, { remediation_status: 'accepted_risk' }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['findings'] })
-      setSelectedIds(new Set())
-    },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['findings'] }); setSelectedIds(new Set()); setBulkErr(null) },
+    onError: _onBulkErr,
   })
 
   // Select-all checkbox indeterminate state
@@ -488,6 +493,7 @@ export default function Findings() {
     >
       {/* ── Left: table column ── */}
       <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 12, overflow: 'hidden' }}>
+        {bulkErr && <div style={{ background: 'var(--sev-high)', color: '#fff', padding: '6px 10px', borderRadius: 4, fontSize: 12 }}>{bulkErr}</div>}
 
         {/* Page title */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>

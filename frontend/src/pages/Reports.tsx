@@ -16,13 +16,16 @@ export default function Reports() {
   const [scanId, setScanId] = useState('')
   const [format, setFormat] = useState('html')
 
+  const [mutErr, setMutErr] = useState<string | null>(null)
   const createMut = useMutation({
     mutationFn: () => reportsApi.create(scanId, format),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['reports'] }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['reports'] }); setMutErr(null) },
+    onError: (e: unknown) => setMutErr(e instanceof Error ? e.message : String(e)),
   })
 
   return (
     <div style={{ padding: '24px 28px' }}>
+      {mutErr && <div style={{ background: 'var(--sev-high)', color: '#fff', padding: '6px 10px', borderRadius: 4, fontSize: 12, marginBottom: 12 }}>{mutErr}</div>}
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 24 }}>
         <FileText size={18} style={{ color: 'var(--accent)' }} />

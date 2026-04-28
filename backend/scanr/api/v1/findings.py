@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -24,7 +25,8 @@ async def list_findings(
     false_positive: bool | None = Query(None),
     mitre_technique: str | None = Query(None, description="Filter by ATT&CK technique ID, e.g. T1110.001"),
     limit: int = Query(200, le=500),
-    offset: int = Query(0),
+    cursor: str | None = Query(None, description="Cursor from previous page: ISO timestamp,finding_id"),
+    offset: int = Query(0, description="Deprecated: use cursor instead"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_scope("findings:read")),
 ):
@@ -33,7 +35,7 @@ async def list_findings(
         .outerjoin(Host, Finding.host_id == Host.id)
         .join(Scan, Finding.scan_id == Scan.id)
         .where(Scan.user_id == current_user.id)
-        .order_by(Finding.created_at.desc())
+        .order_by(Finding.created_at.desc(), Finding.id.desc())
     )
     if scan_id:
         q = q.where(Finding.scan_id == scan_id)
@@ -46,9 +48,25 @@ async def list_findings(
     if false_positive is not None:
         q = q.where(Finding.false_positive == false_positive)
     if mitre_technique:
-        # JSON contains check — works for both SQLite and Postgres
+        if not re.match(r'^T\d{4}(\.\d{3})?$', mitre_technique):
+            raise HTTPException(status_code=400, detail="Invalid MITRE technique ID (e.g. T1110 or T1110.001)")
         q = q.where(Finding.mitre_tags.contains(mitre_technique))
-    q = q.offset(offset).limit(limit)
+
+    # Cursor takes precedence over offset — stable under concurrent inserts
+    if cursor:
+        try:
+            cur_ts_str, cur_id = cursor.rsplit(",", 1)
+            cur_ts = datetime.fromisoformat(cur_ts_str)
+            q = q.where(
+                (Finding.created_at < cur_ts) |
+                ((Finding.created_at == cur_ts) & (Finding.id < cur_id))
+            )
+        except (ValueError, AttributeError):
+            raise HTTPException(status_code=400, detail="Invalid cursor format")
+    else:
+        q = q.offset(offset)
+
+    q = q.limit(limit)
     result = await db.execute(q)
     rows = result.all()
     findings = []

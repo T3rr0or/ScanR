@@ -41,7 +41,11 @@ export default function Layout() {
   const [page, setPage] = useState<PageId>('dashboard')
   const [activeScanId, setActiveScanId] = useState<string | null>(null)
   const [bannerDismissed, setBannerDismissed] = useState(false)
-  const logout = useAuthStore((s) => s.logout)
+  const _storeLogout = useAuthStore((s) => s.logout)
+  const logout = async () => {
+    try { await api.post('/auth/logout', {}) } catch { /* ignore */ }
+    _storeLogout()
+  }
 
   const { data: versionData } = useQuery({
     queryKey: ['version'],

@@ -10,17 +10,21 @@ import logging
 from datetime import datetime, timezone
 
 from pathlib import Path
+from typing import Literal
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from fastapi.responses import FileResponse, PlainTextResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from scanr.core.limiter import limiter
 from scanr.db import get_db
+from scanr.deps import get_current_user
 from scanr.models import Finding, Host, Port, Scan, ScanStatus, Service, Target
 from scanr.models.base import new_uuid
 from scanr.models.scan_agent import ScanAgent
+from scanr.models.user import User
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/agent", tags=["agent-jobs"])
@@ -29,11 +33,13 @@ _RUNNER_PATH = Path(__file__).parent.parent.parent / "agent" / "runner.py"
 
 
 @router.get("/script", response_class=PlainTextResponse, include_in_schema=False)
-async def download_agent_script():
-    """Serve the standalone agent script — no auth required, it's just a Python file."""
-    if not _RUNNER_PATH.exists():
+async def download_agent_script(current_user: User = Depends(get_current_user)):
+    """Serve the standalone agent script — requires authentication."""
+    resolved = _RUNNER_PATH.resolve()
+    base = (Path(__file__).parent.parent.parent / "agent").resolve()
+    if not resolved.is_relative_to(base) or not resolved.exists():
         raise HTTPException(status_code=404, detail="Agent script not found")
-    content = _RUNNER_PATH.read_text()
+    content = resolved.read_text()
     return PlainTextResponse(
         content,
         media_type="text/x-python",
@@ -62,6 +68,7 @@ class HeartbeatBody(BaseModel):
 
 
 @router.post("/heartbeat", status_code=200)
+@limiter.limit("20/minute")
 async def agent_heartbeat(
     request: Request,
     body: HeartbeatBody,
@@ -79,7 +86,9 @@ async def agent_heartbeat(
 # ── Job queue ──────────────────────────────────────────────────────────────
 
 @router.get("/jobs")
+@limiter.limit("30/minute")
 async def get_agent_jobs(
+    request: Request,
     agent: ScanAgent = Depends(_get_agent),
     db: AsyncSession = Depends(get_db),
 ):
@@ -142,14 +151,14 @@ class HostIn(BaseModel):
 
 
 class FindingIn(BaseModel):
-    host_ip: str
-    plugin_id: str
-    severity: str
-    title: str
-    description: str | None = None
-    evidence: str | None = None
+    host_ip: str = Field(..., max_length=253)
+    plugin_id: str = Field(..., max_length=100)
+    severity: Literal["critical", "high", "medium", "low", "info"]
+    title: str = Field(..., max_length=500)
+    description: str | None = Field(None, max_length=10000)
+    evidence: str | None = Field(None, max_length=10000)
     port_number: int | None = None
-    protocol: str | None = None
+    protocol: str | None = Field(None, max_length=10)
 
 
 class AgentResults(BaseModel):
@@ -158,7 +167,9 @@ class AgentResults(BaseModel):
 
 
 @router.post("/jobs/{scan_id}/results", status_code=200)
+@limiter.limit("10/minute")
 async def agent_submit_results(
+    request: Request,
     scan_id: str,
     body: AgentResults,
     agent: ScanAgent = Depends(_get_agent),

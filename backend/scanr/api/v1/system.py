@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import logging
 from fastapi import APIRouter, BackgroundTasks, Depends
-from sqlalchemy import func, select
+from sqlalchemy import Integer, cast, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from scanr.config import get_settings
 from scanr.db import get_db
 from scanr.deps import get_current_user, require_admin
-from scanr.models import Finding, Host, Scan, ScanStatus
+from scanr.models import Scan, ScanStatus
 from scanr.models.user import User
 
 router = APIRouter(prefix="/system", tags=["system"])
@@ -27,30 +27,27 @@ async def stats(
     current_user: User = Depends(get_current_user),
 ):
     uid = current_user.id
-    scans_total = (await db.execute(
-        select(func.count(Scan.id)).where(Scan.user_id == uid)
-    )).scalar()
-    scans_running = (await db.execute(
-        select(func.count(Scan.id)).where(Scan.user_id == uid, Scan.status == ScanStatus.running)
-    )).scalar()
-    hosts_total = (await db.execute(
-        select(func.count(Host.id)).join(Scan, Host.scan_id == Scan.id).where(Scan.user_id == uid)
-    )).scalar()
-    findings_total = (await db.execute(
-        select(func.count(Finding.id)).join(Scan, Finding.scan_id == Scan.id).where(Scan.user_id == uid)
-    )).scalar()
-    findings_critical = (await db.execute(
-        select(func.count(Finding.id))
-        .join(Scan, Finding.scan_id == Scan.id)
-        .where(Scan.user_id == uid, Finding.severity == "critical", Finding.false_positive == False)
-    )).scalar()
+
+    # Scan counts in one query
+    scan_row = (await db.execute(
+        select(
+            func.count(Scan.id).label("total"),
+            func.sum(cast(Scan.status == ScanStatus.running, Integer)).label("running"),
+            func.sum(Scan.hosts_up).label("hosts_total"),
+            func.sum(
+                Scan.findings_info + Scan.findings_low + Scan.findings_medium +
+                Scan.findings_high + Scan.findings_critical
+            ).label("findings_total"),
+            func.sum(Scan.findings_critical).label("findings_critical"),
+        ).where(Scan.user_id == uid)
+    )).one()
 
     return {
-        "scans_total": scans_total,
-        "scans_running": scans_running,
-        "hosts_total": hosts_total,
-        "findings_total": findings_total,
-        "findings_critical": findings_critical,
+        "scans_total": scan_row.total or 0,
+        "scans_running": scan_row.running or 0,
+        "hosts_total": scan_row.hosts_total or 0,
+        "findings_total": scan_row.findings_total or 0,
+        "findings_critical": scan_row.findings_critical or 0,
     }
 
 
@@ -71,7 +68,8 @@ async def version_check():
             import json
             cached_data = json.loads(cached)
             latest = cached_data.get("tag_name", "").lstrip("v")
-            release_url = cached_data.get("html_url")
+            _cached_url = cached_data.get("html_url", "")
+            release_url = _cached_url if _cached_url.startswith("https://github.com/") else None
     except Exception:
         pass
 
@@ -85,7 +83,8 @@ async def version_check():
                 if resp.status_code == 200:
                     data = resp.json()
                     latest = data.get("tag_name", "").lstrip("v")
-                    release_url = data.get("html_url")
+                    _raw_url = data.get("html_url", "")
+                    release_url = _raw_url if _raw_url.startswith("https://github.com/") else None
                     # Cache 1 hour
                     import redis, json
                     r = redis.from_url(settings.redis_url, decode_responses=True)

@@ -131,10 +131,12 @@ async def delete_wordlist(
     if wl.user_id != current_user.id:
         raise HTTPException(status_code=403, detail="Not your wordlist")
     path = Path(wl.file_path)
-    if path.exists():
-        path.unlink()
     await db.delete(wl)
     await db.commit()
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:
+        pass
 
 
 async def _get_accessible(wordlist_id: str, user_id: str, db: AsyncSession) -> Wordlist:

@@ -33,10 +33,11 @@ class ScanLogger:
 
     CHANNEL_PREFIX = "scanr:events:"
 
-    def __init__(self, scan_id: str):
+    def __init__(self, scan_id: str, debug: bool = False):
         self.scan_id = scan_id
         self._channel = f"{self.CHANNEL_PREFIX}{scan_id}"
         self._redis: "redis.asyncio.Redis | None" = None  # lazy init
+        self._debug = debug  # gate debug events over WS
 
     async def _get_redis(self):
         if self._redis is None:
@@ -89,7 +90,10 @@ class ScanLogger:
         await self.emit(msg, "error", phase, meta or None)
 
     async def debug(self, msg: str, phase: str = "engine", **meta) -> None:
-        await self.emit(msg, "debug", phase, meta or None)
+        # Always log locally; only emit over WS when scan profile has debug:true
+        logger.debug("[scan:%s] [%s] %s", self.scan_id[:8], phase, msg)
+        if self._debug:
+            await self.emit(msg, "debug", phase, meta or None)
 
     async def finding(self, title: str, severity: str, host: str, plugin: str, **meta) -> None:
         await self.emit(

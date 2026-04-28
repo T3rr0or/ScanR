@@ -11,7 +11,7 @@ from .celery_app import celery_app
 logger = logging.getLogger(__name__)
 
 
-def _make_session():
+def _make_engine_and_session():
     """Create a fresh async engine + session bound to the current event loop.
 
     Celery workers run each task in a new event loop.  The shared engine in
@@ -19,6 +19,9 @@ def _make_session():
     created it — reusing it across loops causes 'Future attached to a
     different loop' errors.  NullPool skips pooling entirely so every call
     opens a fresh connection on whatever loop is active.
+
+    Caller is responsible for calling await engine.dispose() to release
+    the connection.
     """
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
     from sqlalchemy.pool import NullPool
@@ -30,7 +33,8 @@ def _make_session():
         poolclass=NullPool,
         connect_args={"check_same_thread": False} if "sqlite" in settings.database_url else {},
     )
-    return async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False, autoflush=False)
+    session_maker = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False, autoflush=False)
+    return engine, session_maker
 
 
 @celery_app.task(bind=True, name="scanr.run_scan")
@@ -60,15 +64,18 @@ async def _mark_scan_terminal(scan_id: str, reason: str) -> None:
     from scanr.models import Scan, ScanStatus
     from sqlalchemy import select
 
-    SessionLocal = _make_session()
-    async with SessionLocal() as db:
-        result = await db.execute(select(Scan).where(Scan.id == scan_id))
-        scan = result.scalar_one_or_none()
-        if scan and scan.status == ScanStatus.running:
-            scan.status = ScanStatus.failed
-            scan.error_message = reason
-            scan.finished_at = datetime.now(tz=timezone.utc)
-            await db.commit()
+    engine, SessionLocal = _make_engine_and_session()
+    try:
+        async with SessionLocal() as db:
+            result = await db.execute(select(Scan).where(Scan.id == scan_id))
+            scan = result.scalar_one_or_none()
+            if scan and scan.status == ScanStatus.running:
+                scan.status = ScanStatus.failed
+                scan.error_message = reason
+                scan.finished_at = datetime.now(tz=timezone.utc)
+                await db.commit()
+    finally:
+        await engine.dispose()
 
 
 async def _run_scan_async(task, scan_id: str) -> dict:
@@ -76,47 +83,50 @@ async def _run_scan_async(task, scan_id: str) -> dict:
     from scanr.models import Scan, ScanStatus
     from sqlalchemy import select
 
-    SessionLocal = _make_session()
-    async with SessionLocal() as db:
-        result = await db.execute(select(Scan).where(Scan.id == scan_id))
-        scan = result.scalar_one_or_none()
-        if not scan:
-            logger.error("Scan %s not found", scan_id)
-            return {"error": "scan not found"}
+    db_engine, SessionLocal = _make_engine_and_session()
+    try:
+        async with SessionLocal() as db:
+            result = await db.execute(select(Scan).where(Scan.id == scan_id))
+            scan = result.scalar_one_or_none()
+            if not scan:
+                logger.error("Scan %s not found", scan_id)
+                return {"error": "scan not found"}
 
-        scan.started_at = datetime.now(tz=timezone.utc)
-        scan.status = ScanStatus.running
-        await db.commit()
-
-        user_id = scan.user_id
-        try:
-            engine = ScanEngine(scan_id=scan_id, db=db)
-            await engine.run()
-            scan.status = ScanStatus.completed
-        except asyncio.CancelledError:
-            scan.status = ScanStatus.cancelled
-            raise
-        except Exception as exc:
-            logger.exception("Scan %s failed: %s", scan_id, exc)
-            scan.status = ScanStatus.failed
-            scan.error_message = str(exc)
-        finally:
-            scan.finished_at = datetime.now(tz=timezone.utc)
+            scan.started_at = datetime.now(tz=timezone.utc)
+            scan.status = ScanStatus.running
             await db.commit()
 
-        # Fire webhooks
-        try:
-            from scanr.core.webhook_dispatcher import dispatch
-            event = "scan.completed" if scan.status == ScanStatus.completed else "scan.failed"
-            await dispatch(event, {
-                "scan_id": scan_id,
-                "name": scan.name,
-                "status": scan.status,
-                "hosts_up": scan.hosts_up,
-                "findings_critical": scan.findings_critical,
-                "findings_high": scan.findings_high,
-            }, user_id, db)
-        except Exception as exc:
-            logger.warning("Webhook dispatch failed for scan %s: %s", scan_id, exc)
+            user_id = scan.user_id
+            try:
+                scan_engine = ScanEngine(scan_id=scan_id, db=db)
+                await scan_engine.run()
+                scan.status = ScanStatus.completed
+            except asyncio.CancelledError:
+                scan.status = ScanStatus.cancelled
+                raise
+            except Exception as exc:
+                logger.exception("Scan %s failed: %s", scan_id, exc)
+                scan.status = ScanStatus.failed
+                scan.error_message = str(exc)
+            finally:
+                scan.finished_at = datetime.now(tz=timezone.utc)
+                await db.commit()
+
+            # Fire webhooks
+            try:
+                from scanr.core.webhook_dispatcher import dispatch
+                event = "scan.completed" if scan.status == ScanStatus.completed else "scan.failed"
+                await dispatch(event, {
+                    "scan_id": scan_id,
+                    "name": scan.name,
+                    "status": scan.status,
+                    "hosts_up": scan.hosts_up,
+                    "findings_critical": scan.findings_critical,
+                    "findings_high": scan.findings_high,
+                }, user_id, db)
+            except Exception as exc:
+                logger.warning("Webhook dispatch failed for scan %s: %s", scan_id, exc)
+    finally:
+        await db_engine.dispose()
 
     return {"scan_id": scan_id, "status": scan.status}

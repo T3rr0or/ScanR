@@ -78,18 +78,27 @@ class SqliDetectPlugin(PluginBase):
     ports = HTTP_PORTS
 
     async def check(self, context: "ScanContext", host: "Host") -> list[FindingData]:
+        import json as _json
+        _pj: dict = {}
+        if context.scan.profile_json:
+            try:
+                _pj = _json.loads(context.scan.profile_json) if isinstance(context.scan.profile_json, str) else context.scan.profile_json
+            except Exception:
+                pass
+        intrusive = _pj.get("intrusive", False)
+
         findings = []
         for port in host.ports:
             if port.number not in HTTP_PORTS or port.state != "open":
                 continue
             scheme = "https" if port.number in (443, 8443) else "http"
             base_url = f"{scheme}://{host.ip}:{port.number}"
-            result = await self._test_sqli(base_url, port.number, host.ip)
+            result = await self._test_sqli(base_url, port.number, host.ip, intrusive=intrusive)
             if result:
                 findings.append(result)
         return findings
 
-    async def _test_sqli(self, base_url: str, port: int, ip: str) -> FindingData | None:
+    async def _test_sqli(self, base_url: str, port: int, ip: str, *, intrusive: bool = False) -> FindingData | None:
         sem = asyncio.Semaphore(20)
         try:
             async with httpx.AsyncClient(
@@ -146,7 +155,9 @@ class SqliDetectPlugin(PluginBase):
                     if result:
                         return result
 
-                # POST form probing — crawled form paths + fallback login paths
+                # POST form probing — requires intrusive mode (profile_json.intrusive: true)
+                if not intrusive:
+                    return None
                 post_paths = list(dict.fromkeys(crawled.form_paths + _LOGIN_PATHS))
 
                 # Build POST field combos: standard sets + crawled field names

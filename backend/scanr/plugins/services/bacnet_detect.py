@@ -23,13 +23,9 @@ class BacnetDetectPlugin(PluginBase):
     ports = [47808]
 
     async def check(self, context: "ScanContext", host: "Host") -> list[FindingData]:
-        # BACnet is UDP — may not appear in standard TCP port scans.
-        # Run probe if any ports found on this host (it's reachable)
-        # OR if 47808 appears in discovered ports.
-        has_bacnet_port = any(p.number == 47808 for p in host.ports)
-        has_any_port = bool(host.ports)
-
-        if not has_bacnet_port and not has_any_port:
+        # Only probe if 47808 was actually discovered open (avoids probing every host).
+        # BACnet is UDP; if the port scanner found it, it will be in host.ports.
+        if not any(p.number == 47808 for p in host.ports):
             return []
 
         result = await asyncio.get_event_loop().run_in_executor(

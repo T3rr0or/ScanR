@@ -17,8 +17,11 @@ export interface AgentCreated extends Agent {
 }
 
 export const agentsApi = {
-  list: () => api.get<Agent[]>('/agents').then(r => r.data),
+  list: (includeDisabled = false) =>
+    api.get<Agent[]>('/agents', { params: { include_disabled: includeDisabled } }).then(r => r.data),
   create: (body: { name: string; description?: string }) =>
     api.post<AgentCreated>('/agents', body).then(r => r.data),
+  update: (id: string, body: { enabled?: boolean; name?: string }) =>
+    api.patch<Agent>(`/agents/${id}`, body).then(r => r.data),
   delete: (id: string) => api.delete(`/agents/${id}`),
 }

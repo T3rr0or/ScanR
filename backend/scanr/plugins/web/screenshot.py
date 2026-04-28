@@ -65,11 +65,12 @@ class ScreenshotPlugin(PluginBase):
         async with async_playwright() as pw:
             browser = await pw.chromium.launch(
                 args=[
+                    # --no-sandbox required when running as non-root in a container.
+                    # Sandbox requires SYS_ADMIN cap or user namespaces (unavailable here).
                     "--no-sandbox",
                     "--disable-setuid-sandbox",
                     "--disable-dev-shm-usage",
                     "--disable-gpu",
-                    "--ignore-certificate-errors",
                 ],
                 headless=True,
             )
@@ -87,15 +88,18 @@ class ScreenshotPlugin(PluginBase):
         url = f"{scheme}://{host.ip}:{port.number}"
         out_path = screenshots_dir / f"{host.ip}_{port.number}.png"
 
+        ctx = None
         try:
-            page = await browser.new_page(
+            # Each target gets its own browser context — full cookie/storage isolation
+            ctx = await browser.new_context(
                 viewport={"width": 1280, "height": 800},
                 ignore_https_errors=True,
+                java_script_enabled=False,  # static snapshot only; avoids JS from hostile targets
+                extra_http_headers={"User-Agent": "Mozilla/5.0 ScanR/0.1"},
             )
-            await page.set_extra_http_headers({"User-Agent": "Mozilla/5.0 ScanR/0.1"})
+            page = await ctx.new_page()
 
             resp = await page.goto(url, timeout=15_000, wait_until="domcontentloaded")
-            await asyncio.sleep(1)  # brief settle for JS-heavy pages
 
             title = await page.title()
             status = resp.status if resp else None
@@ -137,6 +141,12 @@ class ScreenshotPlugin(PluginBase):
                 phase="plugin",
                 host=host.ip,
             )
+        finally:
+            if ctx:
+                try:
+                    await ctx.close()
+                except Exception:
+                    pass
 
 
 async def _save_screenshot(*, context, host, port_number, url,

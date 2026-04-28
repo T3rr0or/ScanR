@@ -19,18 +19,17 @@ logger = logging.getLogger(__name__)
 
 async def dispatch(event: str, payload: dict, user_id: str, db: AsyncSession) -> None:
     """Fire all enabled webhooks for the given user that match the event."""
+    # Filter in SQL: only fetch webhooks that match the event or subscribe to '*'
     result = await db.execute(
         select(Webhook).where(
             Webhook.user_id == user_id,
             Webhook.enabled == True,
+            Webhook.events.contains(event) | Webhook.events.contains("*"),
         )
     )
     webhooks = result.scalars().all()
 
     for webhook in webhooks:
-        events = json.loads(webhook.events) if webhook.events else []
-        if event not in events and "*" not in events:
-            continue
         await _send(webhook, event, payload, db)
 
 
@@ -53,16 +52,29 @@ async def _send(webhook: Webhook, event: str, payload: dict, db: AsyncSession) -
         headers["X-ScanR-Signature"] = f"sha256={sig}"
 
     status_code: int = 0
+    _RETRY_DELAYS = [1, 5]  # seconds between attempts (3 total)
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.post(webhook.url, content=body, headers=headers)
-            status_code = resp.status_code
-            if not resp.is_success:
-                await asyncio.sleep(1)
-                resp = await client.post(webhook.url, content=body, headers=headers)
-                status_code = resp.status_code
+        async with httpx.AsyncClient(timeout=10.0, follow_redirects=False) as client:
+            for attempt, delay in enumerate([0] + _RETRY_DELAYS):
+                if delay:
+                    await asyncio.sleep(delay)
+                try:
+                    resp = await client.post(webhook.url, content=body, headers=headers)
+                    status_code = resp.status_code
+                    if resp.is_success:
+                        break
+                    # Honour Retry-After on 429 / 503
+                    retry_after = resp.headers.get("Retry-After")
+                    if retry_after and attempt < len(_RETRY_DELAYS):
+                        try:
+                            _RETRY_DELAYS[attempt] = min(int(retry_after), 30)
+                        except ValueError:
+                            pass
+                except Exception as exc:
+                    logger.warning("Webhook %s attempt %d failed: %s", webhook.id, attempt + 1, exc)
+                    status_code = 0
     except Exception as exc:
-        logger.warning("Webhook %s delivery failed: %s", webhook.id, exc)
+        logger.warning("Webhook %s delivery error: %s", webhook.id, exc)
         status_code = 0
 
     webhook.last_status = status_code

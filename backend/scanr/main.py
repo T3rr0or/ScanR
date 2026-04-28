@@ -25,18 +25,19 @@ configure_logging(debug=settings.debug)
 logger = logging.getLogger(__name__)
 
 _CSP = (
-    "default-src 'self'; "
-    "script-src 'self' 'unsafe-inline'; "
-    "style-src 'self' 'unsafe-inline'; "
-    "img-src 'self' data:; "
-    "connect-src 'self' ws: wss:; "
+    "default-src 'none'; "
     "frame-ancestors 'none';"
 )
+
+
+_DOCS_PATHS = {"/docs", "/redoc", "/openapi.json"}
 
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         response: Response = await call_next(request)
+        if request.url.path in _DOCS_PATHS:
+            return response
         response.headers["Content-Security-Policy"] = _CSP
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
@@ -66,13 +67,21 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
+    cors_origins = settings.cors_origins
+    if "*" in cors_origins and True:  # allow_credentials=True is always set
+        logger.warning(
+            "ALLOWED_ORIGINS contains '*' with allow_credentials=True — "
+            "wildcard origin is rejected by browsers; set explicit origins instead"
+        )
+        cors_origins = [o for o in cors_origins if o != "*"]
+
     app.state.limiter = limiter
     app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
     app.add_middleware(SlowAPIMiddleware)
     app.add_middleware(SecurityHeadersMiddleware)
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=settings.cors_origins,
+        allow_origins=cors_origins,
         allow_credentials=True,
         allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
         allow_headers=["Authorization", "Content-Type", "X-API-Key"],

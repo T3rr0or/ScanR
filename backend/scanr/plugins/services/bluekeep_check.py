@@ -191,8 +191,8 @@ class BluekeepCheckPlugin(PluginBase):
                 "00 00 08 00"              # options
             )
 
-            # Remove any spaces inserted for readability
-            mcs_ci_bytes = bytes.fromhex(mcs_ci.replace(" ", ""))
+            # bytes.fromhex() already strips whitespace (Python 3.7+); mcs_ci is already bytes
+            mcs_ci_bytes = mcs_ci
 
             # Fix TPKT length field (bytes 2-3, big-endian)
             total_len = len(mcs_ci_bytes)

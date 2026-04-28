@@ -8,5 +8,5 @@ class LoginRequest(BaseModel):
 
 class TokenResponse(BaseModel):
     access_token: str
-    refresh_token: str
+    refresh_token: str | None = None  # None when delivered via HttpOnly cookie
     token_type: str = "bearer"
