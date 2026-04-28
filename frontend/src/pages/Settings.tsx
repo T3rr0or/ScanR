@@ -1,35 +1,45 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { type LucideIcon, Key, Webhook, Copy, Check, Trash2, Plus, Send, Database, RefreshCw, Settings as SettingsIcon } from 'lucide-react'
+import { type LucideIcon, Key, Webhook, Copy, Check, Trash2, Plus, Send, Database, RefreshCw, Settings as SettingsIcon, User, Users } from 'lucide-react'
 import { apiKeysApi, type APIKeyCreated } from '@/api/apiKeys'
 import { webhooksApi } from '@/api/webhooks'
 import api from '@/api/client'
 import { relTime } from '@/components/ui'
+import { useAuthStore } from '@/store/auth'
 
-type Tab = 'api-keys' | 'webhooks' | 'cve'
+type Tab = 'profile' | 'api-keys' | 'webhooks' | 'cve' | 'users'
 
-const TABS: { id: Tab; label: string; Icon: LucideIcon }[] = [
+const TABS: { id: Tab; label: string; Icon: LucideIcon; adminOnly?: boolean }[] = [
+  { id: 'profile', label: 'Profile', Icon: User },
   { id: 'api-keys', label: 'API Keys', Icon: Key },
   { id: 'webhooks', label: 'Webhooks', Icon: Webhook },
   { id: 'cve', label: 'CVE Database', Icon: Database },
+  { id: 'users', label: 'Users', Icon: Users, adminOnly: true },
 ]
 
 export default function Settings() {
-  const [activeTab, setActiveTab] = useState<Tab>('api-keys')
+  const [activeTab, setActiveTab] = useState<Tab>('profile')
+  const token = useAuthStore(s => s.token)
+
+  // Decode role from JWT to show admin-only tabs
+  let role = 'analyst'
+  try {
+    const payload = JSON.parse(atob(token!.split('.')[1]))
+    role = payload.role ?? 'analyst'
+  } catch {}
+
+  const visibleTabs = TABS.filter(t => !t.adminOnly || role === 'admin')
 
   return (
     <div style={{ padding: '24px 28px' }}>
-      {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 24 }}>
         <SettingsIcon size={18} style={{ color: 'var(--accent)' }} />
         <h1 style={{ fontSize: 20, fontWeight: 700, color: 'var(--text-0)' }}>Settings</h1>
       </div>
 
-      {/* Vertical sidebar layout */}
       <div style={{ display: 'flex', gap: 20, alignItems: 'flex-start' }}>
-        {/* Left nav */}
         <div className="panel" style={{ width: 180, flexShrink: 0, padding: 6 }}>
-          {TABS.map(({ id, label, Icon }) => {
+          {visibleTabs.map(({ id, label, Icon }) => {
             const active = activeTab === id
             return (
               <button
@@ -51,12 +61,147 @@ export default function Settings() {
           })}
         </div>
 
-        {/* Content */}
         <div style={{ flex: 1, minWidth: 0, maxWidth: 700 }}>
+          {activeTab === 'profile' && <ProfileSection />}
           {activeTab === 'api-keys' && <ApiKeysSection />}
           {activeTab === 'webhooks' && <WebhooksSection />}
           {activeTab === 'cve' && <CveDatabaseSection />}
+          {activeTab === 'users' && role === 'admin' && <UserManagementSection />}
         </div>
+      </div>
+    </div>
+  )
+}
+
+/* ── Profile ────────────────────────────────────────────────── */
+function ProfileSection() {
+  const qc = useQueryClient()
+  const { data: me } = useQuery({ queryKey: ['me'], queryFn: () => api.get('/users/me').then(r => r.data) })
+  const [name, setName] = useState('')
+  const [email, setEmail] = useState('')
+  const [curPwd, setCurPwd] = useState('')
+  const [newPwd, setNewPwd] = useState('')
+  const [pwdErr, setPwdErr] = useState<string | null>(null)
+  const [pwdOk, setPwdOk] = useState(false)
+
+  const profileMut = useMutation({
+    mutationFn: () => api.patch('/users/me', {
+      ...(name ? { full_name: name } : {}),
+      ...(email ? { email } : {}),
+    }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['me'] }); setName(''); setEmail('') },
+  })
+
+  const pwdMut = useMutation({
+    mutationFn: () => api.post('/users/me/change-password', { current_password: curPwd, new_password: newPwd }),
+    onSuccess: () => { setCurPwd(''); setNewPwd(''); setPwdErr(null); setPwdOk(true); setTimeout(() => setPwdOk(false), 3000) },
+    onError: (e: unknown) => setPwdErr(e instanceof Error ? e.message : 'Failed'),
+  })
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+      {/* Identity */}
+      <div className="panel" style={{ padding: 16 }}>
+        <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-0)', marginBottom: 12 }}>Profile</div>
+        {me && <div style={{ fontSize: 12, color: 'var(--text-2)', marginBottom: 12 }}>
+          <strong>{me.email}</strong> · {me.role} · {me.full_name || <span style={{ opacity: 0.5 }}>no name set</span>}
+        </div>}
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <input className="input" placeholder="New display name" value={name} onChange={e => setName(e.target.value)} style={{ flex: 1, minWidth: 180 }} />
+          <input className="input" placeholder="New email" type="email" value={email} onChange={e => setEmail(e.target.value)} style={{ flex: 1, minWidth: 200 }} />
+          <button className="btn btn-primary btn-sm" onClick={() => profileMut.mutate()} disabled={(!name && !email) || profileMut.isPending}>
+            {profileMut.isPending ? 'Saving…' : 'Save'}
+          </button>
+        </div>
+      </div>
+
+      {/* Password */}
+      <div className="panel" style={{ padding: 16 }}>
+        <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-0)', marginBottom: 12 }}>Change Password</div>
+        {pwdErr && <div style={{ color: 'var(--sev-high)', fontSize: 12, marginBottom: 8 }}>{pwdErr}</div>}
+        {pwdOk && <div style={{ color: 'var(--ok)', fontSize: 12, marginBottom: 8 }}>Password changed.</div>}
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <input className="input" type="password" placeholder="Current password" value={curPwd} onChange={e => setCurPwd(e.target.value)} style={{ flex: 1, minWidth: 180 }} />
+          <input className="input" type="password" placeholder="New password (min 10 chars)" value={newPwd} onChange={e => setNewPwd(e.target.value)} style={{ flex: 1, minWidth: 220 }} />
+          <button className="btn btn-primary btn-sm" onClick={() => pwdMut.mutate()} disabled={!curPwd || newPwd.length < 10 || pwdMut.isPending}>
+            {pwdMut.isPending ? 'Changing…' : 'Change'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/* ── User Management (admin only) ───────────────────────────── */
+function UserManagementSection() {
+  const qc = useQueryClient()
+  const [showCreate, setShowCreate] = useState(false)
+  const [form, setForm] = useState({ email: '', password: '', full_name: '', role: 'analyst' })
+  const [err, setErr] = useState<string | null>(null)
+
+  const { data: users = [] } = useQuery({ queryKey: ['admin-users'], queryFn: () => api.get('/users').then(r => r.data) })
+
+  const createMut = useMutation({
+    mutationFn: () => api.post('/users', form),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['admin-users'] }); setShowCreate(false); setForm({ email: '', password: '', full_name: '', role: 'analyst' }); setErr(null) },
+    onError: (e: unknown) => setErr(e instanceof Error ? e.message : 'Failed'),
+  })
+
+  const toggleMut = useMutation({
+    mutationFn: ({ id, is_active }: { id: string; is_active: boolean }) => api.patch(`/users/${id}`, { is_active }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['admin-users'] }),
+  })
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <p style={{ fontSize: 12, color: 'var(--text-3)' }}>Manage user accounts. Deactivated users cannot log in.</p>
+        <button className="btn btn-primary btn-sm" onClick={() => setShowCreate(v => !v)}><Plus size={13} /> New User</button>
+      </div>
+
+      {showCreate && (
+        <div className="panel" style={{ padding: 14 }}>
+          {err && <div style={{ color: 'var(--sev-high)', fontSize: 12, marginBottom: 8 }}>{err}</div>}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 8 }}>
+            <input className="input" placeholder="Email" type="email" value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} />
+            <input className="input" placeholder="Password (min 10)" type="password" value={form.password} onChange={e => setForm(f => ({ ...f, password: e.target.value }))} />
+            <input className="input" placeholder="Full name (optional)" value={form.full_name} onChange={e => setForm(f => ({ ...f, full_name: e.target.value }))} />
+            <select className="select-field" value={form.role} onChange={e => setForm(f => ({ ...f, role: e.target.value }))}>
+              <option value="analyst">Analyst</option>
+              <option value="viewer">Viewer</option>
+              <option value="admin">Admin</option>
+            </select>
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button className="btn btn-primary btn-sm" onClick={() => createMut.mutate()} disabled={!form.email || form.password.length < 10 || createMut.isPending}>Create</button>
+            <button className="btn btn-ghost btn-sm" onClick={() => setShowCreate(false)}>Cancel</button>
+          </div>
+        </div>
+      )}
+
+      <div className="panel" style={{ overflow: 'hidden' }}>
+        <table className="tbl" style={{ width: '100%' }}>
+          <thead><tr><th>Email</th><th>Name</th><th>Role</th><th>Status</th><th></th></tr></thead>
+          <tbody>
+            {(users as { id: string; email: string; full_name: string | null; role: string; is_active: boolean }[]).map(u => (
+              <tr key={u.id}>
+                <td style={{ fontSize: 12 }}>{u.email}</td>
+                <td style={{ fontSize: 12, color: 'var(--text-2)' }}>{u.full_name || '—'}</td>
+                <td><span className="pill">{u.role}</span></td>
+                <td><span className={`pill pill-${u.is_active ? 'ok' : 'medium'}`}>{u.is_active ? 'Active' : 'Disabled'}</span></td>
+                <td>
+                  <button
+                    className="btn btn-ghost btn-sm"
+                    onClick={() => toggleMut.mutate({ id: u.id, is_active: !u.is_active })}
+                    style={{ fontSize: 11 }}
+                  >
+                    {u.is_active ? 'Disable' : 'Enable'}
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
     </div>
   )

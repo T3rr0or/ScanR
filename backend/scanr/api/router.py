@@ -17,6 +17,7 @@ from .v1 import (
     screenshots,
     system,
     templates,
+    users,
     webhooks,
     wordlists,
 )
@@ -40,6 +41,7 @@ api_router.include_router(templates.router)
 api_router.include_router(exclusions.router)
 api_router.include_router(agents.router)
 api_router.include_router(agent_jobs.router)
+api_router.include_router(users.router)
 api_router.include_router(wordlists.router)
 
 # WebSocket (no v1 prefix — cleaner WS URLs)
