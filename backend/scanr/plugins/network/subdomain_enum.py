@@ -196,15 +196,21 @@ class SubdomainEnumPlugin(PluginBase):
         return findings
 
 
+_FQDN_RE = re.compile(r'^[a-z0-9]([a-z0-9\-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9\-]{0,61}[a-z0-9])?)*$', re.I)
+
+
 def _follow_cname(fqdn: str) -> str | None:
-    """Return the terminal CNAME target, or None if not a CNAME."""
+    """Return the terminal CNAME target, or None if not a CNAME or invalid."""
     try:
         import dns.resolver
         answers = dns.resolver.resolve(fqdn, "CNAME")
-        return str(answers[0].target).rstrip(".")
+        cname = str(answers[0].target).rstrip(".")
+        # Validate response is a valid hostname before using in regex matching
+        if not _FQDN_RE.match(cname) or len(cname) > 253:
+            return None
+        return cname
     except Exception:
         pass
-    # Fallback: socket doesn't expose CNAME; skip if dnspython not installed
     return None
 
 

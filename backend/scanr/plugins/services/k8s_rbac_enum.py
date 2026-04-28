@@ -76,9 +76,10 @@ class K8sRbacEnumPlugin(PluginBase):
                                           if not s.get("name", "").startswith("system:")
                                           and s.get("namespace") not in ("kube-system",)]
                             if non_system:
-                                binding_name = item.get("metadata", {}).get("name", "unknown")
+                                binding_name = str(item.get("metadata", {}).get("name", "unknown"))[:80]
                                 for s in non_system:
-                                    dangerous.append(f"  {binding_name}: {s.get('kind','?')}/{s.get('name','?')} (ns: {s.get('namespace','cluster')})")
+                                    sname = str(s.get('name','?'))[:60]
+                                    dangerous.append(f"  {binding_name}: {s.get('kind','?')}/{sname} (ns: {s.get('namespace','cluster')})")
                     if dangerous:
                         findings.append(FindingData(
                             plugin_id=self.id,

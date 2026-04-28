@@ -53,6 +53,9 @@ async def list_findings(
             raise HTTPException(status_code=400, detail="Invalid MITRE technique ID (e.g. T1110 or T1110.001)")
         q = q.where(Finding.mitre_tags.contains(mitre_technique))
     if compliance_tag:
+        # Validate format — only allow alphanumeric, colon, dot, hyphen (e.g. PCI-DSS:6.4.1)
+        if not re.match(r'^[A-Z0-9][A-Z0-9:.\-]{1,40}$', compliance_tag, re.IGNORECASE):
+            raise HTTPException(status_code=400, detail="Invalid compliance tag format (e.g. 'PCI-DSS' or 'PCI-DSS:6.4.1')")
         q = q.where(Finding.compliance_tags.contains(compliance_tag))
 
     # Cursor takes precedence over offset — stable under concurrent inserts

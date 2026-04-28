@@ -26,7 +26,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 HTTP_PORTS = [80, 443, 8080, 8443, 8000, 3000]
-_SLEEP_SECS = 5
+_SLEEP_SECS = 3  # 5 dialects × 8 params × 5 paths × 3s = ~600s max with intrusive mode
 
 # (dialect_name, true_payload, false_payload, time_payload)
 _DIALECTS = [

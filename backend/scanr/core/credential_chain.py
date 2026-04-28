@@ -27,12 +27,28 @@ async def run_credential_chain(context, hosts: list, collector) -> None:
         phase="chain",
     )
 
+    # Cap credential attempts to avoid account lockouts and scan timeouts
+    _MAX_CREDS = 10
+    _MAX_HOSTS = 20
+    creds_to_test = creds[:_MAX_CREDS]
+    hosts_to_test = [h for h in hosts][:_MAX_HOSTS]
+
+    sem = asyncio.Semaphore(3)  # max 3 concurrent auth attempts
+
+    async def _throttled(cred, host):
+        # Honour per-host rate limiter before each attempt
+        if context.rate_limiter and not await context.rate_limiter.wait_if_throttled(host.ip):
+            return
+        async with sem:
+            await asyncio.sleep(0.5)  # basic anti-lockout spacing
+            await _test_credential(context, cred, host, collector)
+
     tasks = []
-    for cred in creds:
-        for host in hosts:
+    for cred in creds_to_test:
+        for host in hosts_to_test:
             if host.ip == cred.get("source_host"):
-                continue  # skip origin host
-            tasks.append(_test_credential(context, cred, host, collector))
+                continue
+            tasks.append(_throttled(cred, host))
 
     if tasks:
         await asyncio.gather(*tasks, return_exceptions=True)

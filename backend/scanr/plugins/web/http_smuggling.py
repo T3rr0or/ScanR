@@ -89,6 +89,7 @@ class HttpSmugglingPlugin(PluginBase):
 
             # Send CL.TE probe + immediately follow with benign
             writer = None
+            second_elapsed = 0.0  # default — prevents UnboundLocalError if connection fails
             try:
                 reader, writer = await asyncio.wait_for(
                     self._open_connection(ip, port, tls), timeout=5.0
