@@ -247,7 +247,12 @@ input, select, textarea { font: inherit; color: inherit; }
   padding: 0 14px;
   background: var(--bg-1);
   flex-shrink: 0;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  /* Hide scrollbar but keep scrollability */
+  scrollbar-width: none;
 }
+.tabs::-webkit-scrollbar { display: none; }
 .tab {
   padding: 10px 12px;
   font-size: 12px;
@@ -366,6 +371,52 @@ input, select, textarea { font: inherit; color: inherit; }
   color: var(--text-0);
 }
 .search input::placeholder { color: var(--text-3); }
+
+/* ─── Responsive utilities ───────────────────── */
+
+/* Page content padding — shrinks on small screens */
+.page-pad {
+  padding: clamp(12px, 4vw, 28px);
+}
+
+/* Table horizontal scroll on mobile */
+.tbl-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  /* fade hint on right edge */
+  background:
+    linear-gradient(to right, var(--bg-1) 30%, transparent) left / 20px 100% no-repeat,
+    linear-gradient(to left,  var(--bg-1) 30%, transparent) right / 20px 100% no-repeat;
+  background-attachment: local, local;
+}
+
+/* Stack flex rows on narrow screens */
+@media (max-width: 640px) {
+  .flex-col-mobile {
+    flex-direction: column !important;
+  }
+  .hide-mobile { display: none !important; }
+}
+
+@media (min-width: 641px) {
+  .show-mobile-only { display: none !important; }
+}
+
+/* Tables scroll inside panels on narrow screens */
+@media (max-width: 900px) {
+  .panel { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .tbl   { min-width: 480px; } /* prevent column collapse */
+}
+
+/* Touch-friendly tap targets */
+@media (hover: none) and (pointer: coarse) {
+  .btn       { min-height: 40px; padding: 0 14px; }
+  .btn-sm    { min-height: 34px; padding: 0 10px; }
+  .btn-icon  { min-width: 40px; min-height: 40px; }
+  .nav-item  { padding: 10px 12px; min-height: 44px; }
+  .input, .select-field, .textarea { padding: 10px 12px; font-size: 16px; } /* 16px prevents iOS zoom */
+  .tbl tbody td { padding: 12px var(--pad-x); }
+}
 
 /* ─── Logo ───────────────────────────────────── */
 .logo {

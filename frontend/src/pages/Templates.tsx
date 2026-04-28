@@ -76,7 +76,7 @@ export default function Templates({ onSelectTemplate }: Props) {
   const userTemplates = templates.filter(t => !t.is_system)
 
   return (
-    <div style={{ padding: '24px 28px', maxWidth: 960 }}>
+    <div className="page-pad" style={{ maxWidth: 960 }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
         <h1 style={{ fontSize: 20, fontWeight: 700, color: 'var(--text-0)' }}>Scan Templates</h1>
         <button onClick={() => setShowCreate(true)} className="btn btn-primary btn-sm">

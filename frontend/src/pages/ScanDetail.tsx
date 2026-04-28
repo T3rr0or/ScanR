@@ -155,7 +155,7 @@ export default function ScanDetail({ scanId, onBack }: Props) {
       {/* Content */}
       <div style={{ flex: 1, minHeight: 0, overflow: 'auto', display: 'flex', flexDirection: 'column' }}>
         {tab === 'console' && (
-          <div style={{ flex: 1, padding: 20, display: 'flex', flexDirection: 'column', gap: 12, minHeight: 0 }}>
+          <div className="page-pad" style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 12, minHeight: 0 }}>
             <ScanConsole events={events} connected={connected} scanStatus={scanStatus} />
           </div>
         )}
@@ -166,7 +166,7 @@ export default function ScanDetail({ scanId, onBack }: Props) {
           <HostsTab hosts={hosts} loading={hostsLoading} highlightIp={highlightHostIp} findings={findings} scanId={scanId} />
         )}
         {tab === 'topology' && (
-          <div style={{ flex: 1, padding: 20, minHeight: 0 }}>
+          <div className="page-pad" style={{ flex: 1, minHeight: 0 }}>
             {hostsLoading
               ? <div style={{ textAlign: 'center', color: 'var(--text-3)', padding: 40 }}>Loading…</div>
               : <NetworkTopology

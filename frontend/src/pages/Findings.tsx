@@ -482,10 +482,10 @@ export default function Findings() {
 
   return (
     <div
+      className="page-pad"
       style={{
         display: 'flex',
         gap: 16,
-        padding: '20px 24px',
         height: '100%',
         boxSizing: 'border-box',
         overflow: 'hidden',

@@ -153,7 +153,7 @@ export default function Scans({ onOpenScan }: Props) {
   }, [scans, filter, search])
 
   return (
-    <div style={{ padding: 20, maxWidth: 1480, margin: '0 auto' }}>
+    <div className="page-pad" style={{ maxWidth: 1480, margin: '0 auto' }}>
       {mutError && (
         <div style={{ background: 'var(--sev-high)', color: '#fff', borderRadius: 6, padding: '8px 14px', marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
           <AlertTriangle size={14} />

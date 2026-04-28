@@ -159,7 +159,7 @@ export default function Wordlists() {
   const custom   = wordlists.filter(w => !w.is_builtin)
 
   return (
-    <div style={{ padding: '24px 28px', maxWidth: 960 }}>
+    <div className="page-pad" style={{ maxWidth: 960 }}>
       {preview && <PreviewModal preview={preview} onClose={() => setPreview(null)} />}
 
       {/* Header */}

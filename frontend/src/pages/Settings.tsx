@@ -31,14 +31,14 @@ export default function Settings() {
   const visibleTabs = TABS.filter(t => !t.adminOnly || role === 'admin')
 
   return (
-    <div style={{ padding: '24px 28px' }}>
+    <div className="page-pad">
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 24 }}>
         <SettingsIcon size={18} style={{ color: 'var(--accent)' }} />
         <h1 style={{ fontSize: 20, fontWeight: 700, color: 'var(--text-0)' }}>Settings</h1>
       </div>
 
-      <div style={{ display: 'flex', gap: 20, alignItems: 'flex-start' }}>
-        <div className="panel" style={{ width: 180, flexShrink: 0, padding: 6 }}>
+      <div style={{ display: 'flex', gap: 20, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+        <div className="panel" style={{ width: 'clamp(140px, 25vw, 180px)', flexShrink: 0, padding: 6 }}>
           {visibleTabs.map(({ id, label, Icon }) => {
             const active = activeTab === id
             return (

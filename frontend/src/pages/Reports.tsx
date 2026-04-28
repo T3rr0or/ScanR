@@ -24,7 +24,7 @@ export default function Reports() {
   })
 
   return (
-    <div style={{ padding: '24px 28px' }}>
+    <div className="page-pad">
       {mutErr && <div style={{ background: 'var(--sev-high)', color: '#fff', padding: '6px 10px', borderRadius: 4, fontSize: 12, marginBottom: 12 }}>{mutErr}</div>}
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 24 }}>
@@ -32,8 +32,8 @@ export default function Reports() {
         <h1 style={{ fontSize: 20, fontWeight: 700, color: 'var(--text-0)' }}>Reports</h1>
       </div>
 
-      {/* Side-by-side layout */}
-      <div style={{ display: 'flex', gap: 20, alignItems: 'flex-start' }}>
+      {/* Side-by-side layout — stacks vertically on narrow screens */}
+      <div style={{ display: 'flex', gap: 20, alignItems: 'flex-start', flexWrap: 'wrap' }}>
         {/* Report list — left, grows */}
         <div style={{ flex: 1, minWidth: 0 }}>
           <div className="panel" style={{ overflow: 'hidden' }}>
@@ -78,7 +78,7 @@ export default function Reports() {
         </div>
 
         {/* Generate panel — right, fixed width */}
-        <div className="panel" style={{ width: 260, flexShrink: 0 }}>
+        <div className="panel" style={{ width: 'clamp(240px, 35vw, 280px)', flexShrink: 0 }}>
           <div className="panel-head">
             <span className="panel-title">Generate Report</span>
           </div>
