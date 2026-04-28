@@ -38,16 +38,7 @@ class ScanEngine:
         self.db = db
 
     async def run(self) -> None:
-        import json as _j
-        _debug = False
-        try:
-            _r = await self.db.execute(select(Scan).where(Scan.id == self.scan_id))
-            _s = _r.scalar_one_or_none()
-            if _s and _s.profile_json:
-                _debug = _j.loads(_s.profile_json).get("debug", False)
-        except Exception:
-            pass
-        scan_log = ScanLogger(self.scan_id, debug=_debug)
+        scan_log = ScanLogger(self.scan_id)  # debug flag set after scan loaded in _run
         try:
             await self._run(scan_log)
         finally:
@@ -61,6 +52,14 @@ class ScanEngine:
             select(Scan).where(Scan.id == self.scan_id)
         )
         scan = result.scalar_one()
+
+        # Apply debug flag from profile — done here so we only query scan once
+        import json as _j
+        try:
+            if scan.profile_json:
+                scan_log._debug = _j.loads(scan.profile_json).get("debug", False)
+        except Exception:
+            pass
 
         targets_result = await self.db.execute(
             select(Target).where(Target.scan_id == self.scan_id)

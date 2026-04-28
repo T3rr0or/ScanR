@@ -64,7 +64,8 @@ class ScanLogger:
         if meta:
             event["meta"] = meta
         # Always log locally too
-        log_fn = getattr(logger, level if level in ("debug", "info", "warning", "error") else "info")
+        _py_level = {"warn": "warning", "finding": "info"}.get(level, level)
+        log_fn = getattr(logger, _py_level if _py_level in ("debug", "info", "warning", "error") else "info")
         log_fn("[scan:%s] [%s] %s", self.scan_id[:8], phase, msg)
         try:
             r = await self._get_redis()

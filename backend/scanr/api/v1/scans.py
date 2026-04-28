@@ -117,6 +117,14 @@ async def create_scan(
     if not body.targets:
         raise HTTPException(status_code=400, detail="At least one target required")
 
+    # Validate targets eagerly so we reject invalid input at API time, not scan execution time
+    from scanr.utils.ip_utils import expand_targets as _expand
+    for raw in body.targets:
+        try:
+            list(_expand(raw.strip()))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=f"Invalid target: {exc}")
+
     if body.profile_json:
         body.profile_json = _validate_profile_json(body.profile_json)
 
