@@ -47,6 +47,8 @@ class _ProfileJson(BaseModel):
     max_concurrent: int | None = Field(default=None, ge=1, le=100)
     intrusive: bool = False
     debug: bool = False
+    stealth: bool = False
+    credential_chain: bool = False
     xxe_probe_file: str | None = Field(default=None, max_length=200)
     brute_force: _BruteForceConfig | None = None
 

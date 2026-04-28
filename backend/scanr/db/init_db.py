@@ -172,8 +172,17 @@ async def seed_plugins(session: AsyncSession) -> None:
         dict(id="services.modbus_detect", name="Modbus Industrial Protocol Exposed", category="services", default_severity="critical", description="Detect exposed Modbus/TCP industrial control system protocol (no auth, read/write capable)"),
         dict(id="services.bacnet_detect", name="BACnet Building Automation Exposed", category="services", default_severity="high", description="Detect exposed BACnet building automation protocol via UDP Who-Is probe"),
         # Phase 5 — Cloud/Container
-        dict(id="web.aws_metadata_ssrf", name="AWS IMDSv1 / Metadata SSRF", category="web", default_severity="critical", description="Check for direct IMDSv1 access and SSRF to AWS instance metadata endpoint"),
+        dict(id="web.aws_metadata_ssrf", name="AWS / Azure / GCP Metadata SSRF", category="web", default_severity="critical", description="Check for direct cloud metadata access (AWS IMDSv1, Azure IMDS, GCP metadata) and SSRF to cloud metadata endpoints"),
         dict(id="authenticated.docker_privileged_check", name="Privileged Container Detection", category="authenticated", default_severity="high", description="Detect privileged Docker containers via SSH inspection of Linux capabilities", requires_auth=True),
+        # Phase 6 — Advanced injection (new)
+        dict(id="web.sqli_blind", name="SQL Injection (Blind/Time-Based)", category="web", default_severity="critical", description="Detect blind and time-based SQL injection using per-dialect SLEEP/WAITFOR payloads and boolean response diffing. Requires intrusive:true."),
+        dict(id="web.ssti_detect", name="Server-Side Template Injection (SSTI)", category="web", default_severity="critical", description="Detect SSTI via math-evaluation fingerprinting across Jinja2, FreeMarker, Velocity, Mako, Smarty, and ERB"),
+        dict(id="web.http_smuggling", name="HTTP Request Smuggling (CL.TE / TE.CL)", category="web", default_severity="high", description="Detect HTTP/1.1 request desync via raw socket CL.TE and TE.CL probes. Requires intrusive:true."),
+        dict(id="web.deserial_probe", name="Insecure Deserialization Probe", category="web", default_severity="critical", description="Detect Java/PHP/Python deserialization endpoints via safe magic-byte probes. Requires intrusive:true."),
+        dict(id="services.printnightmare", name="PrintNightmare (CVE-2021-1675 / CVE-2021-34527)", category="services", default_severity="critical", cve_ids='["CVE-2021-1675","CVE-2021-34527"]', description="Detect Windows Print Spooler accepting unauthenticated RPC via null session"),
+        dict(id="services.ntlmrelay_opportunity", name="NTLM Relay Chain Opportunity", category="services", default_severity="high", description="Detect when unsigned SMB + unauthenticated LDAP coexist — enabling NTLM relay attacks"),
+        dict(id="services.k8s_rbac_enum", name="Kubernetes RBAC Enumeration", category="services", default_severity="high", description="Enumerate K8s RBAC for cluster-admin bindings, wildcard rules, secrets/get, pods/exec. Requires k8s_token credential.", requires_auth=True),
+        dict(id="network.subdomain_takeover", name="Subdomain Takeover Detection", category="network", default_severity="high", description="Detect dangling CNAME pointers to deprovisioned cloud services (GitHub Pages, Heroku, Azure, Netlify, etc.)"),
     ]
 
     for p in BUILTIN_PLUGINS:

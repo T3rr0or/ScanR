@@ -387,6 +387,7 @@ export default function Findings() {
   const [scanId, setScanId] = useState('')
   const [search, setSearch] = useState('')
   const [triageStatus, setTriageStatus] = useState<TriageFilter>('all')
+  const [complianceTag, setComplianceTag] = useState('')
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [selected, setSelected] = useState<Finding | null>(null)
   const selectAllRef = useRef<HTMLInputElement>(null)
@@ -400,9 +401,10 @@ export default function Findings() {
   const apiParams: Record<string, string> = {}
   if (severity) apiParams.severity = severity
   if (scanId) apiParams.scan_id = scanId
+  if (complianceTag) apiParams.compliance_tag = complianceTag
 
   const { data: rawFindings = [] } = useQuery({
-    queryKey: ['findings', severity, scanId],
+    queryKey: ['findings', severity, scanId, complianceTag],
     queryFn: () => findingsApi.list(Object.keys(apiParams).length ? apiParams : undefined),
   })
 
@@ -541,6 +543,20 @@ export default function Findings() {
             {SEVERITIES.map(s => (
               <option key={s} value={s}>{s || 'All severities'}</option>
             ))}
+          </select>
+
+          {/* Compliance filter */}
+          <select
+            className="select-field"
+            value={complianceTag}
+            onChange={e => setComplianceTag(e.target.value)}
+            style={{ width: 'auto', minWidth: 120 }}
+          >
+            <option value="">Compliance</option>
+            <option value="PCI-DSS">PCI-DSS</option>
+            <option value="ISO27001">ISO 27001</option>
+            <option value="CIS">CIS</option>
+            <option value="NIST">NIST</option>
           </select>
 
           {/* Triage status filter */}

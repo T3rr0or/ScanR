@@ -84,6 +84,11 @@ class DefaultCredsWebPlugin(PluginBase):
             delay_s = cfg.get("delay_ms", 500) / 1000.0
             found = await self._try_default_creds(host.ip, port.number, scheme, creds_to_try, delay_s)
             for username, password, path in found:
+                # Store for credential chaining phase
+                context.store_credential(
+                    "web_cred", username, password,
+                    source_plugin=self.id, source_host=host.ip,
+                )
                 findings.append(FindingData(
                     plugin_id=self.id,
                     severity=Severity.critical,

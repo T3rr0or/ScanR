@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from scanr.core.scan_logger import ScanLogger
+from scanr.core.rate_limiter import RateLimiter
 from scanr.models import Scan
 
 
@@ -17,6 +18,9 @@ class ScanContext:
     db: AsyncSession
     profile: str = "standard"
     credential_data: dict | None = None  # decrypted from vault if provided
+    stealth_mode: bool = False
+    discovered_credentials: list = field(default_factory=list)  # in-memory only, never persisted
+    rate_limiter: RateLimiter | None = None
 
     # Cancellation support
     cancelled: bool = False
@@ -45,6 +49,13 @@ class ScanContext:
     def check_cancelled(self) -> None:
         if self.cancelled:
             raise asyncio.CancelledError("Scan cancelled")
+
+    def store_credential(self, cred_type: str, username: str, password: str | None = None, **extra) -> None:
+        """Store a discovered credential for the credential chaining phase."""
+        self.discovered_credentials.append({
+            "type": cred_type, "username": username, "password": password,
+            **extra
+        })
 
     def credential(self, role: str) -> dict | None:
         """Return credential data for the given role. Falls back to primary credential."""

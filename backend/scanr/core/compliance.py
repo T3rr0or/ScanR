@@ -268,6 +268,50 @@ COMPLIANCE_MAP: dict[str, list[str]] = {
     "network.subdomain_enum": [
         "ISO27001:A.8.9", "CIS:4.8",
     ],
+    # Authenticated AD
+    "services.kerberoastable": [
+        "PCI-DSS:8.3.6", "ISO27001:A.8.5", "CIS:5.4", "NIST:IA-5",
+    ],
+    "services.asreproastable": [
+        "PCI-DSS:8.3.6", "ISO27001:A.8.5", "CIS:5.4", "NIST:IA-5",
+    ],
+    "services.dcsync_check": [
+        "PCI-DSS:7.1.1", "ISO27001:A.8.3", "CIS:5.4", "NIST:AC-6",
+    ],
+    "services.unconstrained_delegation": [
+        "PCI-DSS:7.1.1", "ISO27001:A.8.3", "CIS:5.4", "NIST:AC-6",
+    ],
+    "services.gmsa_readable": [
+        "PCI-DSS:8.3.6", "ISO27001:A.8.5", "CIS:5.4", "NIST:IA-5",
+    ],
+    # New plugins
+    "web.sqli_blind": [
+        "PCI-DSS:6.4.1", "ISO27001:A.8.9", "CIS:16.1", "NIST:SI-10",
+    ],
+    "web.ssti_detect": [
+        "PCI-DSS:6.4.1", "ISO27001:A.8.9", "CIS:16.1", "NIST:SI-10",
+    ],
+    "web.http_smuggling": [
+        "PCI-DSS:6.4.1", "ISO27001:A.8.9", "CIS:16.1",
+    ],
+    "web.deserial_probe": [
+        "PCI-DSS:6.4.1", "ISO27001:A.8.9", "CIS:16.1", "NIST:SI-10",
+    ],
+    "services.printnightmare": [
+        "PCI-DSS:6.3.3", "ISO27001:A.8.8", "CIS:7.4", "NIST:SI-2",
+    ],
+    "services.ntlmrelay_opportunity": [
+        "PCI-DSS:4.2.1", "ISO27001:A.8.24", "CIS:9.1", "NIST:IA-8",
+    ],
+    "services.k8s_rbac_enum": [
+        "PCI-DSS:7.1.1", "ISO27001:A.8.3", "CIS:5.4", "NIST:AC-6",
+    ],
+    "web.cloud_ssrf": [
+        "PCI-DSS:6.4.1", "ISO27001:A.8.9", "CIS:16.1",
+    ],
+    "network.subdomain_takeover": [
+        "ISO27001:A.8.9", "CIS:4.8", "NIST:CM-8",
+    ],
 }
 
 

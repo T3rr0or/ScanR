@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from 'react'
+import { useEffect, useRef, useState, useCallback, useMemo } from 'react'
 import { useAuthStore } from '@/store/auth'
 
 export type LogLevel = 'info' | 'warn' | 'error' | 'debug' | 'finding'
@@ -101,5 +101,17 @@ export function useScanConsole(scanId: string | null) {
     }
   }, [scanId, token, connect])
 
-  return { events, connected, scanStatus }
+  // Extract phase timing from ▶ phase_start and ✓ phase_done log messages
+  const phaseTimings = useMemo(() => {
+    const starts: Record<string, Date> = {}
+    const ends: Record<string, Date> = {}
+    for (const e of events) {
+      if (!e.ts || !e.phase || e.type !== 'log') continue
+      if (e.msg?.startsWith('▶')) starts[e.phase] = new Date(e.ts)
+      if (e.msg?.startsWith('✓')) ends[e.phase] = new Date(e.ts)
+    }
+    return { starts, ends }
+  }, [events])
+
+  return { events, connected, scanStatus, phaseTimings }
 }

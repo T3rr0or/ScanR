@@ -53,11 +53,13 @@ class ScanEngine:
         )
         scan = result.scalar_one()
 
-        # Apply debug flag from profile — done here so we only query scan once
+        # Parse profile flags — done here so we only query scan once
         import json as _j
+        _pj: dict = {}
         try:
             if scan.profile_json:
-                scan_log._debug = _j.loads(scan.profile_json).get("debug", False)
+                _pj = _j.loads(scan.profile_json)
+                scan_log._debug = _pj.get("debug", False)
         except Exception:
             pass
 
@@ -67,12 +69,15 @@ class ScanEngine:
         targets = targets_result.scalars().all()
 
         # Build context
+        rate_limiter = RateLimiter()
         context = ScanContext(
             scan_id=self.scan_id,
             scan=scan,
             db=self.db,
             profile=scan.profile,
             log=scan_log,
+            stealth_mode=_pj.get("stealth", False),
+            rate_limiter=rate_limiter,
         )
 
         # Decrypt credentials if provided
@@ -109,7 +114,6 @@ class ScanEngine:
                 context._wordlist_paths[wl.id] = wl.file_path
 
         collector = ResultCollector(self.scan_id, self.db, scan_log, user_id=scan.user_id)
-        rate_limiter = RateLimiter()
 
         # Load enabled plugins from DB
         plugin_result = await self.db.execute(select(Plugin).where(Plugin.enabled == True))
@@ -207,6 +211,23 @@ class ScanEngine:
                 logger.error("Unhandled host scan error: %s", exc, exc_info=exc)
 
         await self.db.commit()
+
+        # Credential chaining phase (opt-in via profile_json.credential_chain:true)
+        if _pj.get("credential_chain", False) and getattr(context, "discovered_credentials", []):
+            await scan_log.phase_start("chain", f"Credential chain: {len(context.discovered_credentials)} credential(s) to test")
+            try:
+                from scanr.core.credential_chain import run_credential_chain
+                all_hosts_result = await self.db.execute(
+                    select(__import__("scanr.models", fromlist=["Host"]).Host)
+                    .where(__import__("scanr.models", fromlist=["Host"]).Host.scan_id == self.scan_id)
+                )
+                all_hosts = all_hosts_result.scalars().all()
+                await run_credential_chain(context, all_hosts, collector)
+                await self.db.commit()
+            except Exception as exc:
+                logger.error("Credential chain failed: %s", exc, exc_info=True)
+            await scan_log.phase_done("chain", "Credential chain complete")
+
         await scan_log.phase_done(
             "engine",
             f"Scan complete — {context.hosts_scanned} hosts scanned, "

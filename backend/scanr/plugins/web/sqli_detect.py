@@ -15,6 +15,7 @@ import httpx
 
 from scanr.core.plugin_base import FindingData, PluginBase, PluginCategory, Severity
 from scanr.plugins.web._crawler import crawl
+from scanr.plugins.web._http_evidence import format_from_httpx
 
 if TYPE_CHECKING:
     from scanr.core.context import ScanContext
@@ -127,7 +128,7 @@ class SqliDetectPlugin(PluginBase):
                                             "error-based SQL injection. Database error messages are exposed "
                                             "in the response, indicating unsanitised input reaches a SQL query."
                                         ),
-                                        evidence=f"URL: {url}\nPattern matched: {pattern.pattern}\nResponse snippet: {resp.text[:500]}",
+                                        evidence=f"Pattern: {pattern.pattern}\n\n{format_from_httpx(resp)}",
                                         remediation=(
                                             "Use parameterised queries or prepared statements. "
                                             "Never concatenate user input into SQL strings. "

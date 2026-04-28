@@ -7,7 +7,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   X, RefreshCw, Terminal, AlertTriangle, Camera, Server, Network, Shield,
   ChevronLeft, GitCompare, StopCircle, CheckSquare, Square,
-  ExternalLink, Copy,
+  ExternalLink, Copy, Link2,
 } from 'lucide-react'
 import { scansApi } from '@/api/scans'
 import { findingsApi, type Finding } from '@/api/findings'
@@ -16,6 +16,7 @@ import ScanConsole from '@/components/ScanConsole'
 import ScreenshotGallery from '@/components/ScreenshotGallery'
 import ScanDelta from '@/pages/ScanDelta'
 import { useScanConsole } from '@/hooks/useScanConsole'
+import ScanTimeline from '@/components/ScanTimeline'
 import NetworkTopology from '@/components/NetworkTopology'
 import HostDetail from '@/components/HostDetail'
 import type { HostRead } from '@/api/hosts'
@@ -28,7 +29,7 @@ interface Props {
   onBack: () => void
 }
 
-type Tab = 'console' | 'findings' | 'hosts' | 'topology' | 'screenshots' | 'exclusions'
+type Tab = 'console' | 'findings' | 'hosts' | 'topology' | 'screenshots' | 'exclusions' | 'chains'
 
 interface ScannedPort {
   id: string; number: number; protocol: string; state: string
@@ -73,9 +74,10 @@ export default function ScanDetail({ scanId, onBack }: Props) {
     refetchInterval: scan?.status === 'running' ? 10_000 : false,
   })
 
-  const { events, connected, scanStatus } = useScanConsole(scan ? scanId : null)
+  const { events, connected, scanStatus, phaseTimings } = useScanConsole(scan ? scanId : null)
   const isActive = ['running', 'pending'].includes(scan?.status ?? '')
   const isPending = scan?.status === 'pending'
+  const chains = computeChains(findings)
 
   const totalFindings = (scan?.findings_critical ?? 0) + (scan?.findings_high ?? 0) + (scan?.findings_medium ?? 0) + (scan?.findings_low ?? 0) + (scan?.findings_info ?? 0)
 
@@ -150,13 +152,17 @@ export default function ScanDetail({ scanId, onBack }: Props) {
         <TabBtn active={tab === 'topology'} onClick={() => setTab('topology')} icon={<Network size={12}/>} label="Topology" />
         <TabBtn active={tab === 'screenshots'} onClick={() => setTab('screenshots')} icon={<Camera size={12}/>} label="Screenshots" />
         {isPending && <TabBtn active={tab === 'exclusions'} onClick={() => setTab('exclusions')} icon={<Shield size={12}/>} label="Exclusions" />}
+        {chains.length > 0 && <TabBtn active={tab === 'chains'} onClick={() => setTab('chains')} icon={<Link2 size={12}/>} label="Chains" count={chains.length} />}
       </div>
 
       {/* Content */}
       <div style={{ flex: 1, minHeight: 0, overflow: 'auto', display: 'flex', flexDirection: 'column' }}>
         {tab === 'console' && (
-          <div className="page-pad" style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 12, minHeight: 0 }}>
-            <ScanConsole events={events} connected={connected} scanStatus={scanStatus} />
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+            <ScanTimeline timings={phaseTimings} isRunning={isActive} />
+            <div className="page-pad" style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 12, minHeight: 0 }}>
+              <ScanConsole events={events} connected={connected} scanStatus={scanStatus} />
+            </div>
           </div>
         )}
         {tab === 'findings' && (
@@ -178,6 +184,7 @@ export default function ScanDetail({ scanId, onBack }: Props) {
         )}
         {tab === 'screenshots' && <ScreenshotGallery scanId={scanId} />}
         {tab === 'exclusions' && <ExclusionsPanel scanId={scanId} />}
+        {tab === 'chains' && <ChainsPanel chains={chains} />}
       </div>
     </div>
   )
@@ -418,11 +425,7 @@ function FindingDrawer({ finding, onClose, onUpdate }: { finding: Finding; onClo
 
         {finding.evidence && (
           <DrawerSection title="Evidence">
-            <pre className="mono" style={{
-              margin: 0, fontSize: 11, background: 'oklch(0.12 0.008 255)', color: 'var(--text-1)',
-              padding: 10, borderRadius: 6, border: '1px solid var(--border)',
-              whiteSpace: 'pre-wrap', overflow: 'auto', maxHeight: 200,
-            }}>{finding.evidence}</pre>
+            <EvidenceBlock evidence={finding.evidence} />
           </DrawerSection>
         )}
 
@@ -489,6 +492,40 @@ function FindingDrawer({ finding, onClose, onUpdate }: { finding: Finding; onClo
           </button>
         </div>
       </div>
+    </div>
+  )
+}
+
+function EvidenceBlock({ evidence }: { evidence: string }) {
+  const hasHttp = evidence.includes('=== REQUEST ===')
+  const copy = () => navigator.clipboard.writeText(evidence)
+  const preStyle: React.CSSProperties = {
+    margin: 0, fontSize: 10.5, background: 'oklch(0.12 0.008 255)', color: 'var(--text-1)',
+    padding: 10, borderRadius: 6, border: '1px solid var(--border)',
+    whiteSpace: 'pre-wrap', overflow: 'auto', maxHeight: 220, fontFamily: 'var(--font-mono)',
+  }
+  if (hasHttp) {
+    const [reqPart, resPart] = evidence.split('\n\n=== RESPONSE ===\n')
+    const reqText = reqPart.replace('=== REQUEST ===\n', '')
+    return (
+      <div>
+        <div style={{ display: 'flex', gap: 6, marginBottom: 4, alignItems: 'center' }}>
+          <span style={{ fontSize: 10, fontWeight: 600, color: 'var(--accent)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Request</span>
+          <span style={{ fontSize: 10, color: 'var(--text-3)' }}>→</span>
+          <span style={{ fontSize: 10, fontWeight: 600, color: 'var(--ok)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Response</span>
+          <button onClick={copy} className="btn btn-ghost btn-sm" style={{ marginLeft: 'auto', fontSize: 10 }}>Copy</button>
+        </div>
+        <pre style={preStyle}>{reqText}</pre>
+        {resPart && <pre style={{ ...preStyle, marginTop: 6 }}>{resPart}</pre>}
+      </div>
+    )
+  }
+  return (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 4 }}>
+        <button onClick={copy} className="btn btn-ghost btn-sm" style={{ fontSize: 10 }}>Copy</button>
+      </div>
+      <pre style={preStyle}>{evidence}</pre>
     </div>
   )
 }
@@ -636,6 +673,144 @@ function HostsTab({ hosts, loading, highlightIp, findings, scanId }: {
         />
       )}
     </>
+  )
+}
+
+/* ── Exclusions panel ──────────────────────────────────────── */
+/* ── Attack Chain computation ──────────────────── */
+interface AttackChain {
+  id: string
+  title: string
+  severity: 'critical' | 'high'
+  steps: Finding[]
+  description: string
+  details: string
+}
+
+function computeChains(findings: Finding[]): AttackChain[] {
+  const chains: AttackChain[] = []
+
+  // Chain 1: SQLi + exposed DB service on same host
+  const sqliF = findings.filter(f => f.plugin_id.includes('sqli'))
+  const dbF = findings.filter(f => ['services.mysql_unauth', 'services.postgres_unauth', 'services.mssql_unauth'].includes(f.plugin_id))
+  for (const sq of sqliF) {
+    const db = dbF.find(d => d.host_ip === sq.host_ip)
+    if (db) chains.push({
+      id: `sqli-db-${sq.id}`,
+      title: 'SQL Injection → Database Access',
+      severity: 'critical',
+      steps: [sq, db],
+      description: 'SQLi on the web tier plus an exposed database service on the same host enables full DB exfiltration via load_file() or direct connection.',
+      details: `SQLi: ${sq.title}\nDB: ${db.title}\nHost: ${sq.host_ip ?? '?'}`,
+    })
+  }
+
+  // Chain 2: Unsigned SMB + Anonymous LDAP = NTLM Relay
+  const smbUnsigned = findings.filter(f => f.plugin_id === 'services.smb_signing')
+  const ldapAnon = findings.filter(f => f.plugin_id === 'services.ldap_anon_bind')
+  if (smbUnsigned.length > 0 && ldapAnon.length > 0) {
+    chains.push({
+      id: 'ntlm-relay',
+      title: 'NTLM Relay: Unsigned SMB + Anonymous LDAP',
+      severity: 'critical',
+      steps: [...smbUnsigned.slice(0, 1), ...ldapAnon.slice(0, 1)],
+      description: 'Unsigned SMB allows credential capture via Responder. Unauthenticated LDAP allows relaying that credential to perform privileged AD operations (add machine, modify ACL, DCSync prep).',
+      details: `${smbUnsigned.length} unsigned SMB host(s), ${ldapAnon.length} anonymous LDAP host(s)`,
+    })
+  }
+
+  // Chain 3: Path traversal with SSH evidence
+  const traversal = findings.filter(f => f.plugin_id === 'web.path_traversal' && (f.evidence ?? '').includes('.ssh'))
+  for (const t of traversal) {
+    chains.push({
+      id: `path-ssh-${t.id}`,
+      title: 'Path Traversal → SSH Key Exposure → Lateral Movement',
+      severity: 'critical',
+      steps: [t],
+      description: 'Path traversal exposes .ssh/id_rsa private keys. These can be used to authenticate via SSH to other hosts without knowing passwords.',
+      details: `Host: ${t.host_ip ?? '?'}\n${t.title}`,
+    })
+  }
+
+  // Chain 4: SSRF to cloud metadata
+  const ssrf = findings.filter(f => ['web.aws_metadata_ssrf', 'web.ssrf_detect'].includes(f.plugin_id))
+  const metaDirect = findings.filter(f => f.title?.includes('Metadata Service'))
+  if (ssrf.length > 0 && metaDirect.length > 0) {
+    chains.push({
+      id: 'ssrf-meta',
+      title: 'SSRF → Cloud Metadata → IAM Credential Theft',
+      severity: 'critical',
+      steps: [...ssrf.slice(0, 1), ...metaDirect.slice(0, 1)],
+      description: 'SSRF vulnerability can reach the cloud metadata service (accessible from within the VPC) to steal IAM/managed identity tokens.',
+      details: `SSRF on ${ssrf[0].host_ip ?? '?'} + direct metadata access from scanner`,
+    })
+  }
+
+  // Chain 5: Default web creds + admin access
+  const defaultCreds = findings.filter(f => f.plugin_id === 'web.default_creds_web')
+  const adminPaths = findings.filter(f => f.plugin_id === 'web.broken_access_control' || (f.plugin_id === 'web.dir_bruteforce' && f.title?.toLowerCase().includes('admin')))
+  for (const dc of defaultCreds) {
+    const admin = adminPaths.find(a => a.host_ip === dc.host_ip)
+    if (admin) chains.push({
+      id: `creds-admin-${dc.id}`,
+      title: 'Default Credentials → Admin Interface Access',
+      severity: 'critical',
+      steps: [dc, admin],
+      description: 'Default credentials work AND an admin/management interface was found on the same host. Full administrative compromise is straightforward.',
+      details: `Host: ${dc.host_ip ?? '?'}`,
+    })
+  }
+
+  return chains
+}
+
+function ChainsPanel({ chains }: { chains: AttackChain[] }) {
+  const sevColor = (s: string) => s === 'critical' ? 'var(--sev-critical)' : 'var(--sev-high)'
+
+  if (chains.length === 0) return (
+    <div className="page-pad" style={{ color: 'var(--text-3)', fontSize: 13 }}>No attack chains detected in this scan.</div>
+  )
+
+  return (
+    <div className="page-pad" style={{ maxWidth: 800, display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <Link2 size={16} style={{ color: 'var(--accent)' }} />
+        <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: 'var(--text-0)' }}>Attack Chains</h2>
+        <span className="dimmer" style={{ fontSize: 11 }}>{chains.length} detected</span>
+      </div>
+      <p style={{ margin: 0, fontSize: 12, color: 'var(--text-2)', lineHeight: 1.5 }}>
+        These chains correlate multiple findings that together enable a more serious attack than any single finding alone.
+      </p>
+      {chains.map(c => (
+        <div key={c.id} className="panel" style={{ borderLeft: `3px solid ${sevColor(c.severity)}` }}>
+          <div className="panel-head" style={{ gap: 10 }}>
+            <span className={`sev-tag ${c.severity}`}>{c.severity}</span>
+            <span style={{ fontWeight: 600, color: 'var(--text-0)', fontSize: 13 }}>{c.title}</span>
+          </div>
+          <div style={{ padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <p style={{ margin: 0, fontSize: 12, color: 'var(--text-1)', lineHeight: 1.55 }}>{c.description}</p>
+            <div>
+              <div className="panel-title" style={{ marginBottom: 6 }}>Chain steps</div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                {c.steps.map((f, i) => (
+                  <div key={f.id} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12 }}>
+                    <span style={{ width: 18, height: 18, borderRadius: '50%', background: sevColor(c.severity), color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, fontWeight: 700, flexShrink: 0 }}>{i + 1}</span>
+                    <span className={`sev-bar ${f.severity}`} />
+                    <span style={{ color: 'var(--text-0)' }}>{f.title}</span>
+                    {f.host_ip && <span className="mono dimmer" style={{ fontSize: 10 }}>{f.host_ip}</span>}
+                  </div>
+                ))}
+              </div>
+            </div>
+            {c.details && (
+              <pre className="mono" style={{ margin: 0, fontSize: 10, color: 'var(--text-2)', background: 'var(--bg-0)', padding: '6px 10px', borderRadius: 4, border: '1px solid var(--border)', whiteSpace: 'pre-wrap' }}>
+                {c.details}
+              </pre>
+            )}
+          </div>
+        </div>
+      ))}
+    </div>
   )
 }
 

@@ -34,6 +34,24 @@ _USERDATA_SIGNATURES = [
     re.compile(r"#!/bin|cloud-init|#cloud-config|#!/usr/bin/env"),
 ]
 
+# Azure IMDS
+_AZURE_METADATA_URL = "http://169.254.169.254/metadata/instance?api-version=2021-02-01"
+_AZURE_SIGNATURES = [
+    re.compile(r'"compute"\s*:', re.I),
+    re.compile(r'"osType"\s*:\s*"(Windows|Linux)"', re.I),
+    re.compile(r'"subscriptionId"', re.I),
+]
+
+# GCP IMDS
+_GCP_METADATA_URLS = [
+    "http://metadata.google.internal/computeMetadata/v1/",
+    "http://169.254.169.254/computeMetadata/v1/",
+]
+_GCP_SIGNATURES = [
+    re.compile(r"project-id|instance-id|zone|service-accounts", re.I),
+    re.compile(r"google", re.I),
+]
+
 
 class AwsMetadataSsrfPlugin(PluginBase):
     id = "web.aws_metadata_ssrf"
@@ -46,13 +64,17 @@ class AwsMetadataSsrfPlugin(PluginBase):
     async def check(self, context: "ScanContext", host: "Host") -> list[FindingData]:
         findings = []
 
-        # Check 1: Direct metadata access — result is scanner-wide, run once per scan
-        _cache_attr = "_aws_direct_meta_checked"
-        if not getattr(context, _cache_attr, False):
-            setattr(context, _cache_attr, True)
-            direct = await self._check_direct_metadata()
-            if direct:
-                findings.append(direct)
+        # Check 1: Direct metadata access — all cloud providers, once per scan
+        for cache_attr, check_fn in [
+            ("_aws_direct_meta_checked", self._check_direct_metadata),
+            ("_azure_direct_meta_checked", self._check_azure_direct_metadata),
+            ("_gcp_direct_meta_checked", self._check_gcp_direct_metadata),
+        ]:
+            if not getattr(context, cache_attr, False):
+                setattr(context, cache_attr, True)
+                direct = await check_fn()
+                if direct:
+                    findings.append(direct)
 
         # Check 2: SSRF via web app
         for port in host.ports:
@@ -126,8 +148,67 @@ class AwsMetadataSsrfPlugin(PluginBase):
             pass
         return None
 
+    async def _check_azure_direct_metadata(self) -> FindingData | None:
+        """Try Azure IMDS (requires Metadata: true header)."""
+        try:
+            async with httpx.AsyncClient(timeout=3.0) as client:
+                resp = await client.get(_AZURE_METADATA_URL, headers={"Metadata": "true"})
+                if resp.status_code == 200 and any(sig.search(resp.text) for sig in _AZURE_SIGNATURES):
+                    return FindingData(
+                        plugin_id=self.id,
+                        severity=Severity.critical,
+                        title="Azure Instance Metadata Service (IMDS) Directly Accessible",
+                        description=(
+                            "The Azure Instance Metadata Service at 169.254.169.254 is directly accessible "
+                            "from the scanning host. Azure IMDS exposes VM identity, resource group, "
+                            "subscription ID, and managed identity tokens without additional authentication."
+                        ),
+                        evidence=f"GET {_AZURE_METADATA_URL} (Metadata: true) → 200\n{resp.text[:400]}",
+                        remediation=(
+                            "Restrict access to 169.254.169.254 from container workloads via network policy. "
+                            "Use IMDSv2 equivalent (Azure IMDS already requires the Metadata header, but "
+                            "ensure containers cannot reach the link-local address). "
+                            "Rotate managed identity tokens if exposed."
+                        ),
+                        references=["https://docs.microsoft.com/en-us/azure/virtual-machines/instance-metadata-service"],
+                        protocol="tcp",
+                    )
+        except Exception:
+            pass
+        return None
+
+    async def _check_gcp_direct_metadata(self) -> FindingData | None:
+        """Try GCP metadata server (requires Metadata-Flavor: Google header)."""
+        for url in _GCP_METADATA_URLS:
+            try:
+                async with httpx.AsyncClient(timeout=3.0) as client:
+                    resp = await client.get(url, headers={"Metadata-Flavor": "Google"})
+                    if resp.status_code == 200 and any(sig.search(resp.text) for sig in _GCP_SIGNATURES):
+                        return FindingData(
+                            plugin_id=self.id,
+                            severity=Severity.critical,
+                            title="GCP Compute Metadata Service Directly Accessible",
+                            description=(
+                                "The GCP Compute Metadata Service is directly accessible from the scanning host. "
+                                "GCP metadata exposes project ID, instance identity, service account tokens, "
+                                "and potentially SSH keys and startup scripts."
+                            ),
+                            evidence=f"GET {url} (Metadata-Flavor: Google) → 200\n{resp.text[:400]}",
+                            remediation=(
+                                "Block metadata server access (169.254.169.254 and metadata.google.internal) "
+                                "from container workloads via iptables or Kubernetes NetworkPolicy. "
+                                "Rotate service account keys if exposed. "
+                                "Enable metadata concealment on GKE clusters."
+                            ),
+                            references=["https://cloud.google.com/compute/docs/metadata/overview"],
+                            protocol="tcp",
+                        )
+            except Exception:
+                pass
+        return None
+
     async def _check_ssrf(self, base_url: str, port: int) -> FindingData | None:
-        """Test web app for SSRF to cloud metadata endpoint."""
+        """Test web app for SSRF to cloud metadata endpoint (AWS, Azure, GCP)."""
         try:
             async with httpx.AsyncClient(
                 verify=False,
@@ -176,6 +257,32 @@ class AwsMetadataSsrfPlugin(PluginBase):
                                         )
                         except Exception:
                             pass
+                # Also probe Azure and GCP metadata via SSRF
+                for cloud, probe_url, sigs in [
+                    ("Azure", _AZURE_METADATA_URL, _AZURE_SIGNATURES),
+                    ("GCP", _GCP_METADATA_URLS[0], _GCP_SIGNATURES),
+                ]:
+                    for param in _URL_PARAMS[:5]:
+                        try:
+                            resp = await client.get(f"{base_url}/?{param}={probe_url}")
+                            if resp.status_code == 200 and any(sig.search(resp.text) for sig in sigs):
+                                return FindingData(
+                                    plugin_id=self.id,
+                                    severity=Severity.critical,
+                                    title=f"SSRF to {cloud} Metadata Service — Cloud Credentials Exposed",
+                                    description=(
+                                        f"The web application at {base_url} is vulnerable to SSRF and "
+                                        f"fetches the {cloud} instance metadata endpoint when the {param!r} "
+                                        "parameter is set to the metadata URL."
+                                    ),
+                                    evidence=f"Request: GET {base_url}/?{param}={probe_url}\nResponse {resp.status_code}: {resp.text[:300]}",
+                                    remediation=f"Validate and whitelist allowed URL destinations. Block access to 169.254.169.254 from application servers.",
+                                    references=["https://owasp.org/www-community/attacks/Server_Side_Request_Forgery"],
+                                    port_number=port,
+                                    protocol="tcp",
+                                )
+                        except Exception:
+                            pass
         except Exception as exc:
-            logger.debug("AWS metadata SSRF check failed for %s: %s", base_url, exc)
+            logger.debug("Cloud metadata SSRF check failed for %s: %s", base_url, exc)
         return None

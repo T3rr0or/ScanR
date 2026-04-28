@@ -24,6 +24,7 @@ async def list_findings(
     plugin_id: str | None = Query(None),
     false_positive: bool | None = Query(None),
     mitre_technique: str | None = Query(None, description="Filter by ATT&CK technique ID, e.g. T1110.001"),
+    compliance_tag: str | None = Query(None, description="Filter by compliance framework prefix or tag, e.g. 'PCI-DSS' or 'PCI-DSS:6.4.1'"),
     limit: int = Query(200, le=500),
     cursor: str | None = Query(None, description="Cursor from previous page: ISO timestamp,finding_id"),
     offset: int = Query(0, description="Deprecated: use cursor instead"),
@@ -51,6 +52,8 @@ async def list_findings(
         if not re.match(r'^T\d{4}(\.\d{3})?$', mitre_technique):
             raise HTTPException(status_code=400, detail="Invalid MITRE technique ID (e.g. T1110 or T1110.001)")
         q = q.where(Finding.mitre_tags.contains(mitre_technique))
+    if compliance_tag:
+        q = q.where(Finding.compliance_tags.contains(compliance_tag))
 
     # Cursor takes precedence over offset — stable under concurrent inserts
     if cursor:
