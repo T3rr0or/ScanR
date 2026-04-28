@@ -75,7 +75,7 @@ class HeartbleedPlugin(PluginBase):
         return findings
 
     async def _test_heartbleed(self, ip: str, port: int) -> bool:
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, self._test_sync, ip, port)
 
     def _test_sync(self, ip: str, port: int) -> bool:

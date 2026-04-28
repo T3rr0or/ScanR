@@ -37,7 +37,7 @@ class JavaRmiJmxPlugin(PluginBase):
         for port in host.ports:
             if port.number not in _RMI_PORTS or port.state != "open":
                 continue
-            result = await asyncio.get_event_loop().run_in_executor(
+            result = await asyncio.get_running_loop().run_in_executor(
                 None, self._probe_rmi, host.ip, port.number
             )
             if result:

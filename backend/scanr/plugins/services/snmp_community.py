@@ -51,7 +51,7 @@ class SnmpCommunityPlugin(PluginBase):
         return findings
 
     async def _try_communities(self, ip: str) -> list[tuple[str, str]]:
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, self._snmp_sync, ip)
 
     def _snmp_sync(self, ip: str) -> list[tuple[str, str]]:
@@ -61,10 +61,11 @@ class SnmpCommunityPlugin(PluginBase):
                 CommunityData, ContextData, ObjectIdentity, ObjectType,
                 SnmpEngine, UdpTransportTarget, getCmd,
             )
+            engine = SnmpEngine()  # single engine instance — reused across all community probes
             for community in DEFAULT_COMMUNITIES:
                 try:
                     iterator = getCmd(
-                        SnmpEngine(),
+                        engine,
                         CommunityData(community, mpModel=1),  # SNMPv2c
                         UdpTransportTarget((ip, 161), timeout=2, retries=0),
                         ContextData(),

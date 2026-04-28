@@ -7,6 +7,7 @@ import {
   StatusPill, CHML, SeverityBar, Spark, Meter, relTime,
 } from '@/components/ui'
 import { useScanConsole } from '@/hooks/useScanConsole'
+import ScanActivityHeatmap from '@/components/charts/ScanActivityHeatmap'
 
 export default function Dashboard({ onOpenScan, onNavigate }: {
   onOpenScan?: (id: string) => void
@@ -37,6 +38,11 @@ export default function Dashboard({ onOpenScan, onNavigate }: {
     queryKey: ['analytics', 'top-vulnerable-hosts'],
     queryFn: () => analyticsApi.topVulnerableHosts(10),
     refetchInterval: 60_000,
+  })
+  const { data: activityData = [] } = useQuery({
+    queryKey: ['analytics', 'scan-activity'],
+    queryFn: () => analyticsApi.scanActivity(30),
+    refetchInterval: 300_000,
   })
 
   const running = scans.filter(s => s.status === 'running')
@@ -258,6 +264,14 @@ export default function Dashboard({ onOpenScan, onNavigate }: {
           </tbody>
         </table>
       </div>
+
+      {/* Scan Activity Heatmap */}
+      {activityData.length > 0 && (
+        <div className="panel" style={{ padding: 16 }}>
+          <div className="panel-title" style={{ marginBottom: 12 }}>Scan Activity — Last 30 Days</div>
+          <ScanActivityHeatmap data={activityData} />
+        </div>
+      )}
     </div>
   )
 }

@@ -34,7 +34,7 @@ class IkeAggressiveModePlugin(PluginBase):
         for port in host.ports:
             if port.number != 500 or port.state != "open":
                 continue
-            vulnerable = await asyncio.get_event_loop().run_in_executor(
+            vulnerable = await asyncio.get_running_loop().run_in_executor(
                 None, self._probe_aggressive_mode, host.ip
             )
             if vulnerable:

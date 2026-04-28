@@ -31,7 +31,7 @@ class PrintNightmarePlugin(PluginBase):
     async def check(self, context: "ScanContext", host: "Host") -> list[FindingData]:
         if not any(p.number == 445 and p.state == "open" for p in host.ports):
             return []
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         result = await loop.run_in_executor(None, self._probe, host.ip)
         return [result] if result else []
 

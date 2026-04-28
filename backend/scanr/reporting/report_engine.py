@@ -89,6 +89,9 @@ class ReportEngine:
             case "csv":
                 from scanr.reporting.csv_renderer import render_csv
                 out = await render_csv(context, report_id)
+            case "sarif":
+                from scanr.reporting.sarif_renderer import render_sarif
+                out = await render_sarif(context, report_id)
             case _:
                 raise ValueError(f"Unknown report format: {report.format}")
 

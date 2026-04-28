@@ -54,7 +54,7 @@ class NtpMonlistPlugin(PluginBase):
             # Try anyway if any port is present for this host
             pass
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         result = await loop.run_in_executor(None, self._probe_monlist, host.ip)
         if not result:
             return []

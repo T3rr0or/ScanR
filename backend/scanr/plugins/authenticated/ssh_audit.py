@@ -76,7 +76,7 @@ class SshAuditPlugin(PluginBase):
         return findings
 
     async def _run_command(self, ip: str, port: int, cred: dict, cmd: str) -> str | None:
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, self._ssh_cmd, ip, port, cred, cmd)
 
     def _ssh_cmd(self, ip: str, port: int, cred: dict, cmd: str) -> str | None:

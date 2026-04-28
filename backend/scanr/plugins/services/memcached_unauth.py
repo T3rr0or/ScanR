@@ -30,7 +30,7 @@ class MemcachedUnauthPlugin(PluginBase):
         for port in host.ports:
             if port.number != 11211 or port.state != "open":
                 continue
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             result = await loop.run_in_executor(None, self._probe_sync, host.ip, port.number)
             if result is not None:
                 findings.append(result)

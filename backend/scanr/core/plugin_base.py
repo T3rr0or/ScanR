@@ -38,6 +38,7 @@ class FindingData:
     evidence: str = ""
     remediation: str = ""
     references: list[str] = field(default_factory=list)
+    cvss_score: float | None = None
     cvss_vector: str | None = None
     cve_ids: list[str] = field(default_factory=list)
     port_number: int | None = None

@@ -52,7 +52,7 @@ class ProtocolCheckPlugin(PluginBase):
         return findings
 
     async def _test_protocol(self, ip: str, port: int, proto_const) -> bool:
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, self._test_sync, ip, port, proto_const)
 
     def _test_sync(self, ip: str, port: int, proto_const) -> bool:

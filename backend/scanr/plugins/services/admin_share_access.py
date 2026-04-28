@@ -40,7 +40,7 @@ class AdminShareAccessPlugin(PluginBase):
         if not username or not domain:
             return []
 
-        result = await asyncio.get_event_loop().run_in_executor(
+        result = await asyncio.get_running_loop().run_in_executor(
             None, self._check_admin_shares, host.ip, username, password, domain
         )
         return [result] if result is not None else []

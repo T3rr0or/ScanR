@@ -52,6 +52,7 @@ class CveMatcherPlugin(PluginBase):
                         f"https://nvd.nist.gov/vuln/detail/{cve_id}",
                         *([f"https://www.cisa.gov/known-exploited-vulnerabilities-catalog"] if is_kev else []),
                     ],
+                    cvss_score=cve.get("cvss_score"),
                     cvss_vector=cve.get("cvss_vector"),
                     cve_ids=[cve_id],
                     port_number=port.number,
@@ -61,7 +62,7 @@ class CveMatcherPlugin(PluginBase):
 
     async def _match_cves(self, product: str, version: str) -> list[dict]:
         import asyncio
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, self._match_sync, product, version)
 
     def _match_sync(self, product: str, version: str) -> list[dict]:

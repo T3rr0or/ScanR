@@ -51,7 +51,7 @@ class ZerologonPlugin(PluginBase):
         if not dc_name:
             return []
 
-        vulnerable = await asyncio.get_event_loop().run_in_executor(
+        vulnerable = await asyncio.get_running_loop().run_in_executor(
             None, self._check_zerologon, host.ip, dc_name
         )
         if not vulnerable:

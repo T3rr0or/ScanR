@@ -51,7 +51,7 @@ class NetbiosInfoPlugin(PluginBase):
     ports = [137]
 
     async def check(self, context: "ScanContext", host: "Host") -> list[FindingData]:
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         result = await loop.run_in_executor(None, self._query_netbios, host.ip)
         if not result:
             return []

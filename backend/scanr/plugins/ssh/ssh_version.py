@@ -62,7 +62,7 @@ class SshVersionPlugin(PluginBase):
         return findings
 
     async def _get_banner(self, ip: str, port: int) -> str | None:
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, self._read_banner_sync, ip, port)
 
     def _read_banner_sync(self, ip: str, port: int) -> str | None:

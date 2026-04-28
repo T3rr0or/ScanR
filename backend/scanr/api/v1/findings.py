@@ -169,3 +169,64 @@ async def bulk_update_findings(
             finding.triaged_by = current_user.email
     await db.commit()
     return {"updated": len(findings)}
+
+
+@router.get("/export")
+async def export_findings(
+    scan_id: str | None = Query(None),
+    severity: str | None = Query(None),
+    plugin_id: str | None = Query(None),
+    false_positive: bool | None = Query(None),
+    compliance_tag: str | None = Query(None),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_scope("findings:read")),
+):
+    """Stream findings as CSV — respects all standard filter params."""
+    import csv
+    import io
+    from fastapi.responses import StreamingResponse
+
+    q = (
+        select(Finding, Host.ip.label("host_ip"))
+        .outerjoin(Host, Finding.host_id == Host.id)
+        .join(Scan, Finding.scan_id == Scan.id)
+        .where(Scan.user_id == current_user.id)
+        .order_by(Finding.severity, Finding.created_at.desc())
+    )
+    if scan_id:
+        q = q.where(Finding.scan_id == scan_id)
+    if severity:
+        q = q.where(Finding.severity == severity)
+    if plugin_id:
+        q = q.where(Finding.plugin_id == plugin_id)
+    if false_positive is not None:
+        q = q.where(Finding.false_positive == false_positive)
+    if compliance_tag:
+        if not re.match(r'^[A-Z0-9][A-Z0-9:.\-]{1,40}$', compliance_tag, re.IGNORECASE):
+            raise HTTPException(status_code=400, detail="Invalid compliance tag format")
+        q = q.where(Finding.compliance_tags.contains(compliance_tag))
+
+    result = await db.execute(q.limit(5000))
+    rows = result.all()
+
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(["severity", "title", "host_ip", "plugin_id", "cvss_score", "port",
+                     "false_positive", "remediation_status", "analyst_notes",
+                     "description", "remediation"])
+    for row in rows:
+        f, ip = row[0], row[1]
+        writer.writerow([
+            f.severity, f.title, ip or "", f.plugin_id, f.cvss_score or "",
+            f"{f.port_number}/{f.protocol}" if f.port_number else "",
+            "yes" if f.false_positive else "", f.remediation_status or "",
+            (f.analyst_notes or "").replace("\n", " "),
+            (f.description or "").replace("\n", " ")[:300],
+            (f.remediation or "").replace("\n", " ")[:200],
+        ])
+
+    return StreamingResponse(
+        iter([buf.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=findings.csv"},
+    )

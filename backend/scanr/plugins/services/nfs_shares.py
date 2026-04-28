@@ -29,7 +29,7 @@ class NfsSharesPlugin(PluginBase):
     async def check(self, context: "ScanContext", host: "Host") -> list[FindingData]:
         if not any(p.number in (2049, 111) and p.state == "open" for p in host.ports):
             return []
-        exports = await asyncio.get_event_loop().run_in_executor(
+        exports = await asyncio.get_running_loop().run_in_executor(
             None, self._showmount, host.ip
         )
         if not exports:

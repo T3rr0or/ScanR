@@ -63,7 +63,7 @@ class SshAlgosPlugin(PluginBase):
         return findings
 
     async def _get_ssh_algos(self, ip: str, port: int) -> dict | None:
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, self._ssh_sync, ip, port)
 
     def _ssh_sync(self, ip: str, port: int) -> dict | None:

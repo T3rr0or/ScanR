@@ -39,6 +39,11 @@ class ResultCollector:
         async with self._lock:
             compliance_tags = tags_for_plugin(data.plugin_id)
             mitre_tags = mitre_tags_for_plugin(data.plugin_id)
+
+            # Triage carryforward: look up a prior finding with same plugin/host/port
+            # across any previous scan for this user, and carry forward triage state.
+            prior = await self._find_prior_triage(host_id, data)
+
             finding = Finding(
                 id=new_uuid(),
                 scan_id=self.scan_id,
@@ -50,6 +55,7 @@ class ResultCollector:
                 evidence=data.evidence,
                 remediation=data.remediation,
                 references=json.dumps(data.references) if data.references else None,
+                cvss_score=data.cvss_score,
                 cvss_vector=data.cvss_vector,
                 cve_ids=json.dumps(data.cve_ids) if data.cve_ids else None,
                 port_number=data.port_number,
@@ -58,6 +64,11 @@ class ResultCollector:
                 mitre_tags=json.dumps(mitre_tags) if mitre_tags else None,
                 first_seen_scan_id=self.scan_id,
                 last_seen_scan_id=self.scan_id,
+                # Carry forward triage state from prior scan if available
+                false_positive=prior.false_positive if prior else False,
+                remediation_status=prior.remediation_status if prior else "open",
+                analyst_notes=prior.analyst_notes if prior else None,
+                triaged_by=prior.triaged_by if prior else None,
             )
             self.db.add(finding)
 
@@ -73,6 +84,33 @@ class ResultCollector:
 
             await self.db.flush()
             logger.debug("Finding recorded: %s [%s] on host %s", data.title, data.severity, host_id)
+
+    async def _find_prior_triage(self, host_id: str | None, data: "FindingData") -> "Finding | None":
+        """Look up the most recent triaged finding with the same canonical key."""
+        if not host_id:
+            return None
+        try:
+            from sqlalchemy import select
+            from scanr.models import Host
+            # Canonical key: plugin_id + host + port_number
+            result = await self.db.execute(
+                select(Finding)
+                .join(Host, Finding.host_id == Host.id)
+                .where(
+                    Finding.plugin_id == data.plugin_id,
+                    Finding.port_number == data.port_number,
+                    Finding.scan_id != self.scan_id,
+                    # Must have been triaged (not left at default open with no notes)
+                    (Finding.false_positive == True)
+                    | (Finding.remediation_status != "open")
+                    | (Finding.analyst_notes.isnot(None)),
+                )
+                .order_by(Finding.created_at.desc())
+                .limit(1)
+            )
+            return result.scalar_one_or_none()
+        except Exception:
+            return None
 
             # Fire webhook for critical findings
             if data.severity.value == "critical" and self._user_id:

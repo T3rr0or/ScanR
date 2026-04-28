@@ -35,7 +35,7 @@ class LdapUserEnumPlugin(PluginBase):
         password = creds.get("password", "")
         domain = creds.get("domain", "")
 
-        results = await asyncio.get_event_loop().run_in_executor(
+        results = await asyncio.get_running_loop().run_in_executor(
             None, self._enumerate_ldap, host.ip, username, password, domain
         )
         return results

@@ -31,7 +31,7 @@ class SmbNullSessionPlugin(PluginBase):
         for port in host.ports:
             if port.number not in (445, 139) or port.state != "open":
                 continue
-            result = await asyncio.get_event_loop().run_in_executor(
+            result = await asyncio.get_running_loop().run_in_executor(
                 None, self._check_null_session, host.ip
             )
             if result is not None:

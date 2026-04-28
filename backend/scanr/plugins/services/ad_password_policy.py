@@ -46,7 +46,7 @@ class AdPasswordPolicyPlugin(PluginBase):
         if not creds or not creds.get("username"):
             return []
 
-        policy = await asyncio.get_event_loop().run_in_executor(
+        policy = await asyncio.get_running_loop().run_in_executor(
             None,
             self._get_password_policy,
             host.ip,

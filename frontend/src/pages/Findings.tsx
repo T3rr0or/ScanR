@@ -572,6 +572,22 @@ export default function Findings() {
             <option value="accepted_risk">Accepted Risk</option>
             <option value="resolved">Resolved</option>
           </select>
+
+          {/* Export filtered findings */}
+          <button
+            className="btn btn-ghost btn-sm"
+            style={{ flexShrink: 0 }}
+            onClick={() => {
+              const params = new URLSearchParams()
+              if (severity) params.set('severity', severity)
+              if (scanId) params.set('scan_id', scanId)
+              if (complianceTag) params.set('compliance_tag', complianceTag)
+              window.location.href = `/api/v1/findings/export?${params}`
+            }}
+            title="Download filtered findings as CSV"
+          >
+            ↓ Export CSV
+          </button>
         </div>
 
         {/* Bulk action toolbar */}

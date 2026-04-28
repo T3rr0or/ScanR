@@ -56,17 +56,21 @@ async def render_json(context: dict, report_id: str) -> Path:
                 "description": f.description,
                 "evidence": f.evidence,
                 "remediation": f.remediation,
+                "host_ip": getattr(f, "host_ip", ""),
                 "cvss_score": f.cvss_score,
                 "cvss_vector": f.cvss_vector,
                 "cve_ids": json.loads(f.cve_ids) if f.cve_ids else [],
                 "plugin_id": f.plugin_id,
                 "port_number": f.port_number,
                 "protocol": f.protocol,
+                "false_positive": f.false_positive,
+                "remediation_status": f.remediation_status,
+                "analyst_notes": f.analyst_notes,
             }
             for f in findings
         ],
         "summary": {
-            "critical": context["findings_by_severity"].get("critical", []),
+            "critical": len(context["findings_by_severity"].get("critical", [])),  # was returning list, not count
             "high": len(context["findings_by_severity"].get("high", [])),
             "medium": len(context["findings_by_severity"].get("medium", [])),
             "low": len(context["findings_by_severity"].get("low", [])),

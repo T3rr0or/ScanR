@@ -41,7 +41,7 @@ class UnconstrainedDelegationPlugin(PluginBase):
         if not username or not domain:
             return []
 
-        return await asyncio.get_event_loop().run_in_executor(
+        return await asyncio.get_running_loop().run_in_executor(
             None, self._find_delegation, host.ip, username, password, domain
         )
 

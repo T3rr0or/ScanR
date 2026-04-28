@@ -51,7 +51,7 @@ class IPMICipherZeroPlugin(PluginBase):
         return findings
 
     async def _probe(self, ip: str, port: int) -> FindingData | None:
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         try:
             # IPMI uses UDP
             result = await asyncio.wait_for(

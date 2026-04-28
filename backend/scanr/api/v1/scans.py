@@ -279,6 +279,34 @@ async def cancel_scan(
     return {"status": "cancelled"}
 
 
+@router.post("/{scan_id}/pause", status_code=status.HTTP_202_ACCEPTED)
+async def pause_scan(
+    scan_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_scope("scans:write")),
+):
+    scan = await _get_own_scan(scan_id, current_user.id, db)
+    if scan.status != ScanStatus.running:
+        raise HTTPException(status_code=409, detail=f"Cannot pause scan in status '{scan.status.value}'")
+    scan.status = ScanStatus.paused
+    await db.commit()
+    return {"status": "paused"}
+
+
+@router.post("/{scan_id}/resume", status_code=status.HTTP_202_ACCEPTED)
+async def resume_scan(
+    scan_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_scope("scans:write")),
+):
+    scan = await _get_own_scan(scan_id, current_user.id, db)
+    if scan.status != ScanStatus.paused:
+        raise HTTPException(status_code=409, detail=f"Cannot resume scan in status '{scan.status.value}'")
+    scan.status = ScanStatus.running
+    await db.commit()
+    return {"status": "running"}
+
+
 @router.get("/{scan_id}/delta")
 async def scan_delta(
     scan_id: str,

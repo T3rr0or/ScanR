@@ -28,7 +28,7 @@ class BacnetDetectPlugin(PluginBase):
         if not any(p.number == 47808 for p in host.ports):
             return []
 
-        result = await asyncio.get_event_loop().run_in_executor(
+        result = await asyncio.get_running_loop().run_in_executor(
             None, self._probe_bacnet, host.ip, 47808
         )
         if result:

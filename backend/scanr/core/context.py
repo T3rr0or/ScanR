@@ -42,8 +42,25 @@ class ScanContext:
         if not self.log.scan_id:
             self.log = ScanLogger(self.scan_id)
 
+    # Pause support
+    _paused: bool = field(default=False)
+    _pause_event: asyncio.Event = field(default_factory=asyncio.Event)
+
+    def request_pause(self) -> None:
+        self._paused = True
+
+    def request_resume(self) -> None:
+        self._paused = False
+        self._pause_event.set()
+        self._pause_event.clear()
+
+    async def wait_if_paused(self) -> None:
+        while self._paused and not self.cancelled:
+            await asyncio.sleep(1.0)
+
     def request_cancel(self) -> None:
         self.cancelled = True
+        self._paused = False  # unpause so the loop can exit
         self._cancel_event.set()
 
     def check_cancelled(self) -> None:

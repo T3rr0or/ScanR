@@ -245,6 +245,8 @@ class ScanEngine:
     ) -> None:
         async with sem:
             context.check_cancelled()
+            await context.wait_if_paused()  # blocks until resumed or cancelled
+            context.check_cancelled()
 
             await context.log.info(f"Scanning {ip} ...", phase="portscan", host=ip)
 

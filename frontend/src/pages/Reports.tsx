@@ -5,7 +5,7 @@ import { reportsApi } from '@/api/reports'
 import { scansApi } from '@/api/scans'
 import { StatusPill, relTime, EmptyState } from '@/components/ui'
 
-const FORMATS = ['html', 'pdf', 'json', 'csv']
+const FORMATS = ['html', 'pdf', 'json', 'csv', 'sarif']
 
 export default function Reports() {
   const qc = useQueryClient()

@@ -54,10 +54,20 @@ export default function ScanDetail({ scanId, onBack }: Props) {
     onSuccess: () => { refetch(); qc.invalidateQueries({ queryKey: ['scans'] }) },
   })
 
+  const pauseMut = useMutation({
+    mutationFn: () => api.post(`/scans/${scanId}/pause`),
+    onSuccess: () => refetch(),
+  })
+
+  const resumeMut = useMutation({
+    mutationFn: () => api.post(`/scans/${scanId}/resume`),
+    onSuccess: () => refetch(),
+  })
+
   const { data: scan, refetch } = useQuery({
     queryKey: ['scan', scanId],
     queryFn: () => scansApi.get(scanId),
-    refetchInterval: (query) => query.state.data?.status === 'running' ? 3000 : false,
+    refetchInterval: (query) => ['running', 'pending', 'paused'].includes(query.state.data?.status ?? '') ? 5000 : false,
   })
 
   const { data: findings = [] } = useQuery({
@@ -94,6 +104,16 @@ export default function ScanDetail({ scanId, onBack }: Props) {
           </button>
           <span className="mono dim" style={{ fontSize: 11 }}>{scanId.slice(0, 8)}</span>
           <div style={{ flex: 1 }} />
+          {scan?.status === 'paused' && (
+            <button className="btn btn-primary btn-sm" onClick={() => resumeMut.mutate()} disabled={resumeMut.isPending}>
+              ▶ {resumeMut.isPending ? 'Resuming…' : 'Resume'}
+            </button>
+          )}
+          {scan?.status === 'running' && (
+            <button className="btn btn-sm" onClick={() => pauseMut.mutate()} disabled={pauseMut.isPending}>
+              ⏸ {pauseMut.isPending ? 'Pausing…' : 'Pause'}
+            </button>
+          )}
           {isActive && (
             <button className="btn btn-danger btn-sm" onClick={() => cancelMut.mutate()} disabled={cancelMut.isPending}>
               <StopCircle size={11} /> {cancelMut.isPending ? 'Cancelling…' : 'Cancel'}

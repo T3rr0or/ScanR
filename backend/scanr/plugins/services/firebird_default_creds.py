@@ -36,7 +36,7 @@ class FirebirdDefaultCredsPlugin(PluginBase):
         for port in host.ports:
             if port.number != 3050 or port.state != "open":
                 continue
-            found = await asyncio.get_event_loop().run_in_executor(
+            found = await asyncio.get_running_loop().run_in_executor(
                 None, self._try_default_creds, host.ip, 3050
             )
             if found:

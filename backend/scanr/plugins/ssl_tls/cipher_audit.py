@@ -50,7 +50,7 @@ class CipherAuditPlugin(PluginBase):
         return findings
 
     async def _check_ciphers(self, ip: str, port: int) -> list[str]:
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, self._check_sync, ip, port)
 
     def _check_sync(self, ip: str, port: int) -> list[str]:

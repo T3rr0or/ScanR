@@ -32,7 +32,7 @@ class WinRMAccessPlugin(PluginBase):
         if not creds or not creds.get("username"):
             return []
 
-        results = await asyncio.get_event_loop().run_in_executor(
+        results = await asyncio.get_running_loop().run_in_executor(
             None, self._test_winrm, host.ip, creds.get("username", ""), creds.get("password", ""), creds.get("domain", ""), open_ports[0]
         )
         return results

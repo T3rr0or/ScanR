@@ -88,7 +88,7 @@ class SshDefaultCredsPlugin(PluginBase):
         return findings
 
     async def _try_creds_list(self, ip: str, port: int, pairs: list, max_failures: int, delay_s: float) -> list[tuple[str, str]]:
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, self._ssh_sync_list, ip, port, pairs, max_failures, delay_s)
 
     def _ssh_sync_list(self, ip: str, port: int, pairs: list, max_failures: int, delay_s: float) -> list[tuple[str, str]]:

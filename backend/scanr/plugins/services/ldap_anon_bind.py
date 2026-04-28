@@ -34,7 +34,7 @@ class LdapAnonBindPlugin(PluginBase):
             if port.number not in _LDAP_PORTS or port.state != "open":
                 continue
             use_tls = port.number in (636, 3269)
-            info = await asyncio.get_event_loop().run_in_executor(
+            info = await asyncio.get_running_loop().run_in_executor(
                 None, self._try_anon_bind, host.ip, port.number, use_tls
             )
             if info is not None:

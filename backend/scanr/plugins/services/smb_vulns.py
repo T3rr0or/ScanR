@@ -62,7 +62,7 @@ class SmbVulnsPlugin(PluginBase):
         return findings
 
     async def _check_ms17010(self, ip: str) -> bool:
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, self._smb_sync, ip)
 
     def _smb_sync(self, ip: str) -> bool:

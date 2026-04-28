@@ -30,7 +30,7 @@ class BluekeepCheckPlugin(PluginBase):
         for port in host.ports:
             if port.number != 3389 or port.state != "open":
                 continue
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             vulnerable = await loop.run_in_executor(None, self._rdp_sync, host.ip, port.number)
             if vulnerable:
                 findings.append(FindingData(

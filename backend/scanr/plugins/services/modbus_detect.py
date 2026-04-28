@@ -27,7 +27,7 @@ class ModbusDetectPlugin(PluginBase):
         for port in host.ports:
             if port.number != 502 or port.state != "open":
                 continue
-            result = await asyncio.get_event_loop().run_in_executor(
+            result = await asyncio.get_running_loop().run_in_executor(
                 None, self._probe_modbus, host.ip, port.number
             )
             if result:

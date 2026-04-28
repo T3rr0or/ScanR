@@ -32,7 +32,7 @@ class DockerPrivilegedCheckPlugin(PluginBase):
         if not username:
             return []
 
-        result = await asyncio.get_event_loop().run_in_executor(
+        result = await asyncio.get_running_loop().run_in_executor(
             None, self._check_via_ssh, host.ip, username, password
         )
         return [result] if result else []

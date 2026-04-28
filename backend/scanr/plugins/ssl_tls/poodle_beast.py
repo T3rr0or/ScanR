@@ -34,7 +34,7 @@ class PoodleBeastPlugin(PluginBase):
 
     async def check(self, context: "ScanContext", host: "Host") -> list[FindingData]:
         findings = []
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         for port in host.ports:
             if port.number not in SSL_PORTS or port.state != "open":
                 continue

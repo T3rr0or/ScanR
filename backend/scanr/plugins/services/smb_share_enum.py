@@ -39,7 +39,7 @@ class SmbShareEnumPlugin(PluginBase):
         password = creds.get("password", "")
         domain = creds.get("domain", "")
 
-        writable = await asyncio.get_event_loop().run_in_executor(
+        writable = await asyncio.get_running_loop().run_in_executor(
             None, self._enumerate_shares, host.ip, username, password, domain
         )
         if not writable:

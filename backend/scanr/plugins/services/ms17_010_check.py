@@ -31,7 +31,7 @@ class Ms17010CheckPlugin(PluginBase):
         for port in host.ports:
             if port.number != 445 or port.state != "open":
                 continue
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             vulnerable = await loop.run_in_executor(None, self._smb_sync, host.ip)
             if vulnerable:
                 findings.append(FindingData(

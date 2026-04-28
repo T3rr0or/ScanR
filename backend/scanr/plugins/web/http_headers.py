@@ -40,12 +40,11 @@ REQUIRED_HEADERS = {
         "Missing CSP header increases risk of XSS attacks.",
         "Define a Content-Security-Policy header appropriate for the application.",
     ),
-    "X-XSS-Protection": (
-        Severity.low,
-        "X-XSS-Protection Not Set",
-        "Missing legacy XSS protection header.",
-        "Add: X-XSS-Protection: 1; mode=block",
-    ),
+    # X-XSS-Protection intentionally removed — header was deprecated by all major
+    # browsers (Chrome 78+, Firefox 3.6+, Edge 2019+). Recommending it is incorrect
+    # guidance; certain configurations can even introduce XSS vulnerabilities.
+    # Use Content-Security-Policy instead. OWASP Secure Headers Project no longer
+    # lists it as a required header (as of 2021).
     "Referrer-Policy": (
         Severity.low,
         "Referrer-Policy Not Set",

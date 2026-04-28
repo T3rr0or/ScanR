@@ -33,7 +33,7 @@ class RdpInfoPlugin(PluginBase):
         for port in host.ports:
             if port.number != 3389 or port.state != "open":
                 continue
-            info = await asyncio.get_event_loop().run_in_executor(
+            info = await asyncio.get_running_loop().run_in_executor(
                 None, self._extract_rdp_info, host.ip, 3389
             )
             if not info:

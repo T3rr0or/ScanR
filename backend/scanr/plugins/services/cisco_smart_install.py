@@ -35,7 +35,7 @@ class CiscoSmartInstallPlugin(PluginBase):
         for port in host.ports:
             if port.number != 4786 or port.state != "open":
                 continue
-            vulnerable = await asyncio.get_event_loop().run_in_executor(
+            vulnerable = await asyncio.get_running_loop().run_in_executor(
                 None, self._probe_smart_install, host.ip
             )
             if vulnerable:

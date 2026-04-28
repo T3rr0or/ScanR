@@ -36,7 +36,7 @@ class LlmnrNbnsCheckPlugin(PluginBase):
         if not smb_open:
             return []
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         llmnr, nbns = await asyncio.gather(
             loop.run_in_executor(None, self._check_llmnr, host.ip),
             loop.run_in_executor(None, self._check_nbns, host.ip),

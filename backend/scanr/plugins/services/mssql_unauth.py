@@ -35,7 +35,7 @@ class MssqlUnauthPlugin(PluginBase):
     async def check(self, context: "ScanContext", host: "Host") -> list[FindingData]:
         if not any(p.number == 1433 and p.state == "open" for p in host.ports):
             return []
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         sa_finding, browser_finding = await asyncio.gather(
             loop.run_in_executor(None, self._test_sa_creds, host.ip),
             loop.run_in_executor(None, self._check_sql_browser, host.ip),

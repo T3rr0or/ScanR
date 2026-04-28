@@ -55,7 +55,7 @@ class SmbSigningPlugin(PluginBase):
         return findings
 
     async def _check_smb_signing(self, ip: str, port: int) -> bool | None:
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, self._smb_sync, ip, port)
 
     def _smb_sync(self, ip: str, port: int) -> bool | None:
