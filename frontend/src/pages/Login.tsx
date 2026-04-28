@@ -1,9 +1,11 @@
 import { useState } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import { useAuthStore } from '@/store/auth'
 import api from '@/api/client'
 
 export default function Login() {
   const setToken = useAuthStore((s) => s.setToken)
+  const qc = useQueryClient()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
@@ -15,6 +17,7 @@ export default function Login() {
     setError('')
     try {
       const { data } = await api.post('/auth/login', { email, password })
+      qc.clear()  // purge any stale cached data from a previous session
       setToken(data.access_token)
     } catch {
       setError('Invalid credentials')

@@ -19,13 +19,19 @@ from scanr.config import get_settings
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
+# NVD 1.1 JSON feeds (retired Dec 2023 — data frozen at 2023-12-31 for these years).
+# Years 2024+ must be fetched via the NVD 2.0 REST API below.
+_NVD_1_1_YEARS = list(range(2002, 2024))
 NVD_FEEDS = [
     "https://nvd.nist.gov/feeds/json/cve/1.1/nvdcve-1.1-recent.json.gz",
     "https://nvd.nist.gov/feeds/json/cve/1.1/nvdcve-1.1-modified.json.gz",
 ] + [
     f"https://nvd.nist.gov/feeds/json/cve/1.1/nvdcve-1.1-{year}.json.gz"
-    for year in range(2020, 2026)
+    for year in _NVD_1_1_YEARS
 ]
+
+# NVD 2.0 REST API — used for 2024+ CVEs (paginated, 2000 per page)
+NVD_2_API = "https://services.nvd.nist.gov/rest/json/cves/2.0"
 
 CISA_KEV_URL = "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json"
 
@@ -75,8 +81,108 @@ def download_feeds() -> None:
             logger.warning("Failed to process feed %s: %s", url, exc)
 
     conn.close()
+
+    # Fetch 2024+ CVEs via NVD 2.0 REST API (1.1 feeds are frozen at 2023-12-31)
+    _fetch_nvd2_year_range(2024, 2026)
+
     download_cisa_kev()
     LAST_UPDATED_PATH.write_text(__import__("datetime").datetime.utcnow().isoformat())
+
+
+def _fetch_nvd2_year_range(start_year: int, end_year: int) -> None:
+    """Fetch CVEs from NVD 2.0 REST API for the given year range (inclusive)."""
+    import time as _time
+    conn = _get_conn()
+    headers = {"User-Agent": "ScanR/1.0 (https://github.com/T3rr0or/ScanR)"}
+
+    for year in range(start_year, end_year + 1):
+        pub_start = f"{year}-01-01T00:00:00.000"
+        pub_end = f"{year}-12-31T23:59:59.999"
+        start_index = 0
+        total_fetched = 0
+
+        while True:
+            try:
+                with httpx.Client(timeout=60, headers=headers) as client:
+                    resp = client.get(NVD_2_API, params={
+                        "pubStartDate": pub_start,
+                        "pubEndDate": pub_end,
+                        "startIndex": start_index,
+                        "resultsPerPage": 2000,
+                    })
+                    resp.raise_for_status()
+                    data = resp.json()
+
+                vulnerabilities = data.get("vulnerabilities", [])
+                _index_nvd2_page(conn, vulnerabilities)
+                total_fetched += len(vulnerabilities)
+
+                total_results = data.get("totalResults", 0)
+                if start_index + len(vulnerabilities) >= total_results:
+                    break
+
+                start_index += 2000
+                _time.sleep(0.6)  # NVD rate limit: ~50 req/30s without API key
+
+            except Exception as exc:
+                logger.warning("NVD 2.0 fetch failed (year=%d, start=%d): %s", year, start_index, exc)
+                break
+
+        if total_fetched:
+            logger.info("NVD 2.0: indexed %d CVEs for year %d", total_fetched, year)
+
+    conn.close()
+
+
+def _index_nvd2_page(conn: sqlite3.Connection, vulnerabilities: list) -> None:
+    """Index NVD 2.0 API response format into the local DB."""
+    for item in vulnerabilities:
+        try:
+            cve = item.get("cve", {})
+            cve_id = cve.get("id", "")
+            if not cve_id:
+                continue
+
+            desc = ""
+            for d in cve.get("descriptions", []):
+                if d.get("lang") == "en":
+                    desc = d.get("value", "")
+                    break
+
+            cvss_score = None
+            cvss_vector = None
+            severity = "unknown"
+
+            metrics = cve.get("metrics", {})
+            if "cvssMetricV31" in metrics:
+                m = metrics["cvssMetricV31"][0]["cvssData"]
+                cvss_score = m.get("baseScore")
+                cvss_vector = m.get("vectorString")
+                severity = m.get("baseSeverity", "unknown").lower()
+            elif "cvssMetricV30" in metrics:
+                m = metrics["cvssMetricV30"][0]["cvssData"]
+                cvss_score = m.get("baseScore")
+                cvss_vector = m.get("vectorString")
+                severity = m.get("baseSeverity", "unknown").lower()
+            elif "cvssMetricV2" in metrics:
+                m = metrics["cvssMetricV2"][0]
+                cvss_score = m["cvssData"].get("baseScore")
+                severity = m.get("baseSeverity", "unknown").lower()
+
+            cpes: list[str] = []
+            for config in cve.get("configurations", []):
+                for node in config.get("nodes", []):
+                    for match in node.get("cpeMatch", []):
+                        if match.get("vulnerable"):
+                            cpes.append(match.get("criteria", ""))
+
+            conn.execute(
+                "INSERT OR REPLACE INTO cves VALUES (?, ?, ?, ?, ?, ?)",
+                (cve_id, desc, cvss_score, cvss_vector, severity, json.dumps(cpes)),
+            )
+        except Exception:
+            continue
+    conn.commit()
 
 
 def download_cisa_kev() -> None:

@@ -16,6 +16,19 @@ os.environ.setdefault("REDIS_URL", "redis://localhost:6379/0")
 from scanr.db.init_db import seed_admin, seed_plugins  # noqa: E402
 from scanr.main import create_app  # noqa: E402
 
+# Patch Redis with fakeredis so auth (jti revocation) tests work without a real Redis
+import fakeredis.aioredis as _fake_aioredis
+import scanr.api.v1.auth as _auth_module
+
+_FAKE_REDIS_SERVER = _fake_aioredis.FakeServer()
+
+
+def _fake_get_redis():
+    return _fake_aioredis.FakeRedis(server=_FAKE_REDIS_SERVER, decode_responses=True)
+
+
+_auth_module._get_redis = _fake_get_redis  # type: ignore[attr-defined]
+
 TEST_DB_URL = "sqlite+aiosqlite:///./test_scanr.db"
 
 
