@@ -5,6 +5,7 @@ import {
   ChevronDown, ChevronUp, Pencil, Target, Settings2,
 } from 'lucide-react'
 import { schedulesApi, type Schedule } from '@/api/schedules'
+import { credentialsApi } from '@/api/credentials'
 import { ALL_CATEGORIES, PORT_RANGES, type ProfileConfig } from '@/components/ProfileEditor'
 
 const CRON_PRESETS = [
@@ -57,8 +58,14 @@ function ScheduleForm({
     enabled: parsedInitial.brute_force?.enabled ?? false,
     delay_ms: parsedInitial.brute_force?.delay_ms ?? 500,
   })
-  const [intrusive, setIntrusive] = useState(parsedInitial.intrusive ?? false)
-  const [stealth, setStealth]     = useState(parsedInitial.stealth ?? false)
+  const [intrusive, setIntrusive]     = useState(parsedInitial.intrusive ?? false)
+  const [stealth, setStealth]         = useState(parsedInitial.stealth ?? false)
+  const [credentialId, setCredentialId] = useState<string>(parsedInitial.credential_id ?? '')
+
+  const { data: credentials = [] } = useQuery({
+    queryKey: ['credentials'],
+    queryFn: credentialsApi.list,
+  })
 
   function buildProfileJson() {
     const cats = [...enabledCategories]
@@ -70,6 +77,7 @@ function ScheduleForm({
     if (bruteForce.enabled) pj.brute_force = { enabled: true, delay_ms: bruteForce.delay_ms }
     if (intrusive) pj.intrusive = true
     if (stealth) pj.stealth = true
+    if (credentialId) pj.credential_id = credentialId
     return JSON.stringify(pj)
   }
 
@@ -141,6 +149,33 @@ function ScheduleForm({
             )
           })}
         </div>
+      </div>
+
+      {/* Credentials */}
+      <div>
+        <label className="label">Credentials (optional — for authenticated plugins)</label>
+        <select
+          value={credentialId}
+          onChange={e => setCredentialId(e.target.value)}
+          className="select-field"
+        >
+          <option value="">No credentials (unauthenticated scan)</option>
+          {credentials.map(c => (
+            <option key={c.id} value={c.id}>
+              {c.name} ({c.type}{c.username ? ` · ${c.username}` : ''})
+            </option>
+          ))}
+        </select>
+        {credentialId && (
+          <p style={{ fontSize: 10.5, color: 'var(--text-3)', marginTop: 4 }}>
+            Selected credentials will be used for SSH audit, SMB, LDAP, AD, and other authenticated plugins.
+          </p>
+        )}
+        {credentials.length === 0 && (
+          <p style={{ fontSize: 10.5, color: 'var(--text-3)', marginTop: 4 }}>
+            No credentials saved. Add them in <strong>Credentials</strong> to enable authenticated scanning.
+          </p>
+        )}
       </div>
 
       {/* Cron */}
@@ -220,11 +255,12 @@ function ScheduleForm({
 }
 
 /* ─── Schedule card ───────────────────────────────────────────── */
-function ScheduleCard({ schedule: s, onToggle, onDelete, onEdit }: {
+function ScheduleCard({ schedule: s, onToggle, onDelete, onEdit, credentialName }: {
   schedule: Schedule
   onToggle: () => void
   onDelete: () => void
   onEdit: () => void
+  credentialName?: string
 }) {
   // Parse profile summary
   const profile = (() => {
@@ -284,6 +320,14 @@ function ScheduleCard({ schedule: s, onToggle, onDelete, onEdit }: {
                 {plugins.includes('*') ? 'all' : plugins.join(', ')}
               </span>
             </span>
+            {credentialName && (
+              <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                🔑 <span style={{ color: 'var(--ok)' }}>{credentialName}</span>
+              </span>
+            )}
+            {!credentialName && !profile.credential_id && (
+              <span style={{ color: 'var(--text-3)', fontStyle: 'italic' }}>unauthenticated</span>
+            )}
           </div>
 
           {/* Timing row */}
@@ -359,6 +403,12 @@ export default function Schedules() {
     mutationFn: ({ id, enabled }: { id: string; enabled: boolean }) => schedulesApi.update(id, { enabled }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['schedules'] }),
   })
+
+  const { data: allCredentials = [] } = useQuery({
+    queryKey: ['credentials'],
+    queryFn: credentialsApi.list,
+  })
+  const credMap = Object.fromEntries(allCredentials.map(c => [c.id, c.name]))
 
   const editingSchedule = editId ? schedules.find(s => s.id === editId) : null
 
@@ -438,6 +488,9 @@ export default function Schedules() {
                 onToggle={() => toggleMut.mutate({ id: s.id, enabled: !s.enabled })}
                 onDelete={() => { if (confirm(`Delete schedule "${s.name}"?`)) deleteMut.mutate(s.id) }}
                 onEdit={() => { setEditId(s.id); setShowCreate(false); setErr(null) }}
+                credentialName={(() => {
+                  try { const pj = JSON.parse(s.scan_profile_json || '{}'); return pj.credential_id ? credMap[pj.credential_id] : undefined } catch { return undefined }
+                })()}
               />
             )
           ))}
