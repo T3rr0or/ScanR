@@ -14,8 +14,8 @@ logger = logging.getLogger(__name__)
 class PingSweep:
     """Discover live hosts via TCP connect to common ports (works without root)."""
 
-    PROBE_PORTS = [80, 443, 22, 445, 3389, 8080, 8443, 25, 53, 21]
-    TIMEOUT = 1.5
+    PROBE_PORTS = [80, 443, 22, 445, 3389, 8080, 8443, 25, 53, 21, 23, 3306, 5432, 6379, 8888]
+    TIMEOUT = 1.0  # per-port timeout; total per-host = TIMEOUT × len(PROBE_PORTS) if all timeout
 
     async def discover(self, targets: list[str], context: "ScanContext") -> list[str]:
         """Return list of responsive IP/hostname strings."""
@@ -54,10 +54,13 @@ class PingSweep:
                     pass
                 await context.log.debug(f"{target} — up (TCP:{port})", phase="discovery", host=target)
                 return True
-            except (ConnectionRefusedError, OSError):
-                # Port closed — host is up
+            except ConnectionRefusedError:
+                # RST received — host is up but port is closed
                 await context.log.debug(f"{target} — up (TCP:{port} refused)", phase="discovery", host=target)
                 return True
+            except OSError:
+                # No route / network unreachable / host unreachable — keep trying other ports
+                continue
             except asyncio.TimeoutError:
                 continue
         await context.log.debug(f"{target} — no response", phase="discovery", host=target)
