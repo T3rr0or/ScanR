@@ -34,6 +34,8 @@ export const scansApi = {
     api.get<ScanSummary[]>('/scans', { params }).then(r => r.data),
   get: (id: string) => api.get<ScanSummary>(`/scans/${id}`).then(r => r.data),
   create: (body: ScanCreate) => api.post<ScanSummary>('/scans', body).then(r => r.data),
+  update: (id: string, body: Partial<ScanCreate> & { targets?: string[] }) =>
+    api.patch<ScanSummary>(`/scans/${id}`, body).then(r => r.data),
   launch: (id: string) => api.post(`/scans/${id}/launch`).then(r => r.data),
   cancel: (id: string) => api.post(`/scans/${id}/cancel`).then(r => r.data),
   delete: (id: string) => api.delete(`/scans/${id}`),

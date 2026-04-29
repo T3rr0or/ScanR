@@ -208,6 +208,56 @@ async def get_scan(
     return await _get_own_scan(scan_id, current_user.id, db)
 
 
+class ScanUpdate(BaseModel):
+    name: str | None = Field(None, min_length=1, max_length=255)
+    description: str | None = None
+    targets: list[str] | None = None
+    profile_json: str | None = None
+
+
+@router.patch("/{scan_id}", response_model=ScanRead)
+async def update_scan(
+    scan_id: str,
+    body: ScanUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_scope("scans:write")),
+):
+    """Update a pending scan's settings (name, targets, profile). Only allowed before launch."""
+    scan = await _get_own_scan(scan_id, current_user.id, db)
+    if scan.status not in (ScanStatus.pending,):
+        raise HTTPException(status_code=409, detail=f"Cannot edit scan in '{scan.status.value}' status — only pending scans can be modified")
+
+    if body.name is not None:
+        scan.name = body.name
+    if body.description is not None:
+        scan.description = body.description
+    if body.profile_json is not None:
+        scan.profile_json = _validate_profile_json(body.profile_json)
+
+    if body.targets is not None:
+        if not body.targets:
+            raise HTTPException(status_code=400, detail="At least one target required")
+        from scanr.utils.ip_utils import expand_targets as _expand
+        for raw in body.targets:
+            try:
+                list(_expand(raw.strip()))
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=f"Invalid target: {exc}")
+        # Replace targets: delete old, insert new
+        await db.execute(text("DELETE FROM targets WHERE scan_id = :sid"), {"sid": scan_id})
+        for raw in body.targets:
+            from scanr.models import Target as _Target
+            db.add(_Target(id=new_uuid(), scan_id=scan_id, value=raw.strip(), type=classify_target(raw.strip())))
+
+    try:
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        raise HTTPException(status_code=500, detail="Failed to update scan")
+    await db.refresh(scan)
+    return scan
+
+
 @router.get("/{scan_id}/hosts", response_model=list[HostRead])
 async def get_scan_hosts(
     scan_id: str,

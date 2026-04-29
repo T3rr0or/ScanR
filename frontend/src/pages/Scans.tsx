@@ -4,7 +4,7 @@ import {
   Activity, Scan, Plus, Download, Search,
   Terminal, Play, StopCircle, GitCompare, Trash2,
   Radar, Globe, Zap, SlidersHorizontal,
-  X, FileText, AlertTriangle, Check,
+  X, FileText, AlertTriangle, Check, Pencil,
 } from 'lucide-react'
 import { scansApi, type ScanCreate, type ScanCredentialIn } from '@/api/scans'
 import { templatesApi, type ScanTemplate } from '@/api/templates'
@@ -81,6 +81,7 @@ function TemplateIcon({ name, size = 14 }: { name: string; size?: number }) {
 export default function Scans({ onOpenScan }: Props) {
   const qc = useQueryClient()
   const [showForm, setShowForm]       = useState(false)
+  const [editScanId, setEditScanId]   = useState<string | null>(null)
   const [deltaScan, setDeltaScan]     = useState<{ id: string; name: string } | null>(null)
   const [page, setPage]               = useState(0)
   const [filter, setFilter]           = useState<FilterStatus>('all')
@@ -112,6 +113,12 @@ export default function Scans({ onOpenScan }: Props) {
       return scan
     },
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['scans'] }); setShowForm(false) },
+    onError: _onErr,
+  })
+  const updateMut = useMutation({
+    mutationFn: ({ id, body }: { id: string; body: ScanCreate }) =>
+      scansApi.update(id, body),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['scans'] }); setEditScanId(null) },
     onError: _onErr,
   })
   const launchMut = useMutation({
@@ -180,6 +187,23 @@ export default function Scans({ onOpenScan }: Props) {
           loading={createMut.isPending || createAndLaunchMut.isPending}
         />
       )}
+
+      {/* ── Edit pending scan modal ── */}
+      {editScanId && (() => {
+        const s = scans.find(x => x.id === editScanId)
+        if (!s) return null
+        return (
+          <NewScanModal
+            key={editScanId}
+            editMode
+            initialScan={s}
+            onClose={() => setEditScanId(null)}
+            onSaveAsDraft={body => updateMut.mutate({ id: editScanId, body })}
+            onCreateAndLaunch={body => { updateMut.mutate({ id: editScanId, body }); launchMut.mutate(editScanId) }}
+            loading={updateMut.isPending}
+          />
+        )
+      })()}
 
       {/* ── Page header ── */}
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 16 }}>
@@ -361,14 +385,24 @@ export default function Scans({ onOpenScan }: Props) {
                     </button>
 
                     {s.status === 'pending' && (
-                      <button
-                        className="btn btn-ghost btn-icon"
-                        title="Launch"
-                        onClick={() => launchMut.mutate(s.id)}
-                        style={{ color: 'var(--ok)' }}
-                      >
-                        <Play size={11} />
-                      </button>
+                      <>
+                        <button
+                          className="btn btn-ghost btn-icon"
+                          title="Edit scan settings"
+                          onClick={() => setEditScanId(s.id)}
+                          style={{ color: 'var(--accent)' }}
+                        >
+                          <Pencil size={11} />
+                        </button>
+                        <button
+                          className="btn btn-ghost btn-icon"
+                          title="Launch"
+                          onClick={() => launchMut.mutate(s.id)}
+                          style={{ color: 'var(--ok)' }}
+                        >
+                          <Play size={11} />
+                        </button>
+                      </>
                     )}
 
                     {s.status === 'running' && (
@@ -447,16 +481,20 @@ function NewScanModal({
   onSaveAsDraft,
   onCreateAndLaunch,
   loading,
+  editMode = false,
+  initialScan,
 }: {
   onClose: () => void
   onSaveAsDraft: (body: ScanCreate) => void
   onCreateAndLaunch: (body: ScanCreate) => void
   loading: boolean
+  editMode?: boolean
+  initialScan?: { id: string; name: string; targets?: string[]; profile_json?: string | null }
 }) {
   const [selectedDesignTemplate, setSelectedDesignTemplate] = useState('quick')
   const [selectedApiTemplate, setSelectedApiTemplate]       = useState<ScanTemplate | null>(null)
-  const [name, setName]       = useState('')
-  const [targets, setTargets] = useState('')
+  const [name, setName]       = useState(initialScan?.name ?? '')
+  const [targets, setTargets] = useState((initialScan?.targets ?? []).join('\n'))
   const [credentials, setCredentials] = useState<InlineCredential[]>([])
 
   const [profileConfig, setProfileConfig] = useState<ProfileConfig>({
@@ -572,7 +610,7 @@ function NewScanModal({
         {/* Modal header */}
         <div className="panel-head">
           <Radar size={14} color="var(--accent)" />
-          <span style={{ fontSize: 13, fontWeight: 600 }}>New Scan</span>
+          <span style={{ fontSize: 13, fontWeight: 600 }}>{editMode ? 'Edit Scan' : 'New Scan'}</span>
           <button
             className="btn btn-ghost btn-icon"
             style={{ marginLeft: 'auto' }}
@@ -843,14 +881,14 @@ function NewScanModal({
             onClick={() => canSubmit && onSaveAsDraft(buildPayload())}
             disabled={!canSubmit}
           >
-            <FileText size={12} /> Save as draft
+            <FileText size={12} /> {editMode ? 'Save changes' : 'Save as draft'}
           </button>
           <button
             className="btn btn-primary"
             onClick={() => canSubmit && onCreateAndLaunch(buildPayload())}
             disabled={!canSubmit}
           >
-            <Play size={11} /> Create &amp; Launch
+            <Play size={11} /> {editMode ? 'Save & Launch' : 'Create & Launch'}
           </button>
         </div>
       </div>
