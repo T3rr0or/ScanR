@@ -212,13 +212,16 @@ class ScanEngine:
 
         await self.db.commit()
 
-        if live_targets and context.hosts_scanned == 0:
-            msg = (
-                "Port scanning produced no host results after discovery found "
-                f"{len(live_targets)} live host(s); check nmap privileges and scanner logs"
+        # Warn if nothing was scanned AND masscan also found nothing — strong signal
+        # of a privilege/network problem. Don't raise: zero open ports is a valid
+        # result on a firewalled network and should complete, not fail, the scan.
+        if live_targets and context.hosts_scanned == 0 and not masscan_results:
+            await scan_log.warn(
+                f"Port scanning returned 0 results for {len(live_targets)} live host(s). "
+                "Possible cause: nmap lacks raw-socket privileges or all hosts block probes. "
+                "Check worker logs.",
+                phase="engine",
             )
-            await scan_log.error(msg, phase="engine")
-            raise RuntimeError(msg)
 
         # Credential chaining phase (opt-in via profile_json.credential_chain:true)
         if _pj.get("credential_chain", False) and getattr(context, "discovered_credentials", []):
