@@ -79,6 +79,7 @@ class ScheduleRead(BaseModel):
     next_run: datetime | None
     last_run: datetime | None
     last_scan_id: str | None
+    scan_profile_json: str
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -96,6 +97,7 @@ def _to_read(s: Schedule) -> ScheduleRead:
         next_run=s.next_run,
         last_run=s.last_run,
         last_scan_id=s.last_scan_id,
+        scan_profile_json=s.scan_profile_json or "{}",
         created_at=s.created_at,
     )
 

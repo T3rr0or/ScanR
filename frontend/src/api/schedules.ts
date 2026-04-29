@@ -10,6 +10,7 @@ export interface Schedule {
   next_run: string | null
   last_run: string | null
   last_scan_id: string | null
+  scan_profile_json: string
   created_at: string
 }
 
