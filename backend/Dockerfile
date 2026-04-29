@@ -14,6 +14,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     wget \
     unzip \
     libcap2-bin \
+    gosu \
     && rm -rf /var/lib/apt/lists/*
 
 # SecLists wordlists for web content discovery (best-effort — plugin falls back to embedded list)
@@ -50,15 +51,17 @@ COPY alembic.ini .
 # Built-in wordlists
 RUN mkdir -p /app/wordlists/builtin
 COPY scanr/wordlists/builtin/ /app/wordlists/builtin/
+COPY docker-entrypoint.sh /usr/local/bin/scanr-entrypoint
 
 # Non-root user — grant nmap/masscan raw socket access via file capabilities
 # so the worker can run scans without NET_ADMIN or running as root.
 RUN groupadd -r scanr && useradd -r -g scanr -d /app -s /bin/false scanr \
     && chown -R scanr:scanr /app \
+    && chmod +x /usr/local/bin/scanr-entrypoint \
     && setcap cap_net_raw+ep /usr/bin/nmap \
     && (setcap cap_net_raw+ep /usr/bin/masscan || true)
 
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
 
-USER scanr
+ENTRYPOINT ["scanr-entrypoint"]

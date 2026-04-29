@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -28,23 +29,37 @@ class NmapWrapper:
             port_arg = "-p " + ",".join(str(p) for p in sorted(set(known_ports)))
         else:
             port_arg = context.get_port_range()
-        args = f"-sV -O --osscan-guess -T4 {port_arg} --host-timeout 60s"
+        common_args = f"-sV -T4 {port_arg} --host-timeout 60s"
 
-        # Try SYN scan first (needs root), fallback to TCP connect
-        syn_cmd = f"nmap -sS {args} {ip}"
+        # SYN scanning and OS fingerprinting require elevated privileges.
+        # The container normally runs as scanr, so use TCP connect scanning there.
+        if os.geteuid() != 0:
+            tcp_args = f"-sT {common_args}"
+            tcp_cmd = f"nmap {tcp_args} {ip}"
+            await context.log.info(f"$ {tcp_cmd}", phase="portscan", host=ip)
+            try:
+                return await self._run_nmap(ip, tcp_args)
+            except asyncio.TimeoutError:
+                logger.warning("nmap TCP scan timed out for %s", ip)
+                return None
+
+        # Root can use SYN scanning and OS fingerprinting.
+        privileged_args = f"-sV -O --osscan-guess -T4 {port_arg} --host-timeout 60s"
+        syn_cmd = f"nmap -sS {privileged_args} {ip}"
         await context.log.info(f"$ {syn_cmd}", phase="portscan", host=ip)
         try:
-            return await self._run_nmap(ip, f"-sS {args}")
+            return await self._run_nmap(ip, f"-sS {privileged_args}")
         except asyncio.TimeoutError:
             logger.warning("nmap SYN scan timed out for %s", ip)
             return None
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("nmap SYN scan failed for %s, falling back to TCP: %s", ip, exc)
 
-        tcp_cmd = f"nmap -sT {args} {ip}"
+        tcp_args = f"-sT {common_args}"
+        tcp_cmd = f"nmap {tcp_args} {ip}"
         await context.log.info(f"$ {tcp_cmd} (TCP fallback)", phase="portscan", host=ip)
         try:
-            return await self._run_nmap(ip, f"-sT {args}")
+            return await self._run_nmap(ip, tcp_args)
         except asyncio.TimeoutError:
             logger.warning("nmap TCP scan timed out for %s", ip)
             return None
@@ -64,7 +79,7 @@ class NmapWrapper:
             nm.scan(hosts=ip, arguments=args)
         except nmap.PortScannerError as exc:
             logger.warning("nmap scan failed for %s: %s", ip, exc)
-            return None
+            raise
 
         if ip not in nm.all_hosts():
             return None

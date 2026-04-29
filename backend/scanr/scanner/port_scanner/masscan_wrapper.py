@@ -110,30 +110,41 @@ class MasscanWrapper:
             async def _stream_stderr() -> bytes:
                 chunks: list[bytes] = []
                 assert proc is not None
+                pending = ""
                 while True:
-                    line = await proc.stderr.readline()
-                    if not line:
+                    chunk = await proc.stderr.read(4096)
+                    if not chunk:
                         break
-                    chunks.append(line)
-                    text = line.decode(errors="replace").rstrip()
-                    if not text:
-                        continue
+                    chunks.append(chunk)
+                    pending += chunk.decode(errors="replace")
 
-                    m = _progress_re.search(text)
-                    if m:
-                        rate_kpps, pct, remaining, found = m.group(1), float(m.group(2)), m.group(3), m.group(4)
-                        # Emit progress every ~5% to give live feedback without spamming
-                        if pct - _last_pct_logged[0] >= 5.0 or pct >= 99.0:
-                            _last_pct_logged[0] = pct
-                            await context.log.info(
-                                f"masscan: {pct:.1f}% done — {found} open port(s) found so far, {remaining} remaining",
-                                phase="portscan",
+                    parts = re.split(r"[\r\n]+", pending)
+                    pending = parts.pop() if parts else ""
+                    for text in parts:
+                        text = text.strip()
+                        if not text:
+                            continue
+
+                        m = _progress_re.search(text)
+                        if m:
+                            _rate_kpps, pct, remaining, found = (
+                                m.group(1),
+                                float(m.group(2)),
+                                m.group(3),
+                                m.group(4),
                             )
-                    elif "Scanning" in text and "hosts" in text:
-                        # "Scanning 254 hosts [65535 ports/host]"
-                        await context.log.info(f"masscan: {text}", phase="portscan")
-                    else:
-                        await context.log.debug(f"masscan: {text}", phase="portscan")
+                            # Emit progress every ~5% to give live feedback without spamming.
+                            if pct - _last_pct_logged[0] >= 5.0 or pct >= 99.0:
+                                _last_pct_logged[0] = pct
+                                await context.log.info(
+                                    f"masscan: {pct:.1f}% done — {found} open port(s) found so far, {remaining} remaining",
+                                    phase="portscan",
+                                )
+                        elif "Scanning" in text and "hosts" in text:
+                            # "Scanning 254 hosts [65535 ports/host]"
+                            await context.log.info(f"masscan: {text}", phase="portscan")
+                        else:
+                            await context.log.debug(f"masscan: {text}", phase="portscan")
                 return b"".join(chunks)
 
             stderr_bytes, _ = await asyncio.wait_for(

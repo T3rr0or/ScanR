@@ -212,6 +212,14 @@ class ScanEngine:
 
         await self.db.commit()
 
+        if live_targets and context.hosts_scanned == 0:
+            msg = (
+                "Port scanning produced no host results after discovery found "
+                f"{len(live_targets)} live host(s); check nmap privileges and scanner logs"
+            )
+            await scan_log.error(msg, phase="engine")
+            raise RuntimeError(msg)
+
         # Credential chaining phase (opt-in via profile_json.credential_chain:true)
         if _pj.get("credential_chain", False) and getattr(context, "discovered_credentials", []):
             await scan_log.phase_start("chain", f"Credential chain: {len(context.discovered_credentials)} credential(s) to test")
