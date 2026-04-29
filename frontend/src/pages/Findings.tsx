@@ -52,6 +52,53 @@ function ComplianceTags({ raw }: { raw: string | null }) {
 }
 
 /* ─── FindingDrawer ────────────────────────────── */
+function FindingLifecycle({ findingId }: { findingId: string }) {
+  const { data: history = [] } = useQuery({
+    queryKey: ['finding-history', findingId],
+    queryFn: () => findingsApi.history(findingId),
+  })
+
+  if (history.length <= 1) return null
+
+  // Detect regression: resolved → open transition
+  const hasRegression = history.some((h, i) =>
+    i > 0 && history[i - 1].remediation_status === 'resolved' && h.remediation_status === 'open'
+  )
+
+  return (
+    <div style={{ marginBottom: 14 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+        <div className="label" style={{ margin: 0 }}>Appearance History</div>
+        {hasRegression && (
+          <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--sev-critical)', background: 'oklch(0.70 0.22 352 / 0.15)', padding: '2px 6px', borderRadius: 3, border: '1px solid oklch(0.70 0.22 352 / 0.3)' }}>
+            ⚠ Regression
+          </span>
+        )}
+      </div>
+      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+        {history.map((h, i) => {
+          const isRegressed = i > 0 && history[i - 1].remediation_status === 'resolved' && h.remediation_status === 'open'
+          const dotColor = h.false_positive ? 'var(--text-3)' : h.remediation_status === 'resolved' ? 'var(--ok)' : isRegressed ? 'var(--sev-critical)' : 'var(--accent)'
+          return (
+            <div key={h.finding_id} title={`${h.scan_name} — ${h.remediation_status}`}
+              style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3, minWidth: 44 }}>
+              <div style={{ width: 10, height: 10, borderRadius: '50%', background: dotColor, border: `2px solid ${dotColor}20` }} />
+              <div style={{ fontSize: 9, color: 'var(--text-3)', textAlign: 'center', maxWidth: 50, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {h.scan_date ? new Date(h.scan_date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '?'}
+              </div>
+            </div>
+          )
+        })}
+      </div>
+      {hasRegression && (
+        <p style={{ fontSize: 10.5, color: 'var(--sev-critical)', marginTop: 6 }}>
+          This vulnerability was previously resolved but has reappeared.
+        </p>
+      )}
+    </div>
+  )
+}
+
 function FindingDrawer({
   finding,
   onClose,
@@ -159,6 +206,12 @@ function FindingDrawer({
               <span className="mono" style={{ color: 'var(--text-1)', fontSize: 11 }}>{finding.port_number}/{finding.protocol}</span>
             </>
           )}
+          {finding.vpr_score != null && (
+            <>
+              <span style={{ color: 'var(--text-3)', fontWeight: 600, textTransform: 'uppercase', fontSize: 10, letterSpacing: '0.06em' }}>VPR</span>
+              <span className="mono" style={{ fontSize: 11, fontWeight: 700, color: finding.vpr_score >= 8 ? 'var(--sev-critical)' : finding.vpr_score >= 5 ? 'var(--sev-high)' : 'var(--sev-medium)' }}>{finding.vpr_score.toFixed(1)}</span>
+            </>
+          )}
           {finding.cvss_score != null && (
             <>
               <span style={{ color: 'var(--text-3)', fontWeight: 600, textTransform: 'uppercase', fontSize: 10, letterSpacing: '0.06em' }}>CVSS</span>
@@ -188,6 +241,9 @@ function FindingDrawer({
             </>
           )}
         </div>
+
+        {/* Lifecycle history */}
+        <FindingLifecycle findingId={finding.id} />
 
         {/* Description */}
         {finding.description && (
@@ -648,6 +704,7 @@ export default function Findings() {
                 <th>Title</th>
                 <th>Host</th>
                 <th>Port</th>
+                <th title="Vulnerability Priority Rating = CVSS × KEV multiplier">VPR</th>
                 <th>CVSS</th>
                 <th>Status</th>
                 <th>Tags</th>
@@ -704,6 +761,16 @@ export default function Findings() {
                     </td>
                     <td className="mono" style={{ fontSize: 11.5, color: 'var(--text-2)' }}>
                       {f.port_number != null ? `${f.port_number}/${f.protocol}` : '—'}
+                    </td>
+                    <td>
+                      {f.vpr_score != null ? (
+                        <span style={{
+                          fontFamily: 'var(--font-mono)', fontSize: 11,
+                          fontWeight: 700, padding: '2px 5px', borderRadius: 3,
+                          background: f.vpr_score >= 8 ? 'oklch(0.70 0.22 352 / 0.15)' : f.vpr_score >= 5 ? 'oklch(0.68 0.21 27 / 0.15)' : 'oklch(0.80 0.16 70 / 0.15)',
+                          color: f.vpr_score >= 8 ? 'var(--sev-critical)' : f.vpr_score >= 5 ? 'var(--sev-high)' : 'var(--sev-medium)',
+                        }}>{f.vpr_score.toFixed(1)}</span>
+                      ) : <span className="dimmer" style={{ fontSize: 11 }}>—</span>}
                     </td>
                     <td className="mono" style={{ fontSize: 11.5, color: 'var(--text-1)' }}>
                       {f.cvss_score != null ? f.cvss_score.toFixed(1) : '—'}

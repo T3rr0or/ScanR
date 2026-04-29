@@ -54,8 +54,49 @@ def _get_conn() -> sqlite3.Connection:
         )
     """)
     conn.execute("CREATE INDEX IF NOT EXISTS idx_cpe ON cves(cpe_matches)")
+    # Normalized product index — orders of magnitude faster than full-table scan
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS cpe_products (
+            cve_id TEXT NOT NULL,
+            product TEXT NOT NULL
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_cpe_products ON cpe_products(product)")
     conn.commit()
     return conn
+
+
+def _index_cpe_products(conn: sqlite3.Connection, cve_id: str, cpes: list[str]) -> None:
+    """Populate the cpe_products normalized index for a single CVE."""
+    seen: set[str] = set()
+    for cpe in cpes:
+        parts = cpe.split(":")
+        # cpe:2.3:a:vendor:product:version:...  (index 4 = product)
+        if len(parts) >= 5:
+            product = parts[4].lower()
+            if product and product != "*" and product not in seen:
+                seen.add(product)
+                conn.execute(
+                    "INSERT OR IGNORE INTO cpe_products VALUES (?, ?)",
+                    (cve_id, product),
+                )
+
+
+def _backfill_cpe_products(conn: sqlite3.Connection) -> None:
+    """One-time backfill of cpe_products from existing cves rows."""
+    count = conn.execute("SELECT COUNT(*) FROM cpe_products").fetchone()[0]
+    if count > 0:
+        return  # already populated
+    logger.info("Backfilling cpe_products index from existing CVE data…")
+    rows = conn.execute("SELECT cve_id, cpe_matches FROM cves WHERE cpe_matches IS NOT NULL").fetchall()
+    for cve_id, cpe_json in rows:
+        try:
+            cpes = json.loads(cpe_json) if cpe_json else []
+            _index_cpe_products(conn, cve_id, cpes)
+        except Exception:
+            continue
+    conn.commit()
+    logger.info("cpe_products backfill complete: %d rows", conn.execute("SELECT COUNT(*) FROM cpe_products").fetchone()[0])
 
 
 def download_feeds() -> None:
@@ -80,6 +121,7 @@ def download_feeds() -> None:
         except Exception as exc:
             logger.warning("Failed to process feed %s: %s", url, exc)
 
+    _backfill_cpe_products(conn)
     conn.close()
 
     # Fetch 2024+ CVEs via NVD 2.0 REST API (1.1 feeds are frozen at 2023-12-31)
@@ -180,6 +222,7 @@ def _index_nvd2_page(conn: sqlite3.Connection, vulnerabilities: list) -> None:
                 "INSERT OR REPLACE INTO cves VALUES (?, ?, ?, ?, ?, ?)",
                 (cve_id, desc, cvss_score, cvss_vector, severity, json.dumps(cpes)),
             )
+            _index_cpe_products(conn, cve_id, cpes)
         except Exception:
             continue
     conn.commit()
@@ -279,32 +322,45 @@ def _index_feed(conn: sqlite3.Connection, data: dict) -> None:
                 "INSERT OR REPLACE INTO cves VALUES (?, ?, ?, ?, ?, ?)",
                 (cve_id, desc, cvss_score, cvss_vector, severity, json.dumps(cpes)),
             )
+            _index_cpe_products(conn, cve_id, cpes)
         except Exception:
             continue
     conn.commit()
 
 
 def search_by_product(product: str, version: str) -> list[dict]:
-    """Find CVEs matching a product/version string."""
+    """Find CVEs matching a product/version string.
+
+    Uses the cpe_products index table for O(log n) lookup instead of
+    the previous O(n) full-table scan across 200k+ CVE rows.
+    """
     if not DB_PATH.exists():
         return []
-    conn = _get_conn()
     product_lower = product.lower()
-    rows = conn.execute(
-        "SELECT cve_id, description, cvss_score, cvss_vector, severity, cpe_matches FROM cves"
-    ).fetchall()
-    conn.close()
+    conn = _get_conn()
+    try:
+        # SQL-first: only fetch rows where product name matches
+        rows = conn.execute(
+            """
+            SELECT DISTINCT c.cve_id, c.description, c.cvss_score,
+                            c.cvss_vector, c.severity, c.cpe_matches
+            FROM cpe_products cp
+            JOIN cves c ON c.cve_id = cp.cve_id
+            WHERE cp.product LIKE ?
+            """,
+            (f"%{product_lower}%",),
+        ).fetchall()
+    finally:
+        conn.close()
 
     matches = []
     for cve_id, desc, score, vector, sev, cpe_json in rows:
         cpes = json.loads(cpe_json) if cpe_json else []
         for cpe in cpes:
             parts = cpe.split(":")
-            # cpe:2.3:a:vendor:product:version:...
             if len(parts) >= 5:
-                cpe_product = parts[4].lower()
                 cpe_version = parts[5] if len(parts) > 5 else "*"
-                if product_lower in cpe_product and (cpe_version == "*" or version in cpe_version):
+                if cpe_version == "*" or not version or version in cpe_version:
                     matches.append({
                         "cve_id": cve_id,
                         "description": desc,

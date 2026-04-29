@@ -223,3 +223,41 @@ async def open_critical_age(
             "max_days": round(max(ages), 1) if ages else 0.0,
         }
     return out
+
+
+@router.get("/remediations")
+async def remediation_groups(
+    limit: int = Query(100, ge=1, le=500),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Group open findings by remediation text — shows what to fix and how many findings each fix closes."""
+    result = await db.execute(
+        select(
+            Finding.remediation,
+            Finding.severity,
+            func.count(Finding.id).label("finding_count"),
+            func.count(Host.ip.distinct()).label("host_count"),
+        )
+        .join(Scan, Finding.scan_id == Scan.id)
+        .outerjoin(Host, Finding.host_id == Host.id)
+        .where(
+            Scan.user_id == current_user.id,
+            Finding.false_positive == False,
+            Finding.remediation_status == "open",
+            Finding.remediation.isnot(None),
+            Finding.remediation != "",
+        )
+        .group_by(Finding.remediation, Finding.severity)
+        .order_by(func.count(Finding.id).desc())
+        .limit(limit)
+    )
+    return [
+        {
+            "remediation": r.remediation,
+            "severity": r.severity,
+            "finding_count": r.finding_count,
+            "host_count": r.host_count or 0,
+        }
+        for r in result.all()
+    ]

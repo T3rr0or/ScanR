@@ -4,8 +4,9 @@ export interface Finding {
   id: string; scan_id: string; host_id: string | null; host_ip: string | null
   plugin_id: string; severity: string; title: string
   description: string | null; evidence: string | null
-  remediation: string | null; cvss_score: number | null
+  remediation: string | null; cvss_score: number | null; vpr_score: number | null
   cvss_vector: string | null; cve_ids: string | null
+  first_seen_scan_id: string | null; last_seen_scan_id: string | null
   port_number: number | null; protocol: string | null
   false_positive: boolean; analyst_notes: string | null
   triaged_at: string | null; triaged_by: string | null
@@ -24,4 +25,15 @@ export const findingsApi = {
     api.patch<Finding>(`/findings/${id}`, body).then(r => r.data),
   bulkUpdate: (ids: string[], body: { false_positive?: boolean; remediation_status?: string; analyst_notes?: string }) =>
     api.post<{ updated: number }>('/findings/bulk', { ids, ...body }).then(r => r.data),
+  history: (id: string) => api.get<FindingHistoryEntry[]>(`/findings/${id}/history`).then(r => r.data),
+}
+
+export interface FindingHistoryEntry {
+  finding_id: string
+  scan_id: string
+  scan_name: string
+  scan_date: string | null
+  remediation_status: string
+  false_positive: boolean
+  created_at: string
 }

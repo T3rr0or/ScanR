@@ -35,6 +35,7 @@ class Finding(Base, TimestampMixin):
 
     cvss_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     cvss_vector: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    vpr_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     cve_ids: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON list
 
     port_number: Mapped[int | None] = mapped_column(nullable=True)

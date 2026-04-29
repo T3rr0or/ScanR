@@ -4,7 +4,7 @@ import {
   type LucideIcon,
   LayoutDashboard, Scan, AlertTriangle, Puzzle, FileText, LogOut,
   Settings as SettingsIcon, LayoutTemplate, Clock, Bot, Key, List,
-  ArrowUpCircle, X, Menu,
+  ArrowUpCircle, X, Menu, Server, ShieldAlert,
 } from 'lucide-react'
 import { useAuthStore } from '@/store/auth'
 import api from '@/api/client'
@@ -20,21 +20,25 @@ import Agents from '@/pages/Agents'
 import Credentials from '@/pages/Credentials'
 import Wordlists from '@/pages/Wordlists'
 import ScanDetail from '@/pages/ScanDetail'
+import Assets from '@/pages/Assets'
+import Vulnerabilities from '@/pages/Vulnerabilities'
 import { Logo } from '@/components/Logo'
 
-type PageId = 'dashboard' | 'scans' | 'findings' | 'templates' | 'schedules' | 'agents' | 'credentials' | 'wordlists' | 'plugins' | 'reports' | 'settings'
+type PageId = 'dashboard' | 'scans' | 'findings' | 'assets' | 'vulnerabilities' | 'templates' | 'schedules' | 'agents' | 'credentials' | 'wordlists' | 'plugins' | 'reports' | 'settings'
 
 const NAV: { id: PageId; label: string; icon: LucideIcon }[] = [
-  { id: 'dashboard',   label: 'Dashboard',   icon: LayoutDashboard },
-  { id: 'scans',       label: 'Scans',       icon: Scan },
-  { id: 'findings',    label: 'Findings',    icon: AlertTriangle },
-  { id: 'templates',   label: 'Templates',   icon: LayoutTemplate },
-  { id: 'schedules',   label: 'Schedules',   icon: Clock },
-  { id: 'agents',      label: 'Agents',      icon: Bot },
-  { id: 'credentials', label: 'Credentials', icon: Key },
-  { id: 'wordlists',   label: 'Wordlists',   icon: List },
-  { id: 'plugins',     label: 'Plugins',     icon: Puzzle },
-  { id: 'reports',     label: 'Reports',     icon: FileText },
+  { id: 'dashboard',       label: 'Dashboard',       icon: LayoutDashboard },
+  { id: 'scans',           label: 'Scans',           icon: Scan },
+  { id: 'findings',        label: 'Findings',        icon: AlertTriangle },
+  { id: 'assets',          label: 'Assets',          icon: Server },
+  { id: 'vulnerabilities', label: 'Vulnerabilities', icon: ShieldAlert },
+  { id: 'templates',       label: 'Templates',       icon: LayoutTemplate },
+  { id: 'schedules',       label: 'Schedules',       icon: Clock },
+  { id: 'agents',          label: 'Agents',          icon: Bot },
+  { id: 'credentials',     label: 'Credentials',     icon: Key },
+  { id: 'wordlists',       label: 'Wordlists',       icon: List },
+  { id: 'plugins',         label: 'Plugins',         icon: Puzzle },
+  { id: 'reports',         label: 'Reports',         icon: FileText },
 ]
 
 // Primary nav shown in bottom bar on mobile (most used)
@@ -77,17 +81,19 @@ export default function Layout() {
   })
 
   const PageComponent = {
-    dashboard:   Dashboard,
-    scans:       Scans,
-    findings:    Findings,
-    plugins:     Plugins,
-    reports:     Reports,
-    settings:    SettingsPage,
-    templates:   Templates,
-    schedules:   Schedules,
-    agents:      Agents,
-    credentials: Credentials,
-    wordlists:   Wordlists,
+    dashboard:       Dashboard,
+    scans:           Scans,
+    findings:        Findings,
+    assets:          Assets,
+    vulnerabilities: Vulnerabilities,
+    plugins:         Plugins,
+    reports:         Reports,
+    settings:        SettingsPage,
+    templates:       Templates,
+    schedules:       Schedules,
+    agents:          Agents,
+    credentials:     Credentials,
+    wordlists:       Wordlists,
   }[page] ?? Dashboard
 
   const showBanner = versionData?.update_available && !bannerDismissed

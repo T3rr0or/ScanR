@@ -19,7 +19,10 @@ class FindingRead(BaseModel):
     references: str | None
     cvss_score: float | None
     cvss_vector: str | None
+    vpr_score: float | None = None
     cve_ids: str | None
+    first_seen_scan_id: str | None = None
+    last_seen_scan_id: str | None = None
     port_number: int | None
     protocol: str | None
     false_positive: bool

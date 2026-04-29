@@ -24,6 +24,19 @@ _SEVERITY_COLS = {
 }
 
 
+def _compute_vpr(cvss_score: float | None, cve_ids: list[str] | None) -> float | None:
+    """Vulnerability Priority Rating: CVSS × KEV multiplier, capped at 10."""
+    if cvss_score is None:
+        return None
+    try:
+        from scanr.plugins.cve.nvd_loader import get_kev_cve_ids
+        kev = get_kev_cve_ids()
+        is_kev = bool(cve_ids and any(c in kev for c in cve_ids))
+    except Exception:
+        is_kev = False
+    return round(min(cvss_score * (2.0 if is_kev else 1.0), 10.0), 2)
+
+
 class ResultCollector:
     """Thread-safe accumulator that flushes findings to the DB and updates scan stats."""
 
@@ -44,6 +57,7 @@ class ResultCollector:
             # across any previous scan for this user, and carry forward triage state.
             prior = await self._find_prior_triage(host_id, data)
 
+            cve_ids_list = data.cve_ids if data.cve_ids else None
             finding = Finding(
                 id=new_uuid(),
                 scan_id=self.scan_id,
@@ -57,7 +71,8 @@ class ResultCollector:
                 references=json.dumps(data.references) if data.references else None,
                 cvss_score=data.cvss_score,
                 cvss_vector=data.cvss_vector,
-                cve_ids=json.dumps(data.cve_ids) if data.cve_ids else None,
+                vpr_score=_compute_vpr(data.cvss_score, cve_ids_list),
+                cve_ids=json.dumps(cve_ids_list) if cve_ids_list else None,
                 port_number=data.port_number,
                 protocol=data.protocol,
                 compliance_tags=json.dumps(compliance_tags) if compliance_tags else None,
@@ -85,34 +100,7 @@ class ResultCollector:
             await self.db.flush()
             logger.debug("Finding recorded: %s [%s] on host %s", data.title, data.severity, host_id)
 
-    async def _find_prior_triage(self, host_id: str | None, data: "FindingData") -> "Finding | None":
-        """Look up the most recent triaged finding with the same canonical key."""
-        if not host_id:
-            return None
-        try:
-            from sqlalchemy import select
-            from scanr.models import Host
-            # Canonical key: plugin_id + host + port_number
-            result = await self.db.execute(
-                select(Finding)
-                .join(Host, Finding.host_id == Host.id)
-                .where(
-                    Finding.plugin_id == data.plugin_id,
-                    Finding.port_number == data.port_number,
-                    Finding.scan_id != self.scan_id,
-                    # Must have been triaged (not left at default open with no notes)
-                    (Finding.false_positive == True)
-                    | (Finding.remediation_status != "open")
-                    | (Finding.analyst_notes.isnot(None)),
-                )
-                .order_by(Finding.created_at.desc())
-                .limit(1)
-            )
-            return result.scalar_one_or_none()
-        except Exception:
-            return None
-
-            # Fire webhook for critical findings
+            # Fire webhook for critical findings (was dead code — fixed)
             if data.severity.value == "critical" and self._user_id:
                 try:
                     from scanr.core.webhook_dispatcher import dispatch
@@ -125,3 +113,28 @@ class ResultCollector:
                     }, self._user_id, self.db)
                 except Exception as exc:
                     logger.debug("Webhook dispatch error: %s", exc)
+
+    async def _find_prior_triage(self, host_id: str | None, data: "FindingData") -> "Finding | None":
+        """Look up the most recent triaged finding with the same canonical key."""
+        if not host_id:
+            return None
+        try:
+            from sqlalchemy import select
+            from scanr.models import Host
+            result = await self.db.execute(
+                select(Finding)
+                .join(Host, Finding.host_id == Host.id)
+                .where(
+                    Finding.plugin_id == data.plugin_id,
+                    Finding.port_number == data.port_number,
+                    Finding.scan_id != self.scan_id,
+                    (Finding.false_positive == True)
+                    | (Finding.remediation_status != "open")
+                    | (Finding.analyst_notes.isnot(None)),
+                )
+                .order_by(Finding.created_at.desc())
+                .limit(1)
+            )
+            return result.scalar_one_or_none()
+        except Exception:
+            return None
