@@ -573,6 +573,7 @@ function NewScanModal({
     const pj: Record<string, unknown> = { ...configToJson(profileConfig) }
     if (bruteForce.enabled) {
       pj.brute_force = {
+        enabled: true,
         credential_wordlist_id: bruteForce.credential_wordlist_id || null,
         username_wordlist_id: bruteForce.username_wordlist_id || null,
         password_wordlist_id: bruteForce.password_wordlist_id || null,
