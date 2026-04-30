@@ -47,9 +47,9 @@ _GCP_METADATA_URLS = [
     "http://metadata.google.internal/computeMetadata/v1/",
     "http://169.254.169.254/computeMetadata/v1/",
 ]
+# Require metadata-specific keys — NOT just "google" (too broad: matches Analytics/Fonts)
 _GCP_SIGNATURES = [
-    re.compile(r"project-id|instance-id|zone|service-accounts", re.I),
-    re.compile(r"google", re.I),
+    re.compile(r"project-id|instance-id|zone|service-accounts|computeMetadata", re.I),
 ]
 
 
