@@ -106,15 +106,6 @@ export default function Scans({ onOpenScan }: Props) {
     onError: _onErr,
   })
 
-  const createAndLaunchMut = useMutation({
-    mutationFn: async (body: ScanCreate) => {
-      const scan = await scansApi.create(body)
-      await scansApi.launch(scan.id)
-      return scan
-    },
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['scans'] }); setShowForm(false) },
-    onError: _onErr,
-  })
   const updateMut = useMutation({
     mutationFn: ({ id, body }: { id: string; body: ScanCreate }) =>
       scansApi.update(id, body),
@@ -183,8 +174,7 @@ export default function Scans({ onOpenScan }: Props) {
         <NewScanModal
           onClose={() => setShowForm(false)}
           onSaveAsDraft={body => createMut.mutate(body)}
-          onCreateAndLaunch={body => createAndLaunchMut.mutate(body)}
-          loading={createMut.isPending || createAndLaunchMut.isPending}
+          loading={createMut.isPending}
         />
       )}
 
@@ -199,7 +189,6 @@ export default function Scans({ onOpenScan }: Props) {
             initialScan={s}
             onClose={() => setEditScanId(null)}
             onSaveAsDraft={body => updateMut.mutate({ id: editScanId, body })}
-            onCreateAndLaunch={body => { updateMut.mutate({ id: editScanId, body }); launchMut.mutate(editScanId) }}
             loading={updateMut.isPending}
           />
         )
@@ -479,14 +468,12 @@ export default function Scans({ onOpenScan }: Props) {
 function NewScanModal({
   onClose,
   onSaveAsDraft,
-  onCreateAndLaunch,
   loading,
   editMode = false,
   initialScan,
 }: {
   onClose: () => void
   onSaveAsDraft: (body: ScanCreate) => void
-  onCreateAndLaunch: (body: ScanCreate) => void
   loading: boolean
   editMode?: boolean
   initialScan?: { id: string; name: string; targets?: string[]; profile_json?: string | null }
@@ -878,18 +865,11 @@ function NewScanModal({
         }}>
           <button className="btn" onClick={onClose}>Cancel</button>
           <button
-            className="btn"
+            className="btn btn-primary"
             onClick={() => canSubmit && onSaveAsDraft(buildPayload())}
             disabled={!canSubmit}
           >
-            <FileText size={12} /> {editMode ? 'Save changes' : 'Save as draft'}
-          </button>
-          <button
-            className="btn btn-primary"
-            onClick={() => canSubmit && onCreateAndLaunch(buildPayload())}
-            disabled={!canSubmit}
-          >
-            <Play size={11} /> {editMode ? 'Save & Launch' : 'Create & Launch'}
+            <FileText size={12} /> {editMode ? 'Save changes' : 'Create scan'}
           </button>
         </div>
       </div>
