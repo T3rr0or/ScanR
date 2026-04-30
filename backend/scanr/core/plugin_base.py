@@ -43,6 +43,7 @@ class FindingData:
     cve_ids: list[str] = field(default_factory=list)
     port_number: int | None = None
     protocol: str | None = None
+    peer_review_command: str | None = None
 
 
 class PluginBase(ABC):
