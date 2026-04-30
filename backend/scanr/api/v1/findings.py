@@ -238,11 +238,12 @@ async def finding_history(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_scope("findings:read")),
 ):
-    """All appearances of the same vulnerability (same plugin_id + host) ordered by date."""
+    """All appearances of the same vulnerability ordered by date."""
     from scanr.models import Scan as _Scan
     # Load target finding first to get its canonical key
     target_result = await db.execute(
-        select(Finding, _Scan.name.label("sname"))
+        select(Finding, Host.ip.label("host_ip"), _Scan.name.label("sname"))
+        .outerjoin(Host, Finding.host_id == Host.id)
         .join(_Scan, Finding.scan_id == _Scan.id)
         .where(Finding.id == finding_id, _Scan.user_id == current_user.id)
     )
@@ -250,14 +251,19 @@ async def finding_history(
     if not row:
         raise HTTPException(status_code=404, detail="Finding not found")
     target = row[0]
+    target_host_ip = row.host_ip
 
     history_result = await db.execute(
         select(Finding, _Scan.name.label("scan_name"), _Scan.finished_at.label("scan_date"))
+        .outerjoin(Host, Finding.host_id == Host.id)
         .join(_Scan, Finding.scan_id == _Scan.id)
         .where(
             _Scan.user_id == current_user.id,
             Finding.plugin_id == target.plugin_id,
-            Finding.host_id == target.host_id,
+            Finding.title == target.title,
+            Finding.port_number == target.port_number,
+            Finding.protocol == target.protocol,
+            Host.ip == target_host_ip,
         )
         .order_by(Finding.created_at.asc())
     )
