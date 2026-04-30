@@ -61,6 +61,7 @@ class XssDetectPlugin(PluginBase):
     category = PluginCategory.web
     severity = Severity.high
     ports = HTTP_PORTS
+    timeout = 180
 
     async def check(self, context: "ScanContext", host: "Host") -> list[FindingData]:
         findings = []
@@ -83,15 +84,15 @@ class XssDetectPlugin(PluginBase):
                 crawled = await crawl(base_url, client)
 
                 # Paths: crawled + form action paths + generic fallbacks
-                paths = list(dict.fromkeys(crawled.paths + crawled.form_paths + _FALLBACK_PATHS))
+                paths = list(dict.fromkeys(crawled.paths + crawled.form_paths + _FALLBACK_PATHS))[:8]
                 # Params: crawled GET params + form fields + fallback
                 params = list(dict.fromkeys(
                     crawled.get_params + crawled.form_fields + _FALLBACK_PARAMS
-                ))
+                ))[:12]
 
                 for path in paths:
                     for param in params:
-                        for payload in _PAYLOADS:
+                        for payload in _PAYLOADS[:3]:
                             url = f"{base_url}{path}?{param}={payload}"
                             try:
                                 resp = await client.get(url)

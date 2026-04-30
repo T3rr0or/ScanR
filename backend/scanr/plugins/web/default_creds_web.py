@@ -48,6 +48,7 @@ class DefaultCredsWebPlugin(PluginBase):
     category = PluginCategory.web
     severity = Severity.critical
     ports = HTTP_PORTS
+    timeout = 300
 
     async def check(self, context: "ScanContext", host: "Host") -> list[FindingData]:
         import json as _json

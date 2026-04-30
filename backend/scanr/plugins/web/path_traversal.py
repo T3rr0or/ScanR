@@ -44,6 +44,7 @@ class PathTraversalPlugin(PluginBase):
     category = PluginCategory.web
     severity = Severity.high
     ports = HTTP_PORTS
+    timeout = 180
 
     async def check(self, context: "ScanContext", host: "Host") -> list[FindingData]:
         findings = []
@@ -61,8 +62,8 @@ class PathTraversalPlugin(PluginBase):
         try:
             async with httpx.AsyncClient(verify=False, timeout=httpx.Timeout(3.0, connect=2.0), follow_redirects=True) as client:
                 crawled = await crawl(base_url, client)
-                paths = crawled.paths or ["/"]
-                params = list(dict.fromkeys(crawled.get_params + _LFI_PARAMS))
+                paths = (crawled.paths or ["/"])[:8]
+                params = list(dict.fromkeys(crawled.get_params + _LFI_PARAMS))[:12]
 
                 for payload in TRAVERSAL_PAYLOADS:
                     for path in paths:

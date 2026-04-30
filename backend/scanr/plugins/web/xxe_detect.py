@@ -57,6 +57,7 @@ class XxeDetectPlugin(PluginBase):
     category = PluginCategory.web
     severity = Severity.high
     ports = HTTP_PORTS
+    timeout = 180
 
     async def check(self, context: "ScanContext", host: "Host") -> list[FindingData]:
         import json as _j

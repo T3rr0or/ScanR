@@ -75,6 +75,7 @@ class SsrfDetectPlugin(PluginBase):
     category = PluginCategory.web
     severity = Severity.high
     ports = HTTP_PORTS
+    timeout = 180
 
     async def check(self, context: "ScanContext", host: "Host") -> list[FindingData]:
         findings = []
@@ -98,8 +99,8 @@ class SsrfDetectPlugin(PluginBase):
                 crawled = await crawl(base_url, client)
                 paths = list(dict.fromkeys(
                     crawled.paths + crawled.form_paths + _FALLBACK_PATHS
-                ))
-                params = list(dict.fromkeys(crawled.get_params + _SSRF_PARAMS))
+                ))[:8]
+                params = list(dict.fromkeys(crawled.get_params + _SSRF_PARAMS))[:12]
 
                 # Single-param: inject internal target, check for high-confidence signatures
                 async def probe_single(path: str, param: str, target: str) -> FindingData | None:
