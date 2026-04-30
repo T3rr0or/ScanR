@@ -385,6 +385,7 @@ class ScanEngine:
                 )
                 for f in findings:
                     await collector.add_finding(host.id, f)
+                    context.findings_count += 1
                     await context.log.finding(
                         f.title,
                         f.severity.value,

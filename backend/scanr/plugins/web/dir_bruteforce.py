@@ -134,6 +134,7 @@ class DirBruteforcePlugin(PluginBase):
     category = PluginCategory.web
     severity = Severity.info
     ports = HTTP_PORTS
+    timeout = 600  # large wordlist × many ports can legitimately take >60s
 
     async def check(self, context: "ScanContext", host: "Host") -> list[FindingData]:
         profile = getattr(context, "profile", "standard")

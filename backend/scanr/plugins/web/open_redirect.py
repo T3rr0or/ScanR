@@ -45,7 +45,7 @@ class OpenRedirectPlugin(PluginBase):
     async def _test_redirects(self, ip: str, port: int, scheme: str) -> FindingData | None:
         base = f"{scheme}://{ip}:{port}/"
         try:
-            async with httpx.AsyncClient(verify=False, timeout=5.0, follow_redirects=False) as client:
+            async with httpx.AsyncClient(verify=False, timeout=httpx.Timeout(3.0, connect=2.0), follow_redirects=False) as client:
                 for param in REDIRECT_PARAMS:
                     url = base + "?" + urlencode({param: CANARY})
                     try:

@@ -91,7 +91,7 @@ class SsrfDetectPlugin(PluginBase):
         sem = asyncio.Semaphore(10)
         try:
             async with httpx.AsyncClient(
-                verify=False, timeout=6.0, follow_redirects=True,
+                verify=False, timeout=httpx.Timeout(4.0, connect=2.0), follow_redirects=True,
                 headers={"User-Agent": "Mozilla/5.0 (compatible; ScanR/0.6)"},
             ) as client:
                 crawled = await crawl(base_url, client)
