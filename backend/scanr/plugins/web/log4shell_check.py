@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 import httpx
 
 from scanr.core.plugin_base import FindingData, PluginBase, PluginCategory, Severity
+from scanr.plugins.web._ports import is_web_port, web_scheme
 
 if TYPE_CHECKING:
     from scanr.core.context import ScanContext
@@ -65,9 +66,9 @@ class Log4ShellCheckPlugin(PluginBase):
     async def check(self, context: "ScanContext", host: "Host") -> list[FindingData]:
         findings = []
         for port in host.ports:
-            if port.number not in HTTP_PORTS or port.state != "open":
+            if not is_web_port(port):
                 continue
-            scheme = "https" if port.number in (443, 8443) else "http"
+            scheme = web_scheme(port)
             base_url = f"{scheme}://{host.ip}:{port.number}"
             result = await self._probe(base_url, port.number)
             if result:

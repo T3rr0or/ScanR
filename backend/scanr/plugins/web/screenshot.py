@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from scanr.core.plugin_base import FindingData, PluginBase, PluginCategory, Severity
+from scanr.plugins.web._ports import is_web_port, web_scheme
 
 if TYPE_CHECKING:
     from scanr.core.context import ScanContext
@@ -31,9 +32,6 @@ HTTP_PORTS = [80, 81, 443, 591, 593, 832, 981, 1010, 1311, 2082, 2087, 2095,
               8880, 8888, 8983, 9000, 9043, 9060, 9080, 9090, 9091, 9200,
               9443, 9800, 9981, 12443, 16080, 18091, 18092, 20720, 28017]
 
-HTTPS_PORTS = {443, 8443, 9443, 4993, 2096, 2087, 2083, 8834, 5108}
-
-
 class ScreenshotPlugin(PluginBase):
     id = "web.screenshot"
     name = "Web Screenshot"
@@ -45,7 +43,7 @@ class ScreenshotPlugin(PluginBase):
     async def check(self, context: "ScanContext", host: "Host") -> list[FindingData]:
         open_http = [
             p for p in host.ports
-            if p.number in HTTP_PORTS and p.state == "open"
+            if is_web_port(p)
         ]
         if not open_http:
             return []
@@ -91,7 +89,7 @@ class ScreenshotPlugin(PluginBase):
         return []  # screenshots stored in DB, no findings
 
     async def _capture(self, browser, host, port, screenshots_dir: Path, context: "ScanContext"):
-        scheme = "https" if port.number in HTTPS_PORTS else "http"
+        scheme = web_scheme(port)
         url = f"{scheme}://{host.ip}:{port.number}"
         out_path = screenshots_dir / f"{host.ip}_{port.number}.png"
 

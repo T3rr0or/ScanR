@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 import httpx
 
 from scanr.core.plugin_base import FindingData, PluginBase, PluginCategory, Severity
+from scanr.plugins.web._ports import is_web_port, web_scheme
 
 if TYPE_CHECKING:
     from scanr.core.context import ScanContext
@@ -149,9 +150,9 @@ class DirBruteforcePlugin(PluginBase):
         wordlist = self._pick_wordlist(profile)
         findings = []
         for port in host.ports:
-            if port.number not in HTTP_PORTS or port.state != "open":
+            if not is_web_port(port):
                 continue
-            scheme = "https" if port.number in (443, 8443) else "http"
+            scheme = web_scheme(port)
             port_findings = await self._scan(host.ip, port.number, scheme, wordlist)
             findings.extend(port_findings)
         return findings

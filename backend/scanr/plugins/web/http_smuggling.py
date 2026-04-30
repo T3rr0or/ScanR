@@ -18,6 +18,7 @@ import time
 from typing import TYPE_CHECKING
 
 from scanr.core.plugin_base import FindingData, PluginBase, PluginCategory, Severity
+from scanr.plugins.web._ports import is_web_port, web_scheme
 
 if TYPE_CHECKING:
     from scanr.core.context import ScanContext
@@ -50,7 +51,7 @@ class HttpSmugglingPlugin(PluginBase):
 
         findings = []
         for port in host.ports:
-            if port.number not in HTTP_PORTS or port.state != "open":
+            if not is_web_port(port):
                 continue
             tls = port.number in (443, 8443)
             result = await self._probe(host.ip, port.number, tls)

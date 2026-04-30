@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 import httpx
 
 from scanr.core.plugin_base import FindingData, PluginBase, PluginCategory, Severity
+from scanr.plugins.web._ports import is_web_port, web_scheme
 
 if TYPE_CHECKING:
     from scanr.core.context import ScanContext
@@ -78,9 +79,9 @@ class DefaultCredsWebPlugin(PluginBase):
         creds_to_try = custom_creds if custom_creds is not None else DEFAULT_CREDS
 
         for port in host.ports:
-            if port.number not in HTTP_PORTS or port.state != "open":
+            if not is_web_port(port):
                 continue
-            scheme = "https" if port.number in (443, 8443) else "http"
+            scheme = web_scheme(port)
             delay_s = cfg.get("delay_ms", 500) / 1000.0
             found = await self._try_default_creds(host.ip, port.number, scheme, creds_to_try, delay_s)
             for username, password, path in found:

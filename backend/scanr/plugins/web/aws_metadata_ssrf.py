@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 import httpx
 
 from scanr.core.plugin_base import FindingData, PluginBase, PluginCategory, Severity
+from scanr.plugins.web._ports import is_web_port, web_scheme
 
 if TYPE_CHECKING:
     from scanr.core.context import ScanContext
@@ -75,7 +76,7 @@ class AwsMetadataSsrfPlugin(PluginBase):
 
     async def check(self, context: "ScanContext", host: "Host") -> list[FindingData]:
         findings = []
-        web_ports = [p for p in host.ports if p.number in _HTTP_PORTS and p.state == "open"]
+        web_ports = [p for p in host.ports if is_web_port(p)]
         if not web_ports:
             return []
 
@@ -93,7 +94,7 @@ class AwsMetadataSsrfPlugin(PluginBase):
 
         # Check 2: SSRF via web app
         for port in web_ports:
-            scheme = "https" if port.number in (443, 8443) else "http"
+            scheme = web_scheme(port)
             base_url = f"{scheme}://{host.ip}:{port.number}"
             result = await self._check_ssrf(base_url, port.number)
             if result:

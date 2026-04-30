@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING
 import httpx
 
 from scanr.core.plugin_base import FindingData, PluginBase, PluginCategory, Severity
+from scanr.plugins.web._ports import is_web_port, web_scheme
 from scanr.plugins.web._crawler import crawl
 from scanr.plugins.web._http_evidence import format_from_httpx
 
@@ -53,9 +54,9 @@ class SstiDetectPlugin(PluginBase):
     async def check(self, context: "ScanContext", host: "Host") -> list[FindingData]:
         findings = []
         for port in host.ports:
-            if port.number not in HTTP_PORTS or port.state != "open":
+            if not is_web_port(port):
                 continue
-            scheme = "https" if port.number in (443, 8443) else "http"
+            scheme = web_scheme(port)
             base_url = f"{scheme}://{host.ip}:{port.number}"
             result = await self._test_ssti(base_url, port.number, host.ip)
             if result:

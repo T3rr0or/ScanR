@@ -8,12 +8,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from scanr.core.context import ScanContext
+from scanr.core.plugin_base import PluginCategory
 from scanr.core.plugin_manager import get_enabled_plugins
 from scanr.core.rate_limiter import RateLimiter
 from scanr.core.result_collector import ResultCollector
 from scanr.core.scan_logger import ScanLogger
 from scanr.models import Host, Plugin, Scan, Target
 from scanr.models.base import new_uuid
+from scanr.plugins.web._ports import is_web_port_data
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +30,16 @@ def _plugin_allowed(plugin_id: str, filters: list[str]) -> bool:
         if f == plugin_id:
             return True
     return False
+
+
+def _plugin_applies_to_host_data(plugin, ports: list[dict]) -> bool:
+    if plugin.ports is None:
+        return True
+    if getattr(plugin, "category", None) == PluginCategory.web and any(
+        is_web_port_data(p) for p in ports
+    ):
+        return True
+    return any(p["number"] in plugin.ports and p["state"] == "open" for p in ports)
 
 
 class ScanEngine:
@@ -375,12 +387,10 @@ class ScanEngine:
                 host = host_result.scalar_one()
 
             # Phase 4: Run applicable plugins concurrently
+            host_ports = host_data.get("ports", [])
             applicable = [
                 pl for pl in plugins
-                if pl.ports is None or any(
-                    p["number"] in pl.ports and p["state"] == "open"
-                    for p in host_data.get("ports", [])
-                )
+                if _plugin_applies_to_host_data(pl, host_ports)
             ]
 
             if applicable:
