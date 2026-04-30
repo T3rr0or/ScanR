@@ -72,7 +72,7 @@ export default function ScanDetail({ scanId, onBack }: Props) {
 
   const { data: findings = [] } = useQuery({
     queryKey: ['findings', scanId],
-    queryFn: () => findingsApi.list({ scan_id: scanId }),
+    queryFn: () => findingsApi.list({ scan_id: scanId, limit: 500 }),
     refetchInterval: scan?.status === 'running' ? 10_000 : false,
     enabled: ['completed', 'failed', 'running'].includes(scan?.status ?? ''),
   })
@@ -167,7 +167,7 @@ export default function ScanDetail({ scanId, onBack }: Props) {
       {/* Tabs */}
       <div className="tabs">
         <TabBtn active={tab === 'console'} onClick={() => setTab('console')} icon={<Terminal size={12}/>} label="Console" count={events.length || undefined} liveColor={isActive ? 'var(--accent-2)' : undefined} />
-        <TabBtn active={tab === 'findings'} onClick={() => setTab('findings')} icon={<AlertTriangle size={12}/>} label="Findings" count={findings.length || undefined} />
+        <TabBtn active={tab === 'findings'} onClick={() => setTab('findings')} icon={<AlertTriangle size={12}/>} label="Findings" count={totalFindings || undefined} />
         <TabBtn active={tab === 'hosts'} onClick={() => setTab('hosts')} icon={<Server size={12}/>} label="Hosts" count={hosts.length || undefined} />
         <TabBtn active={tab === 'topology'} onClick={() => setTab('topology')} icon={<Network size={12}/>} label="Topology" />
         <TabBtn active={tab === 'screenshots'} onClick={() => setTab('screenshots')} icon={<Camera size={12}/>} label="Screenshots" />

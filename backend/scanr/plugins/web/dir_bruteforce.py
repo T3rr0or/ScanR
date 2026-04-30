@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import secrets
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -127,6 +128,13 @@ MANAGEMENT_INDICATORS = [
 ]
 
 
+def _matches_baseline(status: int, size: int, baselines: list[tuple[int, int]]) -> bool:
+    for base_status, base_size in baselines:
+        if status == base_status and abs(size - base_size) <= max(32, int(base_size * 0.03)):
+            return True
+    return False
+
+
 class DirBruteforcePlugin(PluginBase):
     id = "web.dir_bruteforce"
     name = "Directory Bruteforce"
@@ -173,12 +181,23 @@ class DirBruteforcePlugin(PluginBase):
             verify=False, timeout=4.0, follow_redirects=False,
             limits=httpx.Limits(max_connections=30, max_keepalive_connections=20),
         ) as client:
+            baselines: list[tuple[int, int]] = []
+            for _ in range(3):
+                random_path = f"scanr-missing-{secrets.token_hex(8)}"
+                try:
+                    resp = await client.get(base + random_path)
+                    baselines.append((resp.status_code, len(resp.content)))
+                except Exception:
+                    pass
+
             async def probe(path: str) -> None:
                 url = base + path.lstrip("/")
                 try:
                     async with sem:
                         resp = await client.get(url)
                         if resp.status_code in (200, 201, 204, 301, 302, 307, 308, 401, 403):
+                            if _matches_baseline(resp.status_code, len(resp.content), baselines):
+                                return
                             found.append((path, resp.status_code, len(resp.content)))
                 except Exception:
                     pass

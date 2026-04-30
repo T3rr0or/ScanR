@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+from urllib.parse import quote
 from typing import TYPE_CHECKING
 
 import httpx
@@ -51,6 +52,17 @@ _GCP_METADATA_URLS = [
 _GCP_SIGNATURES = [
     re.compile(r"project-id|instance-id|zone|service-accounts|computeMetadata", re.I),
 ]
+
+
+def _has_metadata_response(resp: httpx.Response, probe_url: str, signatures: list[re.Pattern[str]]) -> bool:
+    content_type = resp.headers.get("content-type", "").lower()
+    text = resp.text
+    if "text/html" in content_type or "<html" in text[:500].lower() or "<!doctype html" in text[:500].lower():
+        return False
+
+    # Avoid treating a reflected query string as successful metadata access.
+    stripped = text.replace(probe_url, "").replace(quote(probe_url, safe=""), "")
+    return any(sig.search(stripped) for sig in signatures)
 
 
 class AwsMetadataSsrfPlugin(PluginBase):
@@ -225,37 +237,35 @@ class AwsMetadataSsrfPlugin(PluginBase):
                     for url in urls_to_try:
                         try:
                             resp = await client.get(url)
-                            if resp.status_code == 200:
-                                for sig in _META_SIGNATURES:
-                                    if sig.search(resp.text):
-                                        return FindingData(
-                                            plugin_id=self.id,
-                                            severity=Severity.critical,
-                                            title="SSRF to AWS Metadata Service — Cloud Credentials Exposed",
-                                            description=(
-                                                f"The web application at {base_url} is vulnerable to Server-Side "
-                                                f"Request Forgery and fetches the AWS instance metadata endpoint "
-                                                f"when the {param!r} parameter is set to "
-                                                "http://169.254.169.254/. An attacker can steal IAM role "
-                                                "credentials, user-data, and account information."
-                                            ),
-                                            evidence=(
-                                                f"Request: GET {url}\n"
-                                                f"Response {resp.status_code}: {resp.text[:400]}"
-                                            ),
-                                            remediation=(
-                                                "Validate and whitelist allowed URL schemes and destinations. "
-                                                "Block requests to 169.254.169.254 and RFC1918 ranges from "
-                                                "application servers. "
-                                                "Enforce IMDSv2 (hop limit 1) to prevent SSRF from reaching IMDS."
-                                            ),
-                                            references=[
-                                                "https://owasp.org/www-community/attacks/Server_Side_Request_Forgery",
-                                                "https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/configuring-instance-metadata-service.html",
-                                            ],
-                                            port_number=port,
-                                            protocol="tcp",
-                                        )
+                            if resp.status_code == 200 and _has_metadata_response(resp, _METADATA_URL, _META_SIGNATURES):
+                                return FindingData(
+                                    plugin_id=self.id,
+                                    severity=Severity.critical,
+                                    title="SSRF to AWS Metadata Service — Cloud Credentials Exposed",
+                                    description=(
+                                        f"The web application at {base_url} is vulnerable to Server-Side "
+                                        f"Request Forgery and fetches the AWS instance metadata endpoint "
+                                        f"when the {param!r} parameter is set to "
+                                        "http://169.254.169.254/. An attacker can steal IAM role "
+                                        "credentials, user-data, and account information."
+                                    ),
+                                    evidence=(
+                                        f"Request: GET {url}\n"
+                                        f"Response {resp.status_code}: {resp.text[:400]}"
+                                    ),
+                                    remediation=(
+                                        "Validate and whitelist allowed URL schemes and destinations. "
+                                        "Block requests to 169.254.169.254 and RFC1918 ranges from "
+                                        "application servers. "
+                                        "Enforce IMDSv2 (hop limit 1) to prevent SSRF from reaching IMDS."
+                                    ),
+                                    references=[
+                                        "https://owasp.org/www-community/attacks/Server_Side_Request_Forgery",
+                                        "https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/configuring-instance-metadata-service.html",
+                                    ],
+                                    port_number=port,
+                                    protocol="tcp",
+                                )
                         except Exception:
                             pass
                 # Also probe Azure and GCP metadata via SSRF
@@ -266,7 +276,7 @@ class AwsMetadataSsrfPlugin(PluginBase):
                     for param in _URL_PARAMS[:5]:
                         try:
                             resp = await client.get(f"{base_url}/?{param}={probe_url}")
-                            if resp.status_code == 200 and any(sig.search(resp.text) for sig in sigs):
+                            if resp.status_code == 200 and _has_metadata_response(resp, probe_url, sigs):
                                 return FindingData(
                                     plugin_id=self.id,
                                     severity=Severity.critical,

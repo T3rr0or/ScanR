@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import secrets
 from typing import TYPE_CHECKING
 
 import httpx
@@ -116,6 +117,13 @@ SENSITIVE_PATHS = [
 ]
 
 
+def _matches_baseline(status_code: int, body_size: int, baselines: list[tuple[int, int]]) -> bool:
+    for base_status, base_size in baselines:
+        if status_code == base_status and abs(body_size - base_size) <= max(32, int(base_size * 0.03)):
+            return True
+    return False
+
+
 class SensitiveFilesPlugin(PluginBase):
     id = "web.sensitive_files"
     name = "Sensitive File Exposure"
@@ -138,11 +146,22 @@ class SensitiveFilesPlugin(PluginBase):
         results = []
         try:
             async with httpx.AsyncClient(verify=False, timeout=5.0, follow_redirects=False) as client:
+                baselines: list[tuple[int, int]] = []
+                for _ in range(2):
+                    try:
+                        missing = f"{scheme}://{ip}:{port}/scanr-missing-{secrets.token_hex(8)}"
+                        resp = await client.get(missing)
+                        baselines.append((resp.status_code, len(resp.content)))
+                    except Exception:
+                        pass
+
                 for path, signature, sev, title, desc, remediation in SENSITIVE_PATHS:
                     url = f"{scheme}://{ip}:{port}{path}"
                     try:
                         resp = await client.get(url)
                         if resp.status_code not in (200, 206):
+                            continue
+                        if _matches_baseline(resp.status_code, len(resp.content), baselines):
                             continue
                         if sev == Severity.info and resp.status_code == 200:
                             # Just record security.txt presence
