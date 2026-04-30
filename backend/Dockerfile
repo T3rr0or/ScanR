@@ -36,6 +36,11 @@ RUN wget -q https://github.com/projectdiscovery/nuclei/releases/download/v3.3.9/
 
 WORKDIR /app
 
+# Keep Playwright browsers in a system path shared by build-time root and the
+# runtime scanr user. Without this, runtime resolves browsers under /app/.cache
+# while the image build may install them under root's cache.
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+
 # Install Python deps first (cached layer)
 COPY pyproject.toml .
 RUN pip install --no-cache-dir -e .
@@ -56,7 +61,7 @@ COPY docker-entrypoint.sh /usr/local/bin/scanr-entrypoint
 # Non-root user — grant nmap/masscan raw socket access via file capabilities
 # so the worker can run scans without NET_ADMIN or running as root.
 RUN groupadd -r scanr && useradd -r -g scanr -d /app -s /bin/false scanr \
-    && chown -R scanr:scanr /app \
+    && chown -R scanr:scanr /app /ms-playwright \
     && chmod +x /usr/local/bin/scanr-entrypoint \
     && setcap cap_net_raw+ep /usr/bin/nmap \
     && (setcap cap_net_raw+ep /usr/bin/masscan || true)

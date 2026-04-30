@@ -63,17 +63,24 @@ class ScreenshotPlugin(PluginBase):
         screenshots_dir.mkdir(parents=True, exist_ok=True)
 
         async with async_playwright() as pw:
-            browser = await pw.chromium.launch(
-                args=[
-                    # --no-sandbox required when running as non-root in a container.
-                    # Sandbox requires SYS_ADMIN cap or user namespaces (unavailable here).
-                    "--no-sandbox",
-                    "--disable-setuid-sandbox",
-                    "--disable-dev-shm-usage",
-                    "--disable-gpu",
-                ],
-                headless=True,
-            )
+            try:
+                browser = await pw.chromium.launch(
+                    args=[
+                        # --no-sandbox required when running as non-root in a container.
+                        # Sandbox requires SYS_ADMIN cap or user namespaces (unavailable here).
+                        "--no-sandbox",
+                        "--disable-setuid-sandbox",
+                        "--disable-dev-shm-usage",
+                        "--disable-gpu",
+                    ],
+                    headless=True,
+                )
+            except Exception as exc:
+                await context.log.warn(
+                    f"playwright chromium unavailable - screenshot plugin skipped: {exc}",
+                    phase="plugin",
+                )
+                return []
             tasks = [
                 self._capture(browser, host, port, screenshots_dir, context)
                 for port in open_http
@@ -165,8 +172,9 @@ async def _save_screenshot(*, context, host, port_number, url,
         content_type=content_type,
         error=error,
     )
-    context.db.add(shot)
-    await context.db.flush()
+    async with context.db_lock:
+        context.db.add(shot)
+        await context.db.flush()
 
 
 def _screenshots_dir(scan_id: str) -> Path:
