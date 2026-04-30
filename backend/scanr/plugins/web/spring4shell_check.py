@@ -167,7 +167,21 @@ class Spring4ShellCheckPlugin(PluginBase):
         # /actuator/heapdump — CRITICAL: heap dump contains full JVM memory including secrets
         try:
             resp = await client.get(f"{base_url}/actuator/heapdump", timeout=5.0)
-            if resp.status_code == 200 and len(resp.content) > 1000:
+            content_type = resp.headers.get("content-type", "").lower()
+            body_start = resp.content[:32].lstrip()
+            looks_like_heapdump = (
+                not resp.history
+                and resp.status_code == 200
+                and len(resp.content) > 1000
+                and not body_start.startswith((b"<!doctype html", b"<html"))
+                and (
+                    resp.content.startswith(b"JAVA PROFILE")
+                    or "application/octet-stream" in content_type
+                    or "application/x-hprof" in content_type
+                    or "application/vnd.spring-boot.actuator" in content_type
+                )
+            )
+            if looks_like_heapdump:
                 findings.append(FindingData(
                     plugin_id=self.id,
                     severity=Severity.critical,

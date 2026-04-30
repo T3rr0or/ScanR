@@ -182,8 +182,14 @@ class DirBruteforcePlugin(PluginBase):
             limits=httpx.Limits(max_connections=30, max_keepalive_connections=20),
         ) as client:
             baselines: list[tuple[int, int]] = []
-            for _ in range(3):
-                random_path = f"scanr-missing-{secrets.token_hex(8)}"
+            random_token = secrets.token_hex(8)
+            baseline_paths = [
+                f"scanr-missing-{random_token}",
+                f".git/scanr-missing-{random_token}",
+                f".well-known/scanr-missing-{random_token}",
+                f"admin/scanr-missing-{random_token}",
+            ]
+            for random_path in baseline_paths:
                 try:
                     resp = await client.get(base + random_path)
                     baselines.append((resp.status_code, len(resp.content)))
