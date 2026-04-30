@@ -40,12 +40,19 @@ def _compute_vpr(cvss_score: float | None, cve_ids: list[str] | None) -> float |
 class ResultCollector:
     """Thread-safe accumulator that flushes findings to the DB and updates scan stats."""
 
-    def __init__(self, scan_id: str, db: AsyncSession, scan_log=None, user_id: str | None = None):
+    def __init__(
+        self,
+        scan_id: str,
+        db: AsyncSession,
+        scan_log=None,
+        user_id: str | None = None,
+        db_lock: asyncio.Lock | None = None,
+    ):
         self.scan_id = scan_id
         self.db = db
         self._scan_log = scan_log
         self._user_id = user_id
-        self._lock = asyncio.Lock()
+        self._lock = db_lock or asyncio.Lock()
         self._cached_scan: "Scan | None" = None
 
     async def add_finding(self, host_id: str | None, data: FindingData) -> None:

@@ -39,6 +39,10 @@ class ScanContext:
     # Wordlist id → file path, populated by engine before plugins run
     _wordlist_paths: dict = field(default_factory=dict)
 
+    # AsyncSession is not safe for concurrent task use. The engine scans hosts
+    # and plugins concurrently, so DB reads/writes must share this lock.
+    db_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+
     def __post_init__(self) -> None:
         # Ensure logger has the correct scan_id even if default_factory ran first
         if not self.log.scan_id:

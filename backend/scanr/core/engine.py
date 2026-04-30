@@ -141,7 +141,7 @@ class ScanEngine:
             for wl in wl_result.scalars().all():
                 context._wordlist_paths[wl.id] = wl.file_path
 
-        collector = ResultCollector(self.scan_id, self.db, scan_log, user_id=scan.user_id)
+        collector = ResultCollector(self.scan_id, self.db, scan_log, user_id=scan.user_id, db_lock=context.db_lock)
 
         # Load enabled plugins from DB
         plugin_result = await self.db.execute(select(Plugin).where(Plugin.enabled == True))
@@ -310,52 +310,53 @@ class ScanEngine:
             # doesn't corrupt the outer transaction.
             from scanr.models import Port, Service
             try:
-                async with self.db.begin_nested():
-                    host = Host(
-                        id=new_uuid(),
-                        scan_id=self.scan_id,
-                        ip=ip,
-                        hostname=host_data.get("hostname"),
-                        mac_address=host_data.get("mac"),
-                        os_name=host_data.get("os_name"),
-                        os_accuracy=host_data.get("os_accuracy"),
-                        status="up",
-                    )
-                    self.db.add(host)
-                    await self.db.flush()
-
-                    for p in host_data.get("ports", []):
-                        port = Port(
+                async with context.db_lock:
+                    async with self.db.begin_nested():
+                        host = Host(
                             id=new_uuid(),
-                            host_id=host.id,
-                            number=p["number"],
-                            protocol=p["protocol"],
-                            state=p["state"],
-                            reason=p.get("reason"),
-                            banner=p.get("banner"),
+                            scan_id=self.scan_id,
+                            ip=ip,
+                            hostname=host_data.get("hostname"),
+                            mac_address=host_data.get("mac"),
+                            os_name=host_data.get("os_name"),
+                            os_accuracy=host_data.get("os_accuracy"),
+                            status="up",
                         )
-                        self.db.add(port)
+                        self.db.add(host)
                         await self.db.flush()
 
-                        if p.get("service"):
-                            svc = p["service"]
-                            service = Service(
+                        for p in host_data.get("ports", []):
+                            port = Port(
                                 id=new_uuid(),
-                                port_id=port.id,
-                                name=svc.get("name"),
-                                product=svc.get("product"),
-                                version=svc.get("version"),
-                                extra_info=svc.get("extra_info"),
-                                cpe=svc.get("cpe"),
-                                tunnel=svc.get("tunnel"),
+                                host_id=host.id,
+                                number=p["number"],
+                                protocol=p["protocol"],
+                                state=p["state"],
+                                reason=p.get("reason"),
+                                banner=p.get("banner"),
                             )
-                            self.db.add(service)
-                            if svc.get("product"):
-                                await context.log.debug(
-                                    f"{ip}:{p['number']} — {svc.get('product','')} {svc.get('version','')}".strip(),
-                                    phase="fingerprint",
-                                    host=ip,
+                            self.db.add(port)
+                            await self.db.flush()
+
+                            if p.get("service"):
+                                svc = p["service"]
+                                service = Service(
+                                    id=new_uuid(),
+                                    port_id=port.id,
+                                    name=svc.get("name"),
+                                    product=svc.get("product"),
+                                    version=svc.get("version"),
+                                    extra_info=svc.get("extra_info"),
+                                    cpe=svc.get("cpe"),
+                                    tunnel=svc.get("tunnel"),
                                 )
+                                self.db.add(service)
+                                if svc.get("product"):
+                                    await context.log.debug(
+                                        f"{ip}:{p['number']} — {svc.get('product','')} {svc.get('version','')}".strip(),
+                                        phase="fingerprint",
+                                        host=ip,
+                                    )
             except Exception as exc:
                 logger.error("Failed to persist host %s: %s", ip, exc, exc_info=True)
                 await context.log.error(f"Failed to persist host {ip}: {exc}", phase="engine", host=ip)
@@ -365,12 +366,13 @@ class ScanEngine:
             # safely access host.ports without triggering lazy-load (which
             # raises MissingGreenlet in async SQLAlchemy).
             from scanr.models import Port as _Port
-            host_result = await self.db.execute(
-                select(Host)
-                .where(Host.id == host.id)
-                .options(selectinload(Host.ports).selectinload(_Port.service))
-            )
-            host = host_result.scalar_one()
+            async with context.db_lock:
+                host_result = await self.db.execute(
+                    select(Host)
+                    .where(Host.id == host.id)
+                    .options(selectinload(Host.ports).selectinload(_Port.service))
+                )
+                host = host_result.scalar_one()
 
             # Phase 4: Run applicable plugins concurrently
             applicable = [
@@ -394,7 +396,8 @@ class ScanEngine:
             ]
             await asyncio.gather(*plugin_tasks, return_exceptions=True)
 
-            await self.db.flush()
+            async with context.db_lock:
+                await self.db.flush()
             context.hosts_scanned += 1
 
     async def _run_plugin(self, plugin, context, host, host_data, collector, sem):

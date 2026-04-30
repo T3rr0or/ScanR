@@ -185,28 +185,81 @@ class DirBruteforcePlugin(PluginBase):
 
             await asyncio.gather(*[probe(p) for p in wordlist])
 
-        findings = []
+        findings: list[FindingData] = []
+        management_paths: list[tuple[str, int, int]] = []
+        informational_paths: list[tuple[str, int, int]] = []
         for path, status, size in found:
-            is_mgmt = any(ind in path for ind in MANAGEMENT_INDICATORS)
-            sev = Severity.medium if is_mgmt else Severity.info
-            auth_note = ""
-            if status in (401, 403):
-                sev = Severity.info
-                auth_note = " (requires authentication)"
+            lowered = path.lower()
+            is_mgmt = any(ind in lowered for ind in MANAGEMENT_INDICATORS)
+            if is_mgmt:
+                management_paths.append((path, status, size))
+            else:
+                informational_paths.append((path, status, size))
 
+        for path, status, size in management_paths[:50]:
+            auth_note = " (requires authentication)" if status in (401, 403) else ""
             findings.append(FindingData(
                 plugin_id=self.id,
-                severity=sev,
-                title=f"Path Found: /{path}" + (" (Management Interface)" if is_mgmt else ""),
+                severity=Severity.medium,
+                title=f"Management Path Found: /{path}",
                 description=(
                     f"The path '/{path}' exists on the web server{auth_note}. "
-                    + ("This appears to be a management or admin interface." if is_mgmt else "")
+                    "This appears to be a management or admin interface."
                 ),
-                evidence=f"GET {base}{path} → HTTP {status} ({size} bytes)",
+                evidence=f"GET {base}{path} -> HTTP {status} ({size} bytes)",
                 remediation=(
                     "Review whether this path should be publicly accessible. "
                     "Restrict management interfaces to internal networks or require authentication."
-                ) if is_mgmt else "Verify whether this resource should be publicly accessible.",
+                ),
+                port_number=port,
+                protocol="tcp",
+            ))
+
+        if len(management_paths) > 50:
+            omitted = len(management_paths) - 50
+            sample = "\n".join(
+                f"GET {base}{path} -> HTTP {status} ({size} bytes)"
+                for path, status, size in management_paths[50:75]
+            )
+            findings.append(FindingData(
+                plugin_id=self.id,
+                severity=Severity.info,
+                title=f"Additional Management Paths Discovered ({omitted} omitted)",
+                description=(
+                    "Directory enumeration found more management-like paths than the report displays "
+                    "as individual findings."
+                ),
+                evidence=sample,
+                remediation=(
+                    "Review the discovered paths and restrict management interfaces to internal "
+                    "networks or authenticated users."
+                ),
+                port_number=port,
+                protocol="tcp",
+            ))
+
+        if informational_paths:
+            sample_paths = informational_paths[:50]
+            omitted = len(informational_paths) - len(sample_paths)
+            evidence = "\n".join(
+                f"GET {base}{path} -> HTTP {status} ({size} bytes)"
+                for path, status, size in sample_paths
+            )
+            if omitted:
+                evidence += f"\n... {omitted} additional paths omitted"
+            findings.append(FindingData(
+                plugin_id=self.id,
+                severity=Severity.info,
+                title=f"Web Paths Discovered ({len(informational_paths)} paths)",
+                description=(
+                    "Directory enumeration found accessible HTTP paths. This is informational; "
+                    "review the sample for unexpected exposure."
+                ),
+                evidence=evidence,
+                remediation=(
+                    "Verify whether exposed resources should be public. Prioritize paths containing "
+                    "credentials, backups, admin panels, configuration files, or internal data."
+                ),
                 port_number=port,
                 protocol="tcp",
             ))
