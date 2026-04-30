@@ -63,6 +63,9 @@ class AwsMetadataSsrfPlugin(PluginBase):
 
     async def check(self, context: "ScanContext", host: "Host") -> list[FindingData]:
         findings = []
+        web_ports = [p for p in host.ports if p.number in _HTTP_PORTS and p.state == "open"]
+        if not web_ports:
+            return []
 
         # Check 1: Direct metadata access — all cloud providers, once per scan
         for cache_attr, check_fn in [
@@ -77,9 +80,7 @@ class AwsMetadataSsrfPlugin(PluginBase):
                     findings.append(direct)
 
         # Check 2: SSRF via web app
-        for port in host.ports:
-            if port.number not in _HTTP_PORTS or port.state != "open":
-                continue
+        for port in web_ports:
             scheme = "https" if port.number in (443, 8443) else "http"
             base_url = f"{scheme}://{host.ip}:{port.number}"
             result = await self._check_ssrf(base_url, port.number)

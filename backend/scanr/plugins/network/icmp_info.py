@@ -5,7 +5,6 @@ and its ICMP TTL (useful for OS fingerprinting).
 """
 from __future__ import annotations
 
-import asyncio
 import logging
 import socket
 import struct
@@ -30,8 +29,7 @@ class IcmpInfoPlugin(PluginBase):
     ports = None  # not port-specific
 
     async def check(self, context: "ScanContext", host: "Host") -> list[FindingData]:
-        loop = asyncio.get_running_loop()
-        result = await loop.run_in_executor(None, self._icmp_probe, host.ip)
+        result = self._icmp_probe(host.ip)
         if result is None:
             return []
         ttl, rtt_ms = result
@@ -51,7 +49,7 @@ class IcmpInfoPlugin(PluginBase):
         """Send a raw ICMP echo request and return (ttl, rtt_ms) or None."""
         try:
             sock = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_ICMP)
-            sock.settimeout(3)
+            sock.settimeout(1)
 
             # ICMP echo request: type=8, code=0, checksum, id, seq, data
             icmp_id = 0xABCD

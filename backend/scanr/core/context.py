@@ -18,6 +18,8 @@ class ScanContext:
     db: AsyncSession
     profile: str = "standard"
     credential_data: dict | None = None  # decrypted from vault if provided
+    credentials_by_role: dict[str, dict] = field(default_factory=dict)
+    credentials: list[dict] = field(default_factory=list)
     stealth_mode: bool = False
     discovered_credentials: list = field(default_factory=list)  # in-memory only, never persisted
     rate_limiter: RateLimiter | None = None
@@ -76,6 +78,10 @@ class ScanContext:
 
     def credential(self, role: str) -> dict | None:
         """Return credential data for the given role. Falls back to primary credential."""
+        if role in self.credentials_by_role:
+            return self.credentials_by_role[role]
+        if role == "generic" and self.credentials:
+            return self.credentials[0]
         return self.credential_data
 
     def get_brute_config(self) -> dict:

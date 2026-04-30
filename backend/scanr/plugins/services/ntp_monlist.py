@@ -48,11 +48,8 @@ class NtpMonlistPlugin(PluginBase):
     ports = [123]
 
     async def check(self, context: "ScanContext", host: "Host") -> list[FindingData]:
-        # Check if port 123 is open (NTP is UDP so may not show in TCP scan)
-        has_ntp = any(p.number == 123 and p.state == "open" for p in host.ports)
-        if not has_ntp:
-            # Try anyway if any port is present for this host
-            pass
+        if not any(p.number == 123 and p.state == "open" for p in host.ports):
+            return []
 
         loop = asyncio.get_running_loop()
         result = await loop.run_in_executor(None, self._probe_monlist, host.ip)

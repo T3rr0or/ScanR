@@ -10,7 +10,7 @@ export default function Credentials() {
   const [form, setForm] = useState<{
     name: string; type: string; username: string; description: string
     password: string; private_key: string
-  }>({ name: '', type: 'password', username: '', description: '', password: '', private_key: '' })
+  }>({ name: '', type: 'smb', username: '', description: '', password: '', private_key: '' })
 
   const { data: credentials = [] } = useQuery({
     queryKey: ['credentials'],
@@ -31,7 +31,7 @@ export default function Credentials() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['credentials'] })
       setShowForm(false)
-      setForm({ name: '', type: 'password', username: '', description: '', password: '', private_key: '' })
+      setForm({ name: '', type: 'smb', username: '', description: '', password: '', private_key: '' })
     },
   })
 
@@ -71,8 +71,12 @@ export default function Credentials() {
             <div>
               <label className="label">Type</label>
               <select value={form.type} onChange={e => setForm(f => ({ ...f, type: e.target.value }))} className="select-field">
-                <option value="password">Password</option>
+                <option value="smb">SMB / Windows Password</option>
                 <option value="ssh">SSH Key</option>
+                <option value="http_basic">HTTP Basic Password</option>
+                <option value="ftp">FTP Password</option>
+                <option value="snmp">SNMP Secret</option>
+                <option value="wmi">WMI Password</option>
               </select>
             </div>
             <div>
@@ -87,7 +91,7 @@ export default function Credentials() {
             </div>
           </div>
 
-          {form.type === 'password' ? (
+          {form.type !== 'ssh' ? (
             <div style={{ marginBottom: 12 }}>
               <label className="label">Password *</label>
               <input type="password" value={form.password} onChange={e => setForm(f => ({ ...f, password: e.target.value }))} className="input" />

@@ -80,7 +80,17 @@ class ScanEngine:
             rate_limiter=rate_limiter,
         )
 
-        # Decrypt credentials if provided
+        # Decrypt credentials if provided. Scans can have either one legacy
+        # vault credential or multiple scan-scoped credentials from the UI.
+        from scanr.credentials.vault import decrypt
+
+        def _register_credential(data: dict, *, role: str = "generic") -> None:
+            if not data:
+                return
+            context.credentials.append(data)
+            context.credentials_by_role.setdefault(role, data)
+            context.credential_data = context.credential_data or data
+
         if scan.credential_id:
             cred_result = await self.db.execute(
                 select(__import__("scanr.models", fromlist=["Credential"]).Credential)
@@ -88,9 +98,27 @@ class ScanEngine:
             )
             cred = cred_result.scalar_one_or_none()
             if cred:
-                from scanr.credentials.vault import decrypt
-                context.credential_data = decrypt(cred.encrypted_data)
+                data = decrypt(cred.encrypted_data)
+                data.setdefault("username", cred.username)
+                data.setdefault("type", cred.type)
+                data.setdefault("role", "generic")
+                _register_credential(data, role="generic")
                 await scan_log.info(f"Credentials loaded: {cred.name}", phase="engine")
+
+        scan_creds_result = await self.db.execute(
+            select(__import__("scanr.models", fromlist=["ScanCredential"]).ScanCredential)
+            .where(__import__("scanr.models", fromlist=["ScanCredential"]).ScanCredential.scan_id == self.scan_id)
+        )
+        scan_creds = scan_creds_result.scalars().all()
+        for scan_cred in scan_creds:
+            data = decrypt(scan_cred.encrypted_data)
+            data.setdefault("username", scan_cred.username)
+            data.setdefault("domain", scan_cred.domain)
+            data.setdefault("type", scan_cred.type)
+            data.setdefault("role", scan_cred.role)
+            _register_credential(data, role=scan_cred.role)
+        if scan_creds:
+            await scan_log.info(f"Scan-scoped credentials loaded: {len(scan_creds)}", phase="engine")
 
         # Load wordlist paths for brute_force config
         import json as _json_bf
@@ -136,7 +164,7 @@ class ScanEngine:
             plugins = [p for p in plugins if _plugin_allowed(p.id, profile_filter)]
 
         # Drop plugins that require credentials when none are loaded
-        if not context.credential_data:
+        if not context.credentials:
             plugins = [p for p in plugins if not p.requires_auth]
 
         await scan_log.info(f"Loaded {len(plugins)} plugins (profile filter: {profile_filter or '*'})", phase="engine")
