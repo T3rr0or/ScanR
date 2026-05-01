@@ -205,6 +205,12 @@ class ResultCollector:
                 return f"nmap -Pn -sV -p {_q(','.join(ports))} {_q(host_ip)}"
             return f"nmap -Pn -sV {_q(host_ip)}"
 
+        if plugin_id == "network.subdomain_enum":
+            names = _subdomains_from_evidence(evidence)
+            if names:
+                quoted = " ".join(_q(name) for name in names[:50])
+                return f"for host in {quoted}; do printf '%s ' \"$host\"; dig +short \"$host\"; done"
+
         if plugin_id.startswith("ssh.") and host_ip and port:
             if plugin_id == "ssh.ssh_default_creds":
                 creds = _creds_from_title(data.title)
@@ -298,3 +304,12 @@ def _ports_from_open_ports_evidence(evidence: str) -> list[str]:
         if match:
             ports.append(match.group(1))
     return ports
+
+
+def _subdomains_from_evidence(evidence: str) -> list[str]:
+    names: list[str] = []
+    for line in (evidence or "").splitlines():
+        match = re.match(r"\s*([a-zA-Z0-9.-]+\.[a-zA-Z]{2,})\s*[→-]", line)
+        if match:
+            names.append(match.group(1))
+    return names

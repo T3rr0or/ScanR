@@ -29,12 +29,6 @@ REQUIRED_HEADERS = {
         "Missing header allows MIME-type sniffing attacks.",
         "Add: X-Content-Type-Options: nosniff",
     ),
-    "X-Frame-Options": (
-        Severity.medium,
-        "Clickjacking Protection Missing",
-        "Missing X-Frame-Options allows the page to be embedded in iframes (clickjacking).",
-        "Add: X-Frame-Options: SAMEORIGIN or use CSP frame-ancestors directive.",
-    ),
     "Content-Security-Policy": (
         Severity.medium,
         "Content Security Policy Not Set",
@@ -88,6 +82,8 @@ class HttpHeadersPlugin(PluginBase):
             headers_lower = {k.lower(): v for k, v in headers.items()}
 
             for header, (sev, title, desc, remediation) in REQUIRED_HEADERS.items():
+                if header == "Strict-Transport-Security" and scheme != "https":
+                    continue
                 if header.lower() not in headers_lower:
                     findings.append(FindingData(
                         plugin_id=self.id,

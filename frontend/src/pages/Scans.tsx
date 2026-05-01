@@ -480,6 +480,7 @@ function NewScanModal({
 }) {
   const [selectedDesignTemplate, setSelectedDesignTemplate] = useState('quick')
   const [selectedApiTemplate, setSelectedApiTemplate]       = useState<ScanTemplate | null>(null)
+  const [baseProfileJson, setBaseProfileJson]               = useState<Record<string, unknown>>({})
   const [name, setName]       = useState(initialScan?.name ?? '')
   const [targets, setTargets] = useState((initialScan?.targets ?? []).join('\n'))
   const [credentials, setCredentials] = useState<InlineCredential[]>([])
@@ -514,6 +515,7 @@ function NewScanModal({
 
   function applyApiTemplate(t: ScanTemplate) {
     setSelectedApiTemplate(t)
+    setBaseProfileJson(t.profile_json ?? {})
     setProfileConfig(jsonToConfig(t.profile_json))
     if (!name) setName(t.name)
   }
@@ -557,7 +559,7 @@ function NewScanModal({
       save_to_vault: c.saveToVault,
       vault_name: c.vaultName || undefined,
     }))
-    const pj: Record<string, unknown> = { ...configToJson(profileConfig) }
+    const pj: Record<string, unknown> = { ...baseProfileJson, ...configToJson(profileConfig) }
     if (bruteForce.enabled) {
       pj.brute_force = {
         enabled: true,
@@ -616,7 +618,7 @@ function NewScanModal({
             <div className="label">Start from template</div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 8 }}>
               {systemTemplates.length > 0
-                ? systemTemplates.slice(0, 4).map(t => {
+                ? systemTemplates.map(t => {
                     const active = selectedApiTemplate?.id === t.id
                     return (
                       <button

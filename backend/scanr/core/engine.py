@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import socket
 import logging
 
 from sqlalchemy import select
@@ -16,8 +17,20 @@ from scanr.core.scan_logger import ScanLogger
 from scanr.models import Host, Plugin, Scan, Target
 from scanr.models.base import new_uuid
 from scanr.plugins.web._ports import is_web_port_data
+from scanr.utils.ip_utils import is_valid_ip
 
 logger = logging.getLogger(__name__)
+
+BUG_BOUNTY_PORT_RANGE = "80,443,8080,8443,8000,8001,8888,3000,5000,9000,9443,10443,32400"
+
+BUG_BOUNTY_SUBDOMAIN_PREFIXES = [
+    "www", "api", "app", "apps", "auth", "login", "sso", "admin", "portal",
+    "dashboard", "staging", "stage", "dev", "test", "beta", "preview", "uat",
+    "cdn", "static", "assets", "media", "docs", "status", "support", "help",
+    "blog", "shop", "store", "pay", "billing", "checkout", "secure", "vpn",
+    "mail", "webmail", "mx", "git", "gitlab", "jira", "confluence", "jenkins",
+    "grafana", "kibana", "monitor", "metrics",
+]
 
 
 def _plugin_allowed(plugin_id: str, filters: list[str]) -> bool:
@@ -40,6 +53,75 @@ def _plugin_applies_to_host_data(plugin, ports: list[dict]) -> bool:
     ):
         return True
     return any(p["number"] in plugin.ports and p["state"] == "open" for p in ports)
+
+
+def _is_domain_mode(profile: dict, targets: list[str]) -> bool:
+    if profile.get("target_mode") in {"domain", "bug_bounty", "external"}:
+        return True
+    if profile.get("external_recon") is True:
+        return True
+    return bool(targets) and all(not is_valid_ip(t) for t in targets)
+
+
+async def _expand_domain_targets(targets: list[str], scan_log: ScanLogger, profile: dict) -> list[str]:
+    roots = [t.strip().lower().removeprefix("*.") for t in targets if t.strip()]
+    include_subdomains = profile.get("subdomain_enum", True)
+    max_subdomains = int(profile.get("max_subdomains", 50))
+    discovered: list[str] = []
+
+    if include_subdomains:
+        await scan_log.phase_start(
+            "recon",
+            f"Domain recon: resolving common subdomains for {len(roots)} domain target(s)",
+        )
+        discovered = await _resolve_common_subdomains(roots, max_subdomains)
+        await scan_log.phase_done(
+            "recon",
+            f"Domain recon complete: {len(discovered)} resolvable subdomain target(s) added",
+        )
+
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for target in [*roots, *discovered]:
+        if target and target not in seen:
+            seen.add(target)
+            ordered.append(target)
+    return ordered
+
+
+async def _resolve_common_subdomains(domains: list[str], limit: int) -> list[str]:
+    sem = asyncio.Semaphore(30)
+    loop = asyncio.get_running_loop()
+    found: list[str] = []
+
+    async def resolve(fqdn: str) -> str | None:
+        async with sem:
+            try:
+                await asyncio.wait_for(
+                    loop.run_in_executor(None, socket.getaddrinfo, fqdn, None),
+                    timeout=3.0,
+                )
+                return fqdn
+            except Exception:
+                return None
+
+    candidates = [
+        f"{prefix}.{domain}"
+        for domain in domains
+        for prefix in BUG_BOUNTY_SUBDOMAIN_PREFIXES
+    ]
+    for result in await asyncio.gather(*(resolve(c) for c in candidates)):
+        if result:
+            found.append(result)
+            if len(found) >= limit:
+                break
+    return found
+
+
+def _hostname_for_host(input_target: str, host_data: dict) -> str | None:
+    if not is_valid_ip(input_target):
+        return input_target
+    return host_data.get("hostname")
 
 
 class ScanEngine:
@@ -188,6 +270,17 @@ class ScanEngine:
         for target in targets:
             all_targets.extend(expand_targets(target.value))
 
+        domain_mode = _is_domain_mode(_pj, all_targets)
+        if domain_mode:
+            if _pj.get("port_range") in {"1-65535", "-p-", "-p -"} and not _pj.get("allow_full_port_scan", False):
+                _pj["port_range"] = BUG_BOUNTY_PORT_RANGE
+                scan.profile_json = _j.dumps(_pj)
+                await scan_log.info(
+                    f"Domain target detected — using external web port range {_pj['port_range']} instead of full internal port sweep",
+                    phase="recon",
+                )
+            all_targets = await _expand_domain_targets(all_targets, scan_log, _pj)
+
         scan.hosts_total = len(all_targets)
         await self.db.commit()
 
@@ -221,7 +314,13 @@ class ScanEngine:
         # before nmap runs per-host service detection only on known-open ports.
         masscan_results: dict[str, list[int]] = {}
         from scanr.scanner.port_scanner.masscan_wrapper import MasscanWrapper
-        if MasscanWrapper.is_available():
+        use_masscan = (
+            MasscanWrapper.is_available()
+            and not _pj.get("disable_masscan", False)
+            and not domain_mode
+            and all(is_valid_ip(t) for t in live_targets)
+        )
+        if use_masscan:
             await scan_log.info(
                 f"masscan available — running bulk port discovery on {len(live_targets)} hosts",
                 phase="portscan",
@@ -234,8 +333,9 @@ class ScanEngine:
                 phase="portscan",
             )
         else:
+            reason = "disabled for domain/external scan" if domain_mode else "not found"
             await scan_log.info(
-                "masscan not found — using nmap for port discovery (install masscan for faster scans)",
+                f"masscan {reason} — using nmap for port/service discovery",
                 phase="portscan",
             )
 
@@ -327,8 +427,8 @@ class ScanEngine:
                         host = Host(
                             id=new_uuid(),
                             scan_id=self.scan_id,
-                            ip=ip,
-                            hostname=host_data.get("hostname"),
+                            ip=host_data.get("address") or ip,
+                            hostname=_hostname_for_host(ip, host_data),
                             mac_address=host_data.get("mac"),
                             os_name=host_data.get("os_name"),
                             os_accuracy=host_data.get("os_accuracy"),

@@ -77,7 +77,7 @@ class SubdomainEnumPlugin(PluginBase):
 
         # Strip leading wildcard prefix to get base domain
         base = hostname.removeprefix("*.")
-        if base.count(".") < 1:
+        if base.count(".") != 1:
             return []
 
         found = await self._brute_force(base)

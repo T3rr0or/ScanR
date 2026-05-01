@@ -81,16 +81,21 @@ class NmapWrapper:
             logger.warning("nmap scan failed for %s: %s", ip, exc)
             raise
 
-        if ip not in nm.all_hosts():
+        scanned_hosts = nm.all_hosts()
+        if not scanned_hosts:
             return None
 
-        host = nm[ip]
+        scanned_host = ip if ip in scanned_hosts else scanned_hosts[0]
+        host = nm[scanned_host]
         if host.state() != "up":
             return None
 
+        addresses = host.get("addresses", {})
         result: dict[str, Any] = {
+            "address": addresses.get("ipv4") or addresses.get("ipv6") or scanned_host,
+            "target": ip,
             "hostname": self._get_hostname(host),
-            "mac": host.get("addresses", {}).get("mac"),
+            "mac": addresses.get("mac"),
             "ports": [],
         }
 

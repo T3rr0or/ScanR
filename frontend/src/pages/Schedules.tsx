@@ -6,6 +6,7 @@ import {
 } from 'lucide-react'
 import { schedulesApi, type Schedule } from '@/api/schedules'
 import { credentialsApi } from '@/api/credentials'
+import { templatesApi, type ScanTemplate } from '@/api/templates'
 import { ALL_CATEGORIES, PORT_RANGES, type ProfileConfig } from '@/components/ProfileEditor'
 
 const CRON_PRESETS = [
@@ -18,6 +19,13 @@ const CRON_PRESETS = [
 ]
 
 const PLUGIN_CATEGORIES = ALL_CATEGORIES
+
+function categoriesFromPlugins(plugins: unknown): string[] {
+  if (!Array.isArray(plugins) || plugins.includes('*')) return ALL_CATEGORIES.map(c => c.id)
+  return ALL_CATEGORIES
+    .filter(cat => plugins.some(p => typeof p === 'string' && (p === cat.id || p === `${cat.id}.*` || p.startsWith(`${cat.id}.`))))
+    .map(c => c.id)
+}
 
 /* ─── Schedule form (create + edit) ──────────────────────────── */
 function ScheduleForm({
@@ -61,16 +69,22 @@ function ScheduleForm({
   const [intrusive, setIntrusive]     = useState(parsedInitial.intrusive ?? false)
   const [stealth, setStealth]         = useState(parsedInitial.stealth ?? false)
   const [credentialId, setCredentialId] = useState<string>(parsedInitial.credential_id ?? '')
+  const [baseProfileJson, setBaseProfileJson] = useState<Record<string, unknown>>(parsedInitial)
 
   const { data: credentials = [] } = useQuery({
     queryKey: ['credentials'],
     queryFn: credentialsApi.list,
+  })
+  const { data: templates = [] } = useQuery({
+    queryKey: ['templates'],
+    queryFn: templatesApi.list,
   })
 
   function buildProfileJson() {
     const cats = [...enabledCategories]
     const pluginGlobs = cats.length === ALL_CATEGORIES.length ? ['*'] : cats.map(c => `${c}.*`)
     const pj: Record<string, unknown> = {
+      ...baseProfileJson,
       port_range: profileConfig.port_range,
       plugins: pluginGlobs,
     }
@@ -79,6 +93,26 @@ function ScheduleForm({
     if (stealth) pj.stealth = true
     if (credentialId) pj.credential_id = credentialId
     return JSON.stringify(pj)
+  }
+
+  function applyTemplate(templateId: string) {
+    const template = templates.find((t: ScanTemplate) => t.id === templateId)
+    if (!template?.profile_json) return
+    const pj = template.profile_json
+    const cats = categoriesFromPlugins(pj.plugins)
+    setBaseProfileJson(pj)
+    setProfileConfig({
+      port_range: typeof pj.port_range === 'string' ? pj.port_range : 'top-1000',
+      categories: cats,
+    })
+    setEnabledCategories(new Set(cats))
+    setIntrusive(Boolean(pj.intrusive))
+    setStealth(Boolean(pj.stealth))
+    const brute = typeof pj.brute_force === 'object' && pj.brute_force !== null ? pj.brute_force as Record<string, unknown> : {}
+    setBruteForce({
+      enabled: Boolean(brute.enabled),
+      delay_ms: typeof brute.delay_ms === 'number' ? brute.delay_ms : 500,
+    })
   }
 
   function handleSubmit() {
@@ -112,6 +146,17 @@ function ScheduleForm({
           rows={3} className="textarea"
           style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}
         />
+      </div>
+
+      {/* Template */}
+      <div>
+        <label className="label">Template</label>
+        <select className="select-field" onChange={e => applyTemplate(e.target.value)} defaultValue="">
+          <option value="">Custom schedule profile</option>
+          {templates.map(t => (
+            <option key={t.id} value={t.id}>{t.name}{t.is_system ? ' (system)' : ''}</option>
+          ))}
+        </select>
       </div>
 
       {/* Port range */}

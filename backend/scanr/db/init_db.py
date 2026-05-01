@@ -249,6 +249,23 @@ async def seed_templates(session: AsyncSession) -> None:
             },
         },
         {
+            "name": "Bug Bounty Recon",
+            "description": "External domain recon with subdomain discovery, common web ports, web, SSL/TLS, and Nuclei checks.",
+            "profile_json": {
+                "target_mode": "bug_bounty",
+                "external_recon": True,
+                "subdomain_enum": True,
+                "max_subdomains": 75,
+                "disable_masscan": True,
+                "port_range": "80,443,8080,8443,8000,8001,8888,3000,5000,9000,9443,10443,32400",
+                "plugins": ["network.subdomain_enum", "network.subdomain_takeover", "web.*", "ssl_tls.*", "nuclei.runner"],
+                "intrusive": False,
+                "brute_force": {"enabled": False},
+                "max_concurrent": 8,
+                "timeout": 8,
+            },
+        },
+        {
             "name": "Internal Network Audit",
             "description": "Comprehensive internal network scan including service plugins, database exposure, and auth bypass checks.",
             "profile_json": {
