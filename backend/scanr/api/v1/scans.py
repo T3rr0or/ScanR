@@ -40,6 +40,12 @@ class _BruteForceConfig(BaseModel):
 
 
 class _ProfileJson(BaseModel):
+    target_mode: Literal["internal", "domain", "bug_bounty", "external"] | None = None
+    external_recon: bool = False
+    subdomain_enum: bool = True
+    max_subdomains: int | None = Field(default=None, ge=0, le=1000)
+    disable_masscan: bool = False
+    allow_full_port_scan: bool = False
     port_range: str | None = None
     masscan_rate: int | None = Field(default=None, ge=1, le=100000)
     plugins: list[str] | None = None
@@ -369,6 +375,47 @@ async def scan_delta(
     await _get_own_scan(scan_id, current_user.id, db)
     await _get_own_scan(baseline, current_user.id, db)
     return await compute_delta(baseline, scan_id, db)
+
+
+@router.get("/{scan_id}/delta/latest")
+async def scan_delta_latest(
+    scan_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_scope("scans:read")),
+):
+    """Compare scan_id against the most recent prior scan with overlapping targets."""
+    from scanr.core.delta_engine import compute_delta
+
+    scan = await _get_own_scan(scan_id, current_user.id, db)
+    targets_result = await db.execute(select(Target.value).where(Target.scan_id == scan_id))
+    target_values = {row[0] for row in targets_result.all()}
+    if not target_values:
+        raise HTTPException(status_code=404, detail="No targets found for scan")
+
+    baseline_result = await db.execute(
+        select(Scan)
+        .join(Target, Target.scan_id == Scan.id)
+        .where(
+            Scan.user_id == current_user.id,
+            Scan.id != scan_id,
+            Scan.created_at < scan.created_at,
+            Scan.status.in_([ScanStatus.completed, ScanStatus.failed]),
+            Target.value.in_(target_values),
+        )
+        .order_by(Scan.created_at.desc())
+        .limit(1)
+    )
+    baseline_scan = baseline_result.scalar_one_or_none()
+    if not baseline_scan:
+        raise HTTPException(status_code=404, detail="No previous scan with matching targets found")
+
+    delta = await compute_delta(baseline_scan.id, scan_id, db)
+    delta["baseline_scan"] = {
+        "id": baseline_scan.id,
+        "name": baseline_scan.name,
+        "created_at": baseline_scan.created_at.isoformat() if baseline_scan.created_at else None,
+    }
+    return delta
 
 
 @router.delete("/{scan_id}", status_code=status.HTTP_204_NO_CONTENT)

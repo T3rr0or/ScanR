@@ -4,7 +4,7 @@
  */
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { X, ArrowRight, TrendingUp, TrendingDown, Minus, Server, Unlock } from 'lucide-react'
+import { X, ArrowRight, TrendingUp, TrendingDown, Minus, Server, Unlock, Globe } from 'lucide-react'
 import { scansApi } from '@/api/scans'
 import SeverityBadge from '@/components/SeverityBadge'
 
@@ -14,7 +14,7 @@ interface Props {
   onClose: () => void
 }
 
-type DeltaTab = 'new' | 'resolved' | 'persisting' | 'hosts' | 'ports'
+type DeltaTab = 'new' | 'resolved' | 'persisting' | 'subdomains' | 'hosts' | 'ports'
 
 export default function ScanDelta({ scanId, scanName, onClose }: Props) {
   const [baselineId, setBaselineId] = useState<string>('')
@@ -33,8 +33,19 @@ export default function ScanDelta({ scanId, scanName, onClose }: Props) {
     queryFn: () => scansApi.delta(scanId, baselineId),
     enabled: !!baselineId,
   })
+  const { data: latestDelta, isLoading: latestLoading, error: latestError } = useQuery({
+    queryKey: ['delta-latest', scanId],
+    queryFn: () => scansApi.latestDelta(scanId),
+    enabled: !baselineId,
+    retry: false,
+  })
 
-  const baselineName = candidates.find(s => s.id === baselineId)?.name ?? ''
+  const activeDelta = baselineId ? delta : latestDelta
+  const loading = baselineId ? isLoading : latestLoading
+  const loadError = baselineId ? error : latestError
+  const baselineName = baselineId
+    ? candidates.find(s => s.id === baselineId)?.name ?? ''
+    : latestDelta?.baseline_scan?.name ?? ''
 
   return (
     <div style={{ position: 'fixed', inset: 0, zIndex: 50, display: 'flex' }}>
@@ -124,6 +135,11 @@ export default function ScanDelta({ scanId, scanName, onClose }: Props) {
               </option>
             ))}
           </select>
+          {!baselineId && latestDelta?.baseline_scan && (
+            <p style={{ marginTop: 6, fontSize: 11, color: 'var(--text-3)' }}>
+              Automatically comparing against latest matching scan: <strong>{latestDelta.baseline_scan.name}</strong>
+            </p>
+          )}
           {candidates.length === 0 && (
             <p style={{ marginTop: 6, fontSize: 11, color: 'var(--text-3)' }}>
               No other completed scans available to compare against.
@@ -133,7 +149,7 @@ export default function ScanDelta({ scanId, scanName, onClose }: Props) {
 
         {/* Content */}
         <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-          {!baselineId && (
+          {!baselineId && !latestDelta && !loadError && (
             <div
               style={{
                 flex: 1,
@@ -144,11 +160,11 @@ export default function ScanDelta({ scanId, scanName, onClose }: Props) {
                 fontSize: 13,
               }}
             >
-              Select a baseline scan above to see the delta
+              {latestLoading ? 'Looking for latest matching baseline...' : 'Select a baseline scan above to see the delta'}
             </div>
           )}
 
-          {baselineId && isLoading && (
+          {loading && (
             <div
               style={{
                 flex: 1,
@@ -163,7 +179,7 @@ export default function ScanDelta({ scanId, scanName, onClose }: Props) {
             </div>
           )}
 
-          {baselineId && error && (
+          {loadError && !activeDelta && (
             <div
               style={{
                 flex: 1,
@@ -174,17 +190,17 @@ export default function ScanDelta({ scanId, scanName, onClose }: Props) {
                 fontSize: 13,
               }}
             >
-              Failed to load delta
+              No previous matching scan found yet.
             </div>
           )}
 
-          {delta && (
+          {activeDelta && (
             <>
               {/* Summary cards */}
               <div
                 style={{
                   display: 'grid',
-                  gridTemplateColumns: 'repeat(6, 1fr)',
+                  gridTemplateColumns: 'repeat(auto-fit, minmax(110px, 1fr))',
                   gap: 10,
                   padding: '14px 20px',
                   borderBottom: '1px solid var(--border)',
@@ -193,17 +209,17 @@ export default function ScanDelta({ scanId, scanName, onClose }: Props) {
               >
                 <SummaryCard
                   label="New Findings"
-                  value={delta.summary.new_findings}
-                  valueColor={delta.summary.new_findings > 0 ? 'var(--sev-critical)' : 'var(--text-1)'}
-                  bgColor={delta.summary.new_findings > 0 ? 'oklch(0.70 0.22 352 / 0.08)' : 'var(--bg-2)'}
-                  borderColor={delta.summary.new_findings > 0 ? 'oklch(0.70 0.22 352 / 0.3)' : 'var(--border)'}
+                  value={activeDelta.summary.new_findings}
+                  valueColor={activeDelta.summary.new_findings > 0 ? 'var(--sev-critical)' : 'var(--text-1)'}
+                  bgColor={activeDelta.summary.new_findings > 0 ? 'oklch(0.70 0.22 352 / 0.08)' : 'var(--bg-2)'}
+                  borderColor={activeDelta.summary.new_findings > 0 ? 'oklch(0.70 0.22 352 / 0.3)' : 'var(--border)'}
                   icon={<TrendingUp size={14} />}
                   onClick={() => setTab('new')}
                   active={tab === 'new'}
                 />
                 <SummaryCard
                   label="Resolved"
-                  value={delta.summary.resolved_findings}
+                  value={activeDelta.summary.resolved_findings}
                   valueColor="var(--ok)"
                   bgColor="oklch(0.75 0.15 145 / 0.08)"
                   borderColor="oklch(0.75 0.15 145 / 0.3)"
@@ -213,7 +229,7 @@ export default function ScanDelta({ scanId, scanName, onClose }: Props) {
                 />
                 <SummaryCard
                   label="Persisting"
-                  value={delta.summary.persisting_findings}
+                  value={activeDelta.summary.persisting_findings}
                   valueColor="var(--sev-high)"
                   bgColor="oklch(0.68 0.21 27 / 0.08)"
                   borderColor="oklch(0.68 0.21 27 / 0.3)"
@@ -222,8 +238,18 @@ export default function ScanDelta({ scanId, scanName, onClose }: Props) {
                   active={tab === 'persisting'}
                 />
                 <SummaryCard
+                  label="New Subdomains"
+                  value={activeDelta.summary.new_subdomains ?? 0}
+                  valueColor="var(--accent)"
+                  bgColor="var(--accent-soft)"
+                  borderColor="oklch(0.78 0.14 200 / 0.3)"
+                  icon={<Globe size={14} />}
+                  onClick={() => setTab('subdomains')}
+                  active={tab === 'subdomains'}
+                />
+                <SummaryCard
                   label="New Hosts"
-                  value={delta.summary.new_hosts}
+                  value={activeDelta.summary.new_hosts}
                   valueColor="var(--accent)"
                   bgColor="var(--accent-soft)"
                   borderColor="oklch(0.78 0.14 200 / 0.3)"
@@ -233,7 +259,7 @@ export default function ScanDelta({ scanId, scanName, onClose }: Props) {
                 />
                 <SummaryCard
                   label="Lost Hosts"
-                  value={delta.summary.removed_hosts}
+                  value={activeDelta.summary.removed_hosts}
                   valueColor="var(--text-2)"
                   bgColor="var(--bg-2)"
                   borderColor="var(--border)"
@@ -243,7 +269,7 @@ export default function ScanDelta({ scanId, scanName, onClose }: Props) {
                 />
                 <SummaryCard
                   label="Port Changes"
-                  value={delta.summary.port_changes}
+                  value={activeDelta.summary.port_changes}
                   valueColor="var(--sev-medium)"
                   bgColor="oklch(0.80 0.16 70 / 0.08)"
                   borderColor="oklch(0.80 0.16 70 / 0.3)"
@@ -257,11 +283,12 @@ export default function ScanDelta({ scanId, scanName, onClose }: Props) {
               <div className="tabs">
                 {(
                   [
-                    { key: 'new' as DeltaTab, label: 'New', count: delta.summary.new_findings },
-                    { key: 'resolved' as DeltaTab, label: 'Resolved', count: delta.summary.resolved_findings },
-                    { key: 'persisting' as DeltaTab, label: 'Persisting', count: delta.summary.persisting_findings },
-                    { key: 'hosts' as DeltaTab, label: 'Hosts', count: delta.summary.new_hosts + delta.summary.removed_hosts },
-                    { key: 'ports' as DeltaTab, label: 'Ports', count: delta.summary.port_changes },
+                    { key: 'new' as DeltaTab, label: 'New', count: activeDelta.summary.new_findings },
+                    { key: 'resolved' as DeltaTab, label: 'Resolved', count: activeDelta.summary.resolved_findings },
+                    { key: 'persisting' as DeltaTab, label: 'Persisting', count: activeDelta.summary.persisting_findings },
+                    { key: 'subdomains' as DeltaTab, label: 'Subdomains', count: activeDelta.summary.new_subdomains ?? 0 },
+                    { key: 'hosts' as DeltaTab, label: 'Hosts', count: activeDelta.summary.new_hosts + activeDelta.summary.removed_hosts },
+                    { key: 'ports' as DeltaTab, label: 'Ports', count: activeDelta.summary.port_changes },
                   ]
                 ).map(t => (
                   <button
@@ -279,7 +306,7 @@ export default function ScanDelta({ scanId, scanName, onClose }: Props) {
               <div style={{ flex: 1, overflowY: 'auto', padding: '16px 20px' }}>
                 {tab === 'new' && (
                   <FindingList
-                    findings={delta.new_findings}
+                    findings={activeDelta.new_findings}
                     label="New Findings"
                     emptyMsg="No new findings — great!"
                     badge="new"
@@ -287,7 +314,7 @@ export default function ScanDelta({ scanId, scanName, onClose }: Props) {
                 )}
                 {tab === 'resolved' && (
                   <FindingList
-                    findings={delta.resolved_findings}
+                    findings={activeDelta.resolved_findings}
                     label="Resolved Findings"
                     emptyMsg="No findings resolved."
                     badge="resolved"
@@ -295,16 +322,19 @@ export default function ScanDelta({ scanId, scanName, onClose }: Props) {
                 )}
                 {tab === 'persisting' && (
                   <FindingList
-                    findings={delta.persisting_findings}
+                    findings={activeDelta.persisting_findings}
                     label="Persisting Findings"
                     emptyMsg="No persisting findings."
                     badge="persisting"
                   />
                 )}
-                {tab === 'hosts' && (
-                  <HostDelta newHosts={delta.new_hosts} removedHosts={delta.removed_hosts} />
+                {tab === 'subdomains' && (
+                  <SubdomainDelta newSubdomains={activeDelta.new_subdomains ?? []} removedSubdomains={activeDelta.removed_subdomains ?? []} />
                 )}
-                {tab === 'ports' && <PortChanges changes={delta.port_changes} />}
+                {tab === 'hosts' && (
+                  <HostDelta newHosts={activeDelta.new_hosts} removedHosts={activeDelta.removed_hosts} />
+                )}
+                {tab === 'ports' && <PortChanges changes={activeDelta.port_changes} />}
               </div>
             </>
           )}
@@ -454,6 +484,91 @@ function FindingList({
           ))}
         </tbody>
       </table>
+    </div>
+  )
+}
+
+/* -- Subdomain delta --------------------------------------------------------- */
+
+function SubdomainDelta({
+  newSubdomains,
+  removedSubdomains,
+}: {
+  newSubdomains: string[]
+  removedSubdomains: string[]
+}) {
+  if (newSubdomains.length === 0 && removedSubdomains.length === 0) {
+    return (
+      <p style={{ color: 'var(--text-3)', fontSize: 13, textAlign: 'center', padding: '32px 0' }}>
+        No subdomain changes between scans.
+      </p>
+    )
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+      {newSubdomains.length > 0 && (
+        <div>
+          <p style={{ fontSize: 12, fontWeight: 600, color: 'var(--accent)', marginBottom: 8 }}>
+            New Subdomains ({newSubdomains.length})
+          </p>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {newSubdomains.map(name => (
+              <div
+                key={name}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 10,
+                  background: 'var(--accent-soft)',
+                  border: '1px solid oklch(0.78 0.14 200 / 0.3)',
+                  borderRadius: 'var(--radius)',
+                  padding: '7px 12px',
+                  fontSize: 12.5,
+                }}
+              >
+                <Globe size={14} style={{ color: 'var(--accent)', flexShrink: 0 }} />
+                <span className="mono" style={{ color: 'var(--accent)', fontSize: 12 }}>
+                  {name}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {removedSubdomains.length > 0 && (
+        <div>
+          <p style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-2)', marginBottom: 8 }}>
+            Removed Subdomains ({removedSubdomains.length})
+          </p>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {removedSubdomains.map(name => (
+              <div
+                key={name}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 10,
+                  background: 'var(--bg-2)',
+                  border: '1px solid var(--border)',
+                  borderRadius: 'var(--radius)',
+                  padding: '7px 12px',
+                  fontSize: 12.5,
+                }}
+              >
+                <Globe size={14} style={{ color: 'var(--text-3)', flexShrink: 0 }} />
+                <span
+                  className="mono"
+                  style={{ color: 'var(--text-3)', fontSize: 12, textDecoration: 'line-through' }}
+                >
+                  {name}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   )
 }

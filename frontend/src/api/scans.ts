@@ -42,4 +42,5 @@ export const scansApi = {
   hosts: (id: string) => api.get(`/scans/${id}/hosts`).then(r => r.data),
   delta: (id: string, baseline: string) =>
     api.get(`/scans/${id}/delta`, { params: { baseline } }).then(r => r.data),
+  latestDelta: (id: string) => api.get(`/scans/${id}/delta/latest`).then(r => r.data),
 }
