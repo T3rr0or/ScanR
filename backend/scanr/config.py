@@ -25,6 +25,7 @@ class Settings(BaseSettings):
 
     # CORS — comma-separated origins allowed to call the API
     allowed_origins: str = "http://localhost"
+    secure_cookies: bool = True
 
     # Database
     database_url: str = "sqlite+aiosqlite:///./scanr.db"

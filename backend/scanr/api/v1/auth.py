@@ -54,7 +54,7 @@ def _set_refresh_cookie(response: Response, refresh_token: str) -> None:
         value=refresh_token,
         httponly=True,
         samesite="strict",
-        secure=not settings.debug,  # Secure in prod, allow http in dev
+        secure=settings.secure_cookies,
         path=_COOKIE_PATH,
         max_age=settings.refresh_token_expire_days * 86400,
     )
