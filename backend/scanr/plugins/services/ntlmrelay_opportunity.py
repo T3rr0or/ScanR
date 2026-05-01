@@ -44,21 +44,22 @@ class NtlmRelayOpportunityPlugin(PluginBase):
 
         try:
             from scanr.models import Finding
-            smb_result = await context.db.execute(
-                select(Finding.host_id, Finding.id).where(
-                    Finding.scan_id == context.scan_id,
-                    Finding.plugin_id == "services.smb_signing",
+            async with context.db_lock:
+                smb_result = await context.db.execute(
+                    select(Finding.host_id, Finding.id).where(
+                        Finding.scan_id == context.scan_id,
+                        Finding.plugin_id == "services.smb_signing",
+                    )
                 )
-            )
-            smb_hosts = smb_result.all()
+                smb_hosts = smb_result.all()
 
-            ldap_result = await context.db.execute(
-                select(Finding.host_id, Finding.id).where(
-                    Finding.scan_id == context.scan_id,
-                    Finding.plugin_id == "services.ldap_anon_bind",
+                ldap_result = await context.db.execute(
+                    select(Finding.host_id, Finding.id).where(
+                        Finding.scan_id == context.scan_id,
+                        Finding.plugin_id == "services.ldap_anon_bind",
+                    )
                 )
-            )
-            ldap_hosts = ldap_result.all()
+                ldap_hosts = ldap_result.all()
 
             if not smb_hosts or not ldap_hosts:
                 return []
@@ -70,16 +71,17 @@ class NtlmRelayOpportunityPlugin(PluginBase):
 
             smb_ips = []
             ldap_ips = []
-            if smb_host_ids:
-                h_result = await context.db.execute(
-                    select(HostModel.ip).where(HostModel.id.in_(smb_host_ids))
-                )
-                smb_ips = [r[0] for r in h_result.all()]
-            if ldap_host_ids:
-                h_result = await context.db.execute(
-                    select(HostModel.ip).where(HostModel.id.in_(ldap_host_ids))
-                )
-                ldap_ips = [r[0] for r in h_result.all()]
+            async with context.db_lock:
+                if smb_host_ids:
+                    h_result = await context.db.execute(
+                        select(HostModel.ip).where(HostModel.id.in_(smb_host_ids))
+                    )
+                    smb_ips = [r[0] for r in h_result.all()]
+                if ldap_host_ids:
+                    h_result = await context.db.execute(
+                        select(HostModel.ip).where(HostModel.id.in_(ldap_host_ids))
+                    )
+                    ldap_ips = [r[0] for r in h_result.all()]
 
             evidence = (
                 f"SMB signing disabled hosts ({len(smb_ips)}): {', '.join(smb_ips[:5])}\n"

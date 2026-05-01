@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import socket
 import logging
+import time
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -513,6 +514,7 @@ class ScanEngine:
     async def _run_plugin(self, plugin, context, host, host_data, collector, sem):
         async with sem:
             context.check_cancelled()
+            started = time.perf_counter()
             await context.log.debug(
                 f"{host.ip} — plugin: {plugin.name}",
                 phase="plugin",
@@ -533,23 +535,82 @@ class ScanEngine:
                         host=host.ip,
                         plugin=plugin.id,
                     )
+                await self._record_plugin_run(
+                    context,
+                    host,
+                    plugin.id,
+                    status="success",
+                    duration_ms=_elapsed_ms(started),
+                    findings_count=len(findings),
+                )
             except asyncio.CancelledError:
                 raise
             except asyncio.TimeoutError:
                 logger.error("Plugin %s timed out on %s", plugin.id, host.ip)
+                duration_ms = _elapsed_ms(started)
                 await context.log.error(
-                    f"Plugin {plugin.id} timed out on {host.ip}",
+                    f"Plugin {plugin.id} timed out on {host.ip} after {duration_ms}ms",
                     phase="plugin",
                     host=host.ip,
                     plugin=plugin.id,
+                )
+                await self._record_plugin_run(
+                    context,
+                    host,
+                    plugin.id,
+                    status="timeout",
+                    duration_ms=duration_ms,
+                    error="Plugin timed out",
                 )
             except Exception as exc:
                 logger.error(
                     "Plugin %s failed on %s: %s", plugin.id, host.ip, exc, exc_info=True
                 )
+                duration_ms = _elapsed_ms(started)
                 await context.log.error(
                     f"Plugin {plugin.id} failed on {host.ip}: {exc}",
                     phase="plugin",
                     host=host.ip,
                     plugin=plugin.id,
                 )
+                await self._record_plugin_run(
+                    context,
+                    host,
+                    plugin.id,
+                    status="error",
+                    duration_ms=duration_ms,
+                    error=str(exc)[:2000],
+                )
+
+    async def _record_plugin_run(
+        self,
+        context: ScanContext,
+        host: Host,
+        plugin_id: str,
+        *,
+        status: str,
+        duration_ms: int,
+        findings_count: int = 0,
+        error: str | None = None,
+    ) -> None:
+        from scanr.models import PluginRun
+        from scanr.models.base import new_uuid
+
+        async with context.db_lock:
+            run = PluginRun(
+                id=new_uuid(),
+                scan_id=self.scan_id,
+                host_id=host.id,
+                plugin_id=plugin_id,
+                host_ip=host.ip,
+                status=status,
+                duration_ms=duration_ms,
+                findings_count=findings_count,
+                error=error,
+            )
+            self.db.add(run)
+            await self.db.flush()
+
+
+def _elapsed_ms(started: float) -> int:
+    return max(0, int((time.perf_counter() - started) * 1000))

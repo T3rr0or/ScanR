@@ -5,6 +5,7 @@ from .exclusion import Exclusion
 from .finding import Finding, Severity
 from .host import Host, HostStatus
 from .plugin import Plugin
+from .plugin_run import PluginRun
 from .port import Port, PortProtocol, PortState
 from .report import Report, ReportFormat
 from .scan import Scan, ScanProfile, ScanStatus
@@ -41,6 +42,7 @@ __all__ = [
     "Finding",
     "Severity",
     "Plugin",
+    "PluginRun",
     "Credential",
     "CredentialType",
     "Report",

@@ -7,7 +7,9 @@ import { SevTag } from '@/components/ui'
 export default function Plugins() {
   const qc = useQueryClient()
   const { data: plugins = [] } = useQuery({ queryKey: ['plugins'], queryFn: pluginsApi.list })
+  const { data: health = [] } = useQuery({ queryKey: ['plugins-health'], queryFn: () => pluginsApi.health() })
   const [activeCategory, setActiveCategory] = useState<string | null>(null)
+  const healthByPlugin = new Map(health.map(h => [h.plugin_id, h]))
 
   const toggleMut = useMutation({
     mutationFn: ({ id, enabled }: { id: string; enabled: boolean }) => pluginsApi.update(id, { enabled }),
@@ -132,6 +134,31 @@ export default function Plugins() {
                     </div>
                     <div className="mono dimmer" style={{ fontSize: 10 }}>{p.id}</div>
                   </div>
+
+                  {healthByPlugin.has(p.id) && (
+                    <div
+                      className="mono"
+                      style={{
+                        display: 'flex',
+                        gap: 6,
+                        alignItems: 'center',
+                        color: 'var(--text-3)',
+                        fontSize: 10,
+                        flexShrink: 0,
+                      }}
+                      title="Runtime health across recorded scans"
+                    >
+                      <span>{healthByPlugin.get(p.id)!.total_runs} runs</span>
+                      <span style={{ color: 'var(--ok)' }}>{healthByPlugin.get(p.id)!.success_count} ok</span>
+                      {healthByPlugin.get(p.id)!.timeout_count > 0 && (
+                        <span style={{ color: 'var(--sev-medium)' }}>{healthByPlugin.get(p.id)!.timeout_count} timeout</span>
+                      )}
+                      {healthByPlugin.get(p.id)!.error_count > 0 && (
+                        <span style={{ color: 'var(--sev-high)' }}>{healthByPlugin.get(p.id)!.error_count} error</span>
+                      )}
+                      <span>{healthByPlugin.get(p.id)!.avg_duration_ms}ms avg</span>
+                    </div>
+                  )}
                 </div>
               ))}
 
