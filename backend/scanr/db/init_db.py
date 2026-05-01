@@ -103,6 +103,8 @@ async def seed_plugins(session: AsyncSession) -> None:
         # Network
         dict(id="network.open_ports_info", name="Open Ports Inventory", category="network", default_severity="info", description="Document all open ports"),
         dict(id="network.icmp_info", name="ICMP Information", category="network", default_severity="info", description="Document ICMP response types"),
+        dict(id="network.dns_recon", name="DNS Reconnaissance", category="network", default_severity="info", description="Collect DNS A, AAAA, CNAME, MX, NS, TXT, and CAA records for domain targets"),
+        dict(id="network.dns_zone_transfer", name="DNS Zone Transfer", category="network", default_severity="high", description="Attempt AXFR zone transfer for domain targets"),
         # CVE
         dict(id="cve.cve_matcher", name="CVE Version Matcher", category="cve", default_severity="info", description="Match detected service versions against NVD CVE database"),
         # Web — screenshots
@@ -258,7 +260,7 @@ async def seed_templates(session: AsyncSession) -> None:
                 "max_subdomains": 75,
                 "disable_masscan": True,
                 "port_range": "80,443,8080,8443,8000,8001,8888,3000,5000,9000,9443,10443,32400",
-                "plugins": ["network.subdomain_enum", "network.subdomain_takeover", "web.*", "ssl_tls.*", "nuclei.runner"],
+                "plugins": ["network.dns_recon", "network.dns_zone_transfer", "network.subdomain_enum", "network.subdomain_takeover", "web.*", "ssl_tls.*", "nuclei.runner"],
                 "intrusive": False,
                 "brute_force": {"enabled": False},
                 "max_concurrent": 8,
@@ -281,7 +283,10 @@ async def seed_templates(session: AsyncSession) -> None:
         result = await session.execute(
             select(ScanTemplate).where(ScanTemplate.name == t["name"], ScanTemplate.is_system == True)
         )
-        if result.scalar_one_or_none():
+        existing = result.scalar_one_or_none()
+        if existing:
+            existing.description = t["description"]
+            existing.profile_json = json.dumps(t["profile_json"])
             continue
         template = ScanTemplate(
             id=new_uuid(),
