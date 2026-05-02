@@ -76,36 +76,36 @@ def _suggest(info: dict) -> tuple[str, str, str, int]:
     """Return (template_name, profile_json_hint, reason, confidence 0-100)."""
     if info["has_large_cidr"] or info["count"] > 20:
         return (
-            "Quick Scan",
-            '{"port_range": "top-1000", "plugins": ["network.*", "web.http_headers", "ssl_tls.cert_inspector"]}',
-            "Large target set — Quick Scan minimises scan time",
+            "Internal Network Scan",
+            '{"scan_context": "internal", "target_type": "cidr", "port_range": "top-1000", "plugins": ["network.*", "services.*", "web.http_headers", "ssl_tls.cert_inspector"]}',
+            "Large target set - internal scan defaults limit scan time while keeping service coverage",
             70,
         )
     if info["has_domain"] and not info["has_private_ip"]:
         return (
-            "Web Audit",
-            '{"port_range": "80,443,8080,8443,8000,8888,3000,5000,9000", "plugins": ["web.*", "ssl_tls.*", "nuclei.runner"]}',
-            "Domain target(s) suggest internet-facing web application",
+            "External Attack Surface",
+            '{"scan_context": "external", "target_type": "domain", "subdomain_enum": true, "port_range": "80,443,8080,8443,8000,8888,3000,5000,9000", "plugins": ["network.dns_recon", "network.subdomain_enum", "web.*", "ssl_tls.*", "nuclei.runner"]}',
+            "Domain target(s) suggest internet-facing attack-surface discovery",
             85,
         )
     if info["has_private_ip"] and not info["has_domain"] and not info["has_public_ip"]:
         return (
-            "Internal Network Audit",
-            '{"port_range": "top-10000", "plugins": ["network.*", "services.*", "ssh.*", "ssl_tls.*"]}',
+            "Internal Network Scan",
+            '{"scan_context": "internal", "target_type": "cidr", "port_range": "top-10000", "plugins": ["network.*", "services.*", "ssh.*", "ssl_tls.*"]}',
             "Private IP range(s) suggest internal network assessment",
             90,
         )
     if info["has_domain"] and info["has_private_ip"]:
         return (
-            "Full Scan",
-            '{"port_range": "1-65535", "plugins": ["*"]}',
-            "Mixed internal + domain targets — Full Scan for complete coverage",
+            "Advanced Scan",
+            '{"scan_context": "custom", "target_type": "hostname", "port_range": "top-10000", "plugins": ["*"]}',
+            "Mixed internal and domain targets - start from Advanced Scan and review capabilities",
             65,
         )
     return (
-        "Full Scan",
-        '{"port_range": "1-65535", "plugins": ["*"]}',
-        "General target — Full Scan recommended",
+        "Advanced Scan",
+        '{"scan_context": "custom", "target_type": "ip", "port_range": "top-1000", "plugins": ["*"]}',
+        "General target - Advanced Scan keeps all capabilities available",
         60,
     )
 

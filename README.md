@@ -1,234 +1,340 @@
-
 > This project was built with the assistance of [Claude](https://claude.ai) (Anthropic AI).
 
 # ScanR
 
-A self-hosted network vulnerability scanner. Point it at a subnet, get a structured report of open ports, misconfigurations, and CVEs — with a live console, network topology map, and PDF export.
+ScanR is a self-hosted vulnerability scanner for authorized internal and external security testing. It combines template-assisted scan setup with capability-level controls, live scan telemetry, structured findings, screenshots, reports, and recurring scan workflows.
 
 > **Legal notice:** Only scan networks and systems you own or have explicit written permission to test. Unauthorized scanning is illegal.
 
 ---
 
-![Dashboard](docs/screenshots/dashboard.png)
+![ScanR dashboard](docs/screenshots/dashboard.png)
 
-## Features
+## Highlights
 
-- **Nmap-based host discovery** and port scanning
-- **50+ security plugins** across web, SSH, SSL/TLS, services, and network categories
-- **Live scan console** with real-time streaming (persisted — replayable after scan completes)
-- **Findings triage** — mark false positives, accepted risk, add analyst notes
-- **Network topology map** — D3 force-directed graph, colored by severity
-- **Scan comparison (delta)** — diff two scans: new/resolved/persisting findings, host and port changes
-- **Screenshot gallery** — automatic Playwright screenshots of discovered web services
-- **PDF reports** — executive summary + full findings export
-- **Scan templates** — save and reuse scan profiles (Quick, Full, Web Audit, or custom)
-- **Scheduled scans** — cron-based recurring scans
-- **API keys** — machine-readable access for CI/CD pipelines
-- **Webhooks** — notify external systems on scan completion or critical findings
-- **Distributed agents** — run scans from multiple network vantage points
-- **Nuclei integration** — runs Nuclei templates alongside native plugins
+- **Template-assisted scanning** - start from intent-based presets, then tune the actual capabilities.
+- **Context-aware targets** - internal, external, or custom context with automatic target handling for IPs, CIDR blocks, IP ranges, hostnames, and domains.
+- **Capability controls** - discovery, ports, service/web enumeration, depth, safety, and performance are exposed directly.
+- **Nmap, masscan, Nuclei, and native plugins** - host discovery, port scanning, service detection, CVE checks, web checks, TLS checks, and service misconfiguration checks.
+- **Live console and persisted history** - stream scan progress while the scan runs and replay it later.
+- **Findings triage** - false positive, accepted risk, analyst notes, compliance tags, MITRE ATT&CK tags, and evidence.
+- **Peer-review evidence** - findings can include command/probe evidence so another tester can validate the result.
+- **Screenshots** - Playwright captures discovered web services when enabled.
+- **Scan deltas** - compare scans to see new, resolved, and persisting findings, plus host/port changes.
+- **Templates and schedules** - save reusable scan profiles and run them on a schedule.
+- **Reports** - export executive and technical reports in multiple formats.
+- **API keys, webhooks, and agents** - integrate ScanR into automated workflows and scan from different network vantage points.
 
-![New Scan](docs/screenshots/new-scan.png)
+## Screenshots
+
+### Scan Management
+
+![Scans list](docs/screenshots/scans.png)
+
+### New Scan Flow
+
+Targets are previewed before launch so a tester can see how ScanR interprets each line.
+
+![New scan targets](docs/screenshots/new-scan-targets.png)
+
+Capabilities are grouped by discovery, ports, enumeration, safety, and performance.
+
+![New scan capabilities](docs/screenshots/new-scan-capabilities.png)
+
+The review step summarizes scope, selected capabilities, credentials, warnings, and skipped/conditional checks before creating a pending scan.
+
+![New scan review](docs/screenshots/new-scan-review.png)
+
+### Findings
 
 ![Findings](docs/screenshots/findings.png)
 
-### Plugin categories
+### Templates
 
-| Category | Plugins |
-|---|---|
-| Web | HTTP headers, CORS, clickjacking, directory brute-force, sensitive files, open redirect, path traversal, JWT misconfig, GraphQL introspection, screenshots |
-| SSL/TLS | Certificate inspection, cipher audit, protocol check, Heartbleed, POODLE/BEAST |
-| SSH | Algorithm audit, version fingerprint, default credentials |
-| Services | FTP anon, SMB signing/vulns, SNMP community strings, Redis/MongoDB/Elasticsearch/Docker/Kubernetes/Jupyter unauthenticated access, IPMI cipher zero, NTP monlist, VNC auth, Telnet, RDP |
-| Network | ICMP info, open ports summary, NetBIOS |
-| CVE | NVD-based CVE matching against detected service versions |
-| Nuclei | Runs Nuclei template library (CVEs, exposures, misconfigs, default logins) |
+Templates are presets, not hard modes. Users can edit context, target handling, ports, discovery, enumeration, safety, and performance before launch.
+
+![Templates](docs/screenshots/templates.png)
+
+### Plugins, Reports, and Wordlists
 
 ![Plugins](docs/screenshots/plugins.png)
 
-![Settings](docs/screenshots/settings.png)
+![Reports](docs/screenshots/reports.png)
+
+![Wordlists](docs/screenshots/wordlists.png)
+
+All screenshots above use documentation-safe mock data such as `192.0.2.x`, `198.51.100.x`, `example.com`, and `demo.internal`.
 
 ---
 
-## Quick Start (Docker)
+## Quick Start
 
 ### Prerequisites
 
 - Docker Engine 24+
-- Docker Compose v2 (`docker compose` command)
-- Ports 80 and 8000 available on the host
+- Docker Compose v2 (`docker compose`)
+- Ports `80` and `8000` available on the host
 
-### 1. Clone the repository
+### 1. Clone
 
 ```bash
 git clone https://github.com/T3rr0or/ScanR.git
 cd ScanR
 ```
 
-### 2. Configure environment
+### 2. Configure
 
 ```bash
 cp .env.example .env
 ```
 
-Edit `.env` and fill in the required values:
+Edit `.env` and set required secrets:
 
 ```env
-# Generate with: python3 -c "import secrets; print(secrets.token_urlsafe(32))"
+# Generate with:
+# python3 -c "import secrets; print(secrets.token_urlsafe(32))"
 SECRET_KEY=
 
-# Generate with: python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+# Generate with:
+# python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 VAULT_KEY=
 
-# PostgreSQL password
 POSTGRES_PASSWORD=
 
-# Admin account (created on first boot)
 ADMIN_EMAIL=admin@example.com
 ADMIN_PASSWORD=
 ```
 
-The application will refuse to start if `SECRET_KEY`, `ADMIN_PASSWORD`, or `POSTGRES_PASSWORD` are not set.
+ScanR refuses to start if `SECRET_KEY`, `ADMIN_PASSWORD`, or `POSTGRES_PASSWORD` are missing.
 
-### 3. Start all services
+### 3. Start
 
 ```bash
 docker compose up -d --build
 ```
 
-This starts:
-- **postgres** — database
-- **redis** — task queue and event bus
-- **api** — FastAPI backend on port 8000
-- **worker** — Celery scan worker (requires `NET_RAW` / `NET_ADMIN` for nmap)
-- **frontend** — Nginx serving the React UI on port 80
+Services:
 
-First boot runs database migrations and seeds system scan templates automatically.
+- **frontend** - React/Vite app served by Nginx on port `80`
+- **api** - FastAPI backend on port `8000`
+- **worker** - Celery scanner worker
+- **postgres** - application database
+- **redis** - task queue, result backend, and event bus
 
-### 4. Open the UI
+First boot runs migrations and seeds system templates/plugins.
 
-Navigate to **http://localhost** and log in with the admin credentials you set in `.env`.
+### 4. Open
+
+Open **http://localhost** and log in with the admin credentials from `.env`.
 
 ---
 
-## Usage
+## Scan Workflow
 
-### Creating a scan
+### 1. Pick a Template
 
-1. Go to **Scans → New Scan**
-2. Pick a template (Quick, Full, Web Audit) or configure manually
-3. Enter targets — one per line, supports:
-   - Single IP: `192.168.1.10`
-   - CIDR range: `192.168.1.0/24`
-   - IP range: `10.0.0.1-10.0.0.50`
-   - Hostname: `example.com`
-4. Click **Create & Launch**
+Templates are entry points only. They preconfigure options but do not hide or lock capabilities.
 
-### Scan profiles
+Common template intents:
 
-| Template | Ports | Plugins |
-|---|---|---|
-| Quick Scan | Top 1 000 | No brute-force, no auth |
-| Full Scan | All 65 535 | All plugins |
-| Web Audit | 80, 443, 8080, 8443 | Web + SSL only |
-| Custom | Your choice | Your choice |
+- **External Attack Surface** - domains, DNS, subdomains, and web exposure.
+- **Web Application Scan** - HTTP/HTTPS ports, headers, screenshots, Nuclei, and web checks.
+- **External Vulnerability Scan** - internet-facing hosts with TCP-based discovery defaults.
+- **Internal Network Scan** - internal CIDR/range discovery and service enumeration.
+- **Credentialed Scan** - internal scan prepared for supplied credentials.
+- **Active Directory / Internal Audit** - Windows and internal service-oriented checks.
+- **TLS / Crypto Audit** - certificates, protocols, ciphers, and TLS findings.
+- **Advanced Scan** - minimal assumptions, full manual control.
 
-### Viewing results
+### 2. Set Context
 
-Open any scan row to enter the scan detail view:
+`scan_context` sets defaults only:
 
-- **Console** — live log stream during scan; full history on completed scans
-- **Findings** — sortable/filterable vulnerability table with triage controls
-- **Hosts** — discovered hosts with open ports and services
-- **Topology** — D3 force-directed network map colored by severity; scroll to zoom, drag to pan
-- **Screenshots** — gallery of web service screenshots captured by Playwright
+- **Internal** - deeper enumeration, internal protocols, ICMP/ARP-style intent, and internal service defaults.
+- **External** - avoids ICMP reliance, uses TCP/DNS/web-focused defaults.
+- **Custom** - neutral defaults with all controls editable.
 
-### Findings triage
+### 3. Enter Targets
 
-- Click any finding row to open the detail drawer
-- Use **False Positive** / **Accept Risk** buttons in the drawer
-- Add analyst notes (auto-saved on blur)
-- Filter by triage status: All / Open / False Positive / Accepted Risk
+Target handling defaults to **Auto detect from each line**:
 
-### Comparing scans
+| Input | Meaning |
+|---|---|
+| `192.0.2.24` | one exact IP host |
+| `192.0.2.0/24` | CIDR subnet |
+| `192.0.2.50-80` | explicit IP range |
+| `demo.internal` | hostname |
+| `example.com` | domain/hostname; choose Domain for DNS/subdomain workflows |
 
-On the Scans list, click the **⎇ Compare** icon on any completed scan to open the delta view. Select a baseline scan to see:
-- New findings introduced since baseline
-- Resolved findings
-- Persisting findings
-- New/removed hosts
-- Per-host port changes
+ScanR shows a target preview with estimated host counts before the scan is created.
 
-### Reports
+### 4. Tune Capabilities
 
-Go to **Reports → Generate** to export a report for any completed scan in HTML, PDF, JSON, or CSV format. Includes executive summary, severity breakdown, and full findings list.
+Capability groups:
 
-### Scheduled scans
+- **Host Discovery** - ICMP, TCP probes, ARP intent, assume-up behavior, retries, and discovery strategy.
+- **Ports** - top ports, full range, web ports, internal high web/NodePort preset, custom ranges, scanner type.
+- **Enumeration** - service detection, HTTP probing, TLS checks, security headers, screenshots, Nuclei, directory enumeration, subdomains, DNS recon.
+- **Depth** - light, balanced, or deep.
+- **Safety** - safe, balanced, or aggressive.
+- **Performance** - conservative, normal, fast, or custom concurrency/rate/timeout settings.
 
-Go to **Schedules** to create recurring scans using cron syntax (e.g., `0 2 * * 0` for weekly at 2 AM).
+### 5. Review and Launch
 
-### API access
+The final review step shows:
 
-Go to **Settings → API Keys** to generate a key for automated access:
+- interpreted targets and estimated host count
+- context and target handling
+- selected ports and discovery methods
+- safety, depth, and performance
+- known credentials and brute-force status
+- enabled capability groups
+- warnings and skipped/conditional checks
 
-```bash
-# List scans
-curl -H "X-API-Key: sk_..." http://localhost:8000/api/v1/scans
+Creating a scan produces a **pending** scan. Review it, then launch it from the Scans table.
 
-# Trigger a scan
-curl -X POST -H "X-API-Key: sk_..." -H "Content-Type: application/json" \
-  -d '{"name":"CI scan","targets":["10.0.1.0/24"],"profile":"custom","profile_json":"{}"}' \
-  http://localhost:8000/api/v1/scans
+---
+
+## Results and Triage
+
+Open a scan to review:
+
+- **Console** - live scan stream and persisted history.
+- **Findings** - sortable/filterable findings with severity, host, port, plugin, evidence, remediation, compliance, and MITRE tags.
+- **Hosts** - discovered hosts, open ports, service versions, and OS guesses.
+- **Topology** - network visualization.
+- **Screenshots** - web screenshots captured by Playwright.
+- **Chains** - relationship view for correlated findings where available.
+
+Triage actions:
+
+- mark false positive
+- accept risk
+- add analyst notes
+- track remediation status
+- compare against previous scans to identify new/resolved findings
+
+---
+
+## Plugin Categories
+
+| Category | Examples |
+|---|---|
+| Web | HTTP headers, CORS, clickjacking, directory brute-force, sensitive files, open redirect, path traversal, JWT, GraphQL, screenshots |
+| SSL/TLS | Certificate inspection, cipher audit, protocol checks, Heartbleed, POODLE/BEAST |
+| SSH | Algorithm audit, version fingerprinting, default credential checks |
+| Services | FTP, SMB, SNMP, Redis, MongoDB, Elasticsearch, Docker, Kubernetes, Jupyter, IPMI, NTP, VNC, Telnet, RDP |
+| Network | Host/port inventory, ICMP information, NetBIOS |
+| CVE | NVD-based matching against detected product/version data |
+| Nuclei | ProjectDiscovery Nuclei templates for CVEs, exposures, misconfigurations, and default logins |
+
+---
+
+## Credentials and Wordlists
+
+ScanR separates credential concepts:
+
+- **Known credentials** are supplied to authenticated checks.
+- **Brute force wordlists** actively try username/password lists against detected services when enabled.
+
+Aggressive safety allows intrusive checks, but brute force still requires the brute-force capability to be enabled explicitly.
+
+---
+
+## Reports
+
+Reports can include:
+
+- executive summary
+- affected assets
+- severity breakdown
+- full finding details
+- evidence and remediation
+- compliance tags
+- analyst notes
+
+Supported exports include HTML, PDF, JSON, CSV, and SARIF where configured.
+
+---
+
+## Scheduled Scans
+
+Use **Schedules** to run recurring scans from saved templates. Schedules use cron syntax, for example:
+
+```text
+0 2 * * 0
 ```
 
-Full API docs: **http://localhost:8000/api/v1/docs**
+That example runs weekly at 02:00.
 
 ---
 
-## Configuration reference
+## API Access
 
-All options can be set via `.env` or environment variables:
+Create an API key in **Settings** and call the API:
+
+```bash
+curl -H "X-API-Key: sk_..." http://localhost:8000/api/v1/scans
+```
+
+Create a pending scan:
+
+```bash
+curl -X POST http://localhost:8000/api/v1/scans \
+  -H "X-API-Key: sk_..." \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Internal review",
+    "targets": ["192.0.2.0/24"],
+    "profile": "custom",
+    "profile_json": "{\"scan_context\":\"internal\",\"port_range\":\"top-1000\"}"
+  }'
+```
+
+API docs are available at **http://localhost:8000/api/v1/docs**.
+
+---
+
+## Configuration
 
 | Variable | Default | Description |
-|---|---|---|
-| `SECRET_KEY` | *(required)* | JWT signing secret — generate with `python3 -c "import secrets; print(secrets.token_urlsafe(32))"` |
-| `VAULT_KEY` | *(optional)* | Fernet key for credential vault — generate with `python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` |
-| `POSTGRES_PASSWORD` | *(required)* | Password for the PostgreSQL `scanr` database user |
-| `ADMIN_EMAIL` | `admin@scanr.local` | Bootstrap admin account email (first boot only) |
-| `ADMIN_PASSWORD` | *(required)* | Bootstrap admin account password (first boot only) |
-| `ALLOWED_ORIGINS` | `http://localhost` | Comma-separated CORS origins allowed to call the API |
-| `DATABASE_URL` | *(set in compose)* | PostgreSQL connection string |
-| `REDIS_URL` | *(set in compose)* | Redis connection URL |
-| `MAX_CONCURRENT_HOSTS` | `50` | Max hosts scanned in parallel per scan |
-| `MAX_CONCURRENT_PLUGINS` | `20` | Max plugins running in parallel per host |
-| `DEFAULT_SCAN_TIMEOUT` | `3600` | Scan timeout in seconds |
+|---|---:|---|
+| `SECRET_KEY` | required | JWT signing secret |
+| `VAULT_KEY` | optional | Fernet key for credential vault encryption |
+| `POSTGRES_PASSWORD` | required | PostgreSQL password |
+| `ADMIN_EMAIL` | `admin@scanr.local` | Bootstrap admin email |
+| `ADMIN_PASSWORD` | required | Bootstrap admin password |
+| `ALLOWED_ORIGINS` | `http://localhost` | Comma-separated CORS origins |
+| `SECURE_COOKIES` | `true` | Mark auth cookies as secure |
+| `DATABASE_URL` | compose-managed | SQLAlchemy database URL |
+| `REDIS_URL` | compose-managed | Redis URL |
+| `CELERY_BROKER_URL` | compose-managed | Celery broker URL |
+| `CELERY_RESULT_BACKEND` | compose-managed | Celery result backend |
+| `WORDLIST_DIR` | `/app/wordlists` | Wordlist storage path |
 
 ---
 
 ## Architecture
 
-```
+```text
 Browser
-  │
-  ├── HTTP/WS ──► Nginx (port 80)
-  │                 │
-  │                 └── proxy ──► FastAPI (port 8000)
-  │                                 │
-  │                                 ├── PostgreSQL (data)
-  │                                 ├── Redis (events / task queue)
-  │                                 └── Celery worker
-  │                                       │
-  │                                       ├── nmap / masscan
-  │                                       ├── Playwright (screenshots)
-  │                                       ├── Nuclei
-  │                                       └── Python plugins
+  |
+  | HTTP / WebSocket
+  v
+Nginx frontend
+  |
+  v
+FastAPI backend
+  |-- PostgreSQL: scans, hosts, ports, findings, reports
+  |-- Redis: Celery broker, result backend, live events
+  |
+  v
+Celery worker
+  |-- nmap / masscan
+  |-- Nuclei
+  |-- Playwright
+  |-- native Python plugins
 ```
-
-- **FastAPI** — async REST API + WebSocket for live console
-- **Celery** — scan tasks run in a separate worker process with `NET_RAW` capability for nmap
-- **Redis** — pub/sub for live event streaming; persistent list for console history replay
-- **PostgreSQL** — all scan data, findings, hosts, ports, reports
-- **React + Vite** — SPA frontend served by Nginx
 
 ---
 
@@ -243,31 +349,14 @@ Database migrations run automatically on API startup.
 
 ---
 
-## Stopping / removing
+## Stopping
 
 ```bash
-# Stop containers (keep data)
+# Stop containers and keep data
 docker compose down
 
-# Stop and delete all data (scans, findings, reports)
+# Stop and delete all ScanR data
 docker compose down -v
 ```
-
----
-
-## Security considerations
-
-- The worker container requires `NET_ADMIN` and `NET_RAW` Linux capabilities for nmap raw-socket scanning. Do not expose it to untrusted networks.
-- `SECRET_KEY`, `POSTGRES_PASSWORD`, and `ADMIN_PASSWORD` are required — the application will not start without them.
-- For deployments beyond localhost, put ScanR behind a reverse proxy (nginx, Caddy) with TLS and set `ALLOWED_ORIGINS` to your domain.
-- The API is rate-limited (10 req/min on login, 20 req/min on scan creation, 300 req/min global).
-- All scan data is scoped per user — users cannot access each other's scans.
-- Failed login attempts are logged server-side with IP address.
-
----
-
-## License
-
-MIT
 
 ---

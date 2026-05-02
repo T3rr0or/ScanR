@@ -7,7 +7,7 @@ import {
 import { schedulesApi, type Schedule } from '@/api/schedules'
 import { credentialsApi } from '@/api/credentials'
 import { templatesApi, type ScanTemplate } from '@/api/templates'
-import { ALL_CATEGORIES, PORT_RANGES, type ProfileConfig } from '@/components/ProfileEditor'
+import { ALL_CATEGORIES, PORT_RANGES, defaultProfileConfig, type ProfileConfig } from '@/components/ProfileEditor'
 
 const CRON_PRESETS = [
   { label: 'Every hour',   value: '0 * * * *' },
@@ -55,10 +55,10 @@ function ScheduleForm({
   const parsedInitial = (() => {
     try { return initial?.scan_profile_json ? JSON.parse(initial.scan_profile_json) : {} } catch { return {} }
   })()
-  const [profileConfig, setProfileConfig] = useState<ProfileConfig>({
+  const [profileConfig, setProfileConfig] = useState<ProfileConfig>(defaultProfileConfig({
     port_range: parsedInitial.port_range ?? 'top-1000',
     categories: parsedInitial.categories ?? ALL_CATEGORIES.map(c => c.id),
-  })
+  }))
   const [enabledCategories, setEnabledCategories] = useState<Set<string>>(
     new Set(parsedInitial.categories ?? ALL_CATEGORIES.map(c => c.id))
   )
@@ -101,10 +101,10 @@ function ScheduleForm({
     const pj = template.profile_json
     const cats = categoriesFromPlugins(pj.plugins)
     setBaseProfileJson(pj)
-    setProfileConfig({
+    setProfileConfig(defaultProfileConfig({
       port_range: typeof pj.port_range === 'string' ? pj.port_range : 'top-1000',
       categories: cats,
-    })
+    }))
     setEnabledCategories(new Set(cats))
     setIntrusive(Boolean(pj.intrusive))
     setStealth(Boolean(pj.stealth))

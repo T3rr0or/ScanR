@@ -18,7 +18,7 @@ from scanr.core.scan_logger import ScanLogger
 from scanr.models import Host, Plugin, Scan, Target
 from scanr.models.base import new_uuid
 from scanr.plugins.web._ports import is_web_port_data
-from scanr.utils.ip_utils import is_valid_ip
+from scanr.utils.ip_utils import classify_target, is_valid_ip
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +57,10 @@ def _plugin_applies_to_host_data(plugin, ports: list[dict]) -> bool:
 
 
 def _is_domain_mode(profile: dict, targets: list[str]) -> bool:
+    if profile.get("target_type") == "domain":
+        return True
+    if profile.get("scan_context") == "external" and targets and all(not is_valid_ip(t) for t in targets):
+        return True
     if profile.get("target_mode") in {"domain", "bug_bounty", "external"}:
         return True
     if profile.get("external_recon") is True:
@@ -64,9 +68,71 @@ def _is_domain_mode(profile: dict, targets: list[str]) -> bool:
     return bool(targets) and all(not is_valid_ip(t) for t in targets)
 
 
+def _target_type(profile: dict, raw_targets: list[str], expanded_targets: list[str]) -> str:
+    configured = profile.get("target_type")
+    if configured in {"ip", "cidr", "range", "hostname", "domain"}:
+        return configured
+    raw = [t.strip() for t in raw_targets if t.strip()]
+    raw_types = [classify_target(t) for t in raw]
+    if raw_types and all(t == "ip" for t in raw_types):
+        return "ip"
+    if raw_types and all(t == "cidr" for t in raw_types):
+        return "cidr"
+    if raw_types and all(t == "range" for t in raw_types):
+        return "range"
+    if raw_types and all(t in {"ip", "cidr", "range"} for t in raw_types):
+        return "range"
+    if expanded_targets and all(is_valid_ip(t) for t in expanded_targets):
+        return "ip" if len(expanded_targets) == 1 else "cidr"
+    if raw and all("." in t and not is_valid_ip(t) for t in raw):
+        return "domain"
+    return "hostname"
+
+
+def _enum_config(profile: dict) -> dict:
+    enum = profile.get("enumeration") or {}
+    return {
+        "service_detection": bool(enum.get("service_detection", True)),
+        "http_probing": bool(enum.get("http_probing", True)),
+        "tls_checks": bool(enum.get("tls_checks", True)),
+        "security_headers": bool(enum.get("security_headers", True)),
+        "screenshots": bool(enum.get("screenshots", True)),
+        "nuclei": bool(enum.get("nuclei", True)),
+        "directory_enum": bool(enum.get("directory_enum", False)),
+        "subdomain_enum": bool(enum.get("subdomain_enum", profile.get("subdomain_enum", False))),
+        "dns_recon": bool(enum.get("dns_recon", False)),
+    }
+
+
+def _filter_plugins_by_capabilities(plugins: list, profile: dict) -> list:
+    enum = _enum_config(profile)
+    safety = profile.get("safety_level", "balanced")
+    allowed = []
+    for plugin in plugins:
+        pid = plugin.id
+        if not enum["screenshots"] and pid == "web.screenshot":
+            continue
+        if not enum["nuclei"] and pid.startswith("nuclei."):
+            continue
+        if not enum["tls_checks"] and pid.startswith("ssl_tls."):
+            continue
+        if not enum["security_headers"] and pid == "web.http_headers":
+            continue
+        if not enum["directory_enum"] and pid in {"web.dir_bruteforce", "web.sensitive_files"}:
+            continue
+        if not enum["dns_recon"] and pid in {"network.dns_recon", "network.dns_zone_transfer", "network.subdomain_takeover"}:
+            continue
+        if not enum["subdomain_enum"] and pid == "network.subdomain_enum":
+            continue
+        if safety == "safe" and (getattr(plugin, "intrusive", False) or "default_creds" in pid):
+            continue
+        allowed.append(plugin)
+    return allowed
+
+
 async def _expand_domain_targets(targets: list[str], scan_log: ScanLogger, profile: dict) -> list[str]:
     roots = [t.strip().lower().removeprefix("*.") for t in targets if t.strip()]
-    include_subdomains = profile.get("subdomain_enum", True)
+    include_subdomains = _enum_config(profile)["subdomain_enum"]
     max_subdomains = int(profile.get("max_subdomains", 50))
     discovered: list[str] = []
 
@@ -163,8 +229,12 @@ class ScanEngine:
         )
         targets = targets_result.scalars().all()
 
+        perf = (_pj.get("performance") or {}) if isinstance(_pj, dict) else {}
+        max_hosts = int(perf.get("max_concurrent_hosts") or _pj.get("max_concurrent") or 20)
+        max_plugins = int(perf.get("max_concurrent_plugins") or 20)
+
         # Build context
-        rate_limiter = RateLimiter()
+        rate_limiter = RateLimiter(max_concurrent_hosts=max_hosts, max_concurrent_plugins=max_plugins)
         context = ScanContext(
             scan_id=self.scan_id,
             scan=scan,
@@ -243,7 +313,23 @@ class ScanEngine:
         enabled_ids = {p.id for p in plugin_result.scalars().all()}
         plugins = get_enabled_plugins(enabled_ids)
 
-        # Filter plugins by profile_json.plugins list (e.g. ["web.*", "ssl_tls.*"])
+        # Expand all targets to individual IPs/hostnames
+        from scanr.utils.ip_utils import expand_targets
+
+        all_targets: list[str] = []
+        raw_targets = [target.value for target in targets]
+        for target in targets:
+            all_targets.extend(expand_targets(target.value))
+
+        _pj["target_type"] = _target_type(_pj, raw_targets, all_targets)
+        if _pj.get("target_type") == "domain":
+            enum = _pj.setdefault("enumeration", {})
+            enum["subdomain_enum"] = bool(enum.get("subdomain_enum", _pj.get("subdomain_enum", True)))
+            enum["dns_recon"] = bool(enum.get("dns_recon", True))
+
+        # Filter plugins by profile_json.plugins list (e.g. ["web.*", "ssl_tls.*"]).
+        # This must happen after target normalization so domain defaults can
+        # enable DNS/subdomain workflows before capability filtering.
         import json as _json
         profile_filter: list[str] | None = None
         if scan.profile_json:
@@ -258,18 +344,21 @@ class ScanEngine:
         if profile_filter:
             plugins = [p for p in plugins if _plugin_allowed(p.id, profile_filter)]
 
+        plugins = _filter_plugins_by_capabilities(plugins, _pj)
+
         # Drop plugins that require credentials when none are loaded
         if not context.credentials:
             plugins = [p for p in plugins if not p.requires_auth]
 
         await scan_log.info(f"Loaded {len(plugins)} plugins (profile filter: {profile_filter or '*'})", phase="engine")
 
-        # Expand all targets to individual IPs/hostnames
-        from scanr.utils.ip_utils import expand_targets
-
-        all_targets: list[str] = []
-        for target in targets:
-            all_targets.extend(expand_targets(target.value))
+        perf_max_hosts = perf.get("max_hosts")
+        if perf_max_hosts and len(all_targets) > int(perf_max_hosts):
+            all_targets = all_targets[: int(perf_max_hosts)]
+            await scan_log.warn(
+                f"Target list capped at {perf_max_hosts} host(s) by performance settings",
+                phase="engine",
+            )
 
         domain_mode = _is_domain_mode(_pj, all_targets)
         if domain_mode:
@@ -315,10 +404,12 @@ class ScanEngine:
         # before nmap runs per-host service detection only on known-open ports.
         masscan_results: dict[str, list[int]] = {}
         from scanr.scanner.port_scanner.masscan_wrapper import MasscanWrapper
+        port_scan_cfg = context.port_scanning_config()
         use_masscan = (
             MasscanWrapper.is_available()
             and not _pj.get("disable_masscan", False)
             and not domain_mode
+            and not ((_pj.get("port_scanning") or {}).get("scanner") == "tcp_connect")
             and all(is_valid_ip(t) for t in live_targets)
         )
         if use_masscan:
@@ -334,7 +425,12 @@ class ScanEngine:
                 phase="portscan",
             )
         else:
-            reason = "disabled for domain/external scan" if domain_mode else "not found"
+            if domain_mode:
+                reason = "disabled for domain scan"
+            elif ((_pj.get("port_scanning") or {}).get("scanner") == "tcp_connect"):
+                reason = "disabled by TCP connect scanner selection"
+            else:
+                reason = "not found"
             await scan_log.info(
                 f"masscan {reason} — using nmap for port/service discovery",
                 phase="portscan",
@@ -500,7 +596,7 @@ class ScanEngine:
                     phase="plugin",
                     host=ip,
                 )
-            plugin_sem = asyncio.Semaphore(20)
+            plugin_sem = context.rate_limiter.plugin_slot(ip) if context.rate_limiter else asyncio.Semaphore(20)
             plugin_tasks = [
                 self._run_plugin(plugin, context, host, host_data, collector, plugin_sem)
                 for plugin in applicable
@@ -524,7 +620,7 @@ class ScanEngine:
             try:
                 findings = await asyncio.wait_for(
                     plugin.check(context, host),
-                    timeout=getattr(plugin, "timeout", None) or 60.0,
+                    timeout=getattr(plugin, "timeout", None) or context.performance_config()["timeout"],
                 )
                 for f in findings:
                     await collector.add_finding(host.id, f)

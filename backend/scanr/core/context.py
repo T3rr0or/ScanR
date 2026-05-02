@@ -90,7 +90,6 @@ class ScanContext:
 
     def get_brute_config(self) -> dict:
         """Return brute_force config from profile_json, with safe defaults."""
-        import json as _json
         defaults = {
             "credential_wordlist_id": None,
             "username_wordlist_id": None,
@@ -100,14 +99,55 @@ class ScanContext:
             "stop_on_success": False,
             "max_failures_per_account": 5,
         }
+        cfg = self.profile_json().get("brute_force", {})
+        return {**defaults, **cfg}
+
+    def profile_json(self) -> dict:
+        """Return parsed scan profile_json, or an empty object on invalid input."""
+        import json as _json
         if not self.scan.profile_json:
-            return defaults
+            return {}
         try:
-            pj = _json.loads(self.scan.profile_json) if isinstance(self.scan.profile_json, str) else self.scan.profile_json
-            cfg = pj.get("brute_force", {})
-            return {**defaults, **cfg}
+            return _json.loads(self.scan.profile_json) if isinstance(self.scan.profile_json, str) else self.scan.profile_json
         except Exception:
-            return defaults
+            return {}
+
+    def performance_config(self) -> dict:
+        pj = self.profile_json()
+        perf = pj.get("performance") or {}
+        return {
+            "max_concurrent_hosts": int(perf.get("max_concurrent_hosts") or pj.get("max_concurrent") or 20),
+            "max_concurrent_plugins": int(perf.get("max_concurrent_plugins") or 20),
+            "timeout": int(perf.get("timeout") or pj.get("timeout") or 60),
+            "masscan_rate": int(perf.get("masscan_rate") or pj.get("masscan_rate") or 10000),
+            "nuclei_rate": int(perf.get("nuclei_rate") or 25),
+            "max_hosts": perf.get("max_hosts"),
+            "max_checks": perf.get("max_checks"),
+        }
+
+    def discovery_config(self) -> dict:
+        pj = self.profile_json()
+        cfg = pj.get("discovery") or {}
+        scan_context = pj.get("scan_context") or pj.get("target_mode")
+        target_type = pj.get("target_type")
+        external_domain = scan_context in {"external", "domain", "bug_bounty"} or target_type == "domain"
+        return {
+            "icmp": bool(cfg.get("icmp", not external_domain)),
+            "tcp": bool(cfg.get("tcp", True)),
+            "arp": bool(cfg.get("arp", scan_context == "internal")),
+            "udp": bool(cfg.get("udp", False)),
+            "retries": int(cfg.get("retries", 1)),
+            "strategy": cfg.get("strategy", "fast" if external_domain else "validated"),
+            "assume_up": bool(cfg.get("assume_up", False)),
+        }
+
+    def port_scanning_config(self) -> dict:
+        pj = self.profile_json()
+        cfg = pj.get("port_scanning") or {}
+        return {
+            "scanner": cfg.get("scanner", "tcp_connect"),
+            "firewall_strategy": cfg.get("firewall_strategy", "default"),
+        }
 
     def iter_wordlist(self, wordlist_id: str):
         """
@@ -139,22 +179,17 @@ class ScanContext:
 
     def get_port_range(self) -> str:
         """Return nmap port spec based on profile, with profile_json override support."""
-        import json as _json
-        if self.scan.profile_json:
-            try:
-                pj = _json.loads(self.scan.profile_json) if isinstance(self.scan.profile_json, str) else self.scan.profile_json
-                custom = pj.get("port_range")
-                if custom:
-                    if custom == "top-1000":
-                        return "--top-ports 1000"
-                    if custom == "top-10000":
-                        return "--top-ports 10000"
-                    if custom == "all":
-                        return "-p-"
-                    # Custom spec like "80,443" or "1-1024"
-                    return f"-p {custom}"
-            except Exception:
-                pass
+        pj = self.profile_json()
+        custom = pj.get("port_range")
+        if custom:
+            if custom == "top-1000":
+                return "--top-ports 1000"
+            if custom == "top-10000":
+                return "--top-ports 10000"
+            if custom == "all":
+                return "-p-"
+            # Custom spec like "80,443" or "1-1024"
+            return f"-p {custom}"
         match self.profile:
             case "quick":
                 return "--top-ports 1000"

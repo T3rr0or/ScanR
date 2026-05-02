@@ -29,11 +29,25 @@ class NmapWrapper:
             port_arg = "-p " + ",".join(str(p) for p in sorted(set(known_ports)))
         else:
             port_arg = context.get_port_range()
-        common_args = f"-sV -T4 {port_arg} --host-timeout 60s"
+        port_cfg = context.port_scanning_config()
+        perf_cfg = context.performance_config()
+        service_arg = "-sV" if context.profile_json().get("enumeration", {}).get("service_detection", True) else ""
+        ping_arg = "-Pn" if port_cfg["firewall_strategy"] == "skip_ping" else ""
+        host_timeout = int(perf_cfg.get("timeout") or 60)
+        common_args = f"{service_arg} -T4 {ping_arg} {port_arg} --host-timeout {host_timeout}s".strip()
+
+        if port_cfg["scanner"] == "udp":
+            udp_args = f"-sU {common_args}"
+            await context.log.info(f"$ nmap {udp_args} {ip}", phase="portscan", host=ip)
+            try:
+                return await self._run_nmap(ip, udp_args)
+            except asyncio.TimeoutError:
+                logger.warning("nmap UDP scan timed out for %s", ip)
+                return None
 
         # SYN scanning and OS fingerprinting require elevated privileges.
         # The container normally runs as scanr, so use TCP connect scanning there.
-        if os.geteuid() != 0:
+        if os.geteuid() != 0 or port_cfg["scanner"] == "tcp_connect":
             tcp_args = f"-sT {common_args}"
             tcp_cmd = f"nmap {tcp_args} {ip}"
             await context.log.info(f"$ {tcp_cmd}", phase="portscan", host=ip)
@@ -44,7 +58,7 @@ class NmapWrapper:
                 return None
 
         # Root can use SYN scanning and OS fingerprinting.
-        privileged_args = f"-sV -O --osscan-guess -T4 {port_arg} --host-timeout 60s"
+        privileged_args = f"{service_arg} -O --osscan-guess -T4 {ping_arg} {port_arg} --host-timeout {host_timeout}s".strip()
         syn_cmd = f"nmap -sS {privileged_args} {ip}"
         await context.log.info(f"$ {syn_cmd}", phase="portscan", host=ip)
         try:

@@ -1,0 +1,9 @@
+repos:
+  - repo: local
+    hooks:
+      - id: scanr-secret-scan
+        name: ScanR secret and local-state guard
+        entry: scripts/secret-scan.sh --staged
+        language: system
+        pass_filenames: false
+        stages: [pre-commit]

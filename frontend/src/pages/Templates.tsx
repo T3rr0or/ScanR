@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Trash2, Plus, Lock, User, FileText, Pencil, Check, X, Rocket } from 'lucide-react'
 import { templatesApi, type ScanTemplate } from '@/api/templates'
-import { ProfileEditor, PORT_RANGES, configToJson, jsonToConfig, type ProfileConfig } from '@/components/ProfileEditor'
+import { ProfileEditor, PORT_RANGES, configToJson, defaultProfileConfig, jsonToConfig, type ProfileConfig } from '@/components/ProfileEditor'
 import { scansApi } from '@/api/scans'
 
 interface Props {
@@ -21,7 +21,11 @@ export default function Templates({ onSelectTemplate }: Props) {
   const { data: templates = [], isLoading } = useQuery({ queryKey: ['templates'], queryFn: templatesApi.list })
 
   const createMut = useMutation({
-    mutationFn: () => templatesApi.create({ name: form.name, description: form.description || undefined }),
+    mutationFn: () => templatesApi.create({
+      name: form.name,
+      description: form.description || undefined,
+      profile_json: configToJson(defaultProfileConfig()),
+    }),
     onSuccess: () => {
       setShowCreate(false)
       setForm({ name: '', description: '' })
@@ -241,8 +245,20 @@ function ProfilePreview({ profileJson }: { profileJson: Record<string, unknown> 
     <div style={{ background: 'var(--bg-2)', border: '1px solid var(--border)', borderRadius: 6, padding: 12 }}>
       <div className="dimmer" style={{ fontSize: 11, fontWeight: 600, marginBottom: 8 }}>Template profile</div>
       {[
+        { label: 'Context', value: `${config.scan_context} / ${config.target_type === 'auto' ? 'auto target handling' : config.target_type}` },
         { label: 'Port range', value: portLabel },
+        { label: 'Depth', value: config.depth_level },
+        { label: 'Safety', value: config.safety_level },
+        { label: 'Performance', value: config.performance_profile },
         { label: 'Plugins', value: pluginDisplay },
+        { label: 'Enumeration', value: [
+          config.enumeration.http_probing ? 'HTTP' : null,
+          config.enumeration.tls_checks ? 'TLS' : null,
+          config.enumeration.screenshots ? 'screenshots' : null,
+          config.enumeration.nuclei ? 'Nuclei' : null,
+          config.enumeration.directory_enum ? 'dirs' : null,
+          config.enumeration.subdomain_enum ? 'subdomains' : null,
+        ].filter(Boolean).join(', ') || 'none' },
         ...(typeof pj.max_concurrent === 'number' ? [{ label: 'Concurrency', value: String(pj.max_concurrent) }] : []),
       ].map(row => (
         <div key={row.label} style={{ display: 'flex', gap: 8, fontSize: 12, marginBottom: 4 }}>
@@ -290,7 +306,7 @@ function TemplateCard({
 
   if (editing) {
     return (
-      <div className="panel" style={{ padding: 14, border: '1px solid var(--accent)' }}>
+      <div className="panel" style={{ padding: 14, border: '1px solid var(--accent)', gridColumn: '1 / -1' }}>
         <input value={editName} onChange={e => setEditName(e.target.value)} className="input" placeholder="Template name" style={{ marginBottom: 8 }} />
         <textarea
           value={editDesc}

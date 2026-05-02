@@ -39,8 +39,50 @@ class _BruteForceConfig(BaseModel):
     max_failures_per_account: int = Field(default=5, ge=1, le=100)
 
 
+class _DiscoveryConfig(BaseModel):
+    icmp: bool = True
+    tcp: bool = True
+    arp: bool = True
+    udp: bool = False
+    retries: int = Field(default=1, ge=0, le=10)
+    strategy: Literal["fast", "validated"] = "validated"
+    assume_up: bool = False
+
+
+class _PortScanningConfig(BaseModel):
+    scanner: Literal["tcp_connect", "syn", "udp"] = "tcp_connect"
+    firewall_strategy: Literal["default", "skip_ping"] = "default"
+
+
+class _EnumerationConfig(BaseModel):
+    service_detection: bool = True
+    http_probing: bool = True
+    tls_checks: bool = True
+    security_headers: bool = True
+    screenshots: bool = True
+    nuclei: bool = True
+    directory_enum: bool = False
+    subdomain_enum: bool = False
+    dns_recon: bool = False
+
+
+class _PerformanceConfig(BaseModel):
+    max_concurrent_hosts: int = Field(default=20, ge=1, le=200)
+    max_concurrent_plugins: int = Field(default=20, ge=1, le=100)
+    timeout: int = Field(default=60, ge=1, le=3600)
+    masscan_rate: int = Field(default=10000, ge=1, le=100000)
+    nuclei_rate: int = Field(default=25, ge=1, le=1000)
+    max_hosts: int | None = Field(default=None, ge=1, le=65536)
+    max_checks: int | None = Field(default=None, ge=1, le=1000000)
+
+
 class _ProfileJson(BaseModel):
     target_mode: Literal["internal", "domain", "bug_bounty", "external"] | None = None
+    scan_context: Literal["internal", "external", "custom"] | None = None
+    target_type: Literal["ip", "cidr", "range", "hostname", "domain"] | None = None
+    safety_level: Literal["safe", "balanced", "aggressive"] | None = None
+    depth_level: Literal["light", "balanced", "deep"] | None = None
+    performance_profile: Literal["conservative", "normal", "fast", "custom"] | None = None
     external_recon: bool = False
     subdomain_enum: bool = True
     max_subdomains: int | None = Field(default=None, ge=0, le=1000)
@@ -56,6 +98,10 @@ class _ProfileJson(BaseModel):
     stealth: bool = False
     credential_chain: bool = False
     xxe_probe_file: str | None = Field(default=None, max_length=200)
+    discovery: _DiscoveryConfig | None = None
+    port_scanning: _PortScanningConfig | None = None
+    enumeration: _EnumerationConfig | None = None
+    performance: _PerformanceConfig | None = None
     brute_force: _BruteForceConfig | None = None
 
     @field_validator("port_range")
@@ -448,7 +494,8 @@ async def delete_scan(
         await db.execute(text(
             "UPDATE findings SET last_seen_scan_id = NULL WHERE last_seen_scan_id = :scan_id"
         ), sid)
-        # 4. findings, hosts, targets, reports, exclusions
+        # 4. plugin runs plus scan-owned records
+        await db.execute(text("DELETE FROM plugin_runs WHERE scan_id = :scan_id"), sid)
         await db.execute(text("DELETE FROM findings WHERE scan_id = :scan_id"), sid)
         await db.execute(text("DELETE FROM hosts WHERE scan_id = :scan_id"), sid)
         await db.execute(text("DELETE FROM targets WHERE scan_id = :scan_id"), sid)

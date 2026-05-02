@@ -219,65 +219,201 @@ async def seed_templates(session: AsyncSession) -> None:
     import json
     from sqlalchemy import select
 
+    def profile(
+        *,
+        scan_context: str,
+        target_type: str,
+        safety_level: str,
+        depth_level: str,
+        performance_profile: str,
+        port_range: str,
+        plugins: list[str],
+        discovery: dict,
+        port_scanning: dict,
+        enumeration: dict,
+        performance: dict,
+        **extra,
+    ) -> dict:
+        data = {
+            "scan_context": scan_context,
+            "target_type": target_type,
+            "safety_level": safety_level,
+            "depth_level": depth_level,
+            "performance_profile": performance_profile,
+            "port_range": port_range,
+            "plugins": plugins,
+            "discovery": discovery,
+            "port_scanning": port_scanning,
+            "enumeration": enumeration,
+            "performance": performance,
+            "external_recon": scan_context == "external",
+            "subdomain_enum": bool(enumeration.get("subdomain_enum", False)),
+            "disable_masscan": scan_context == "external" and target_type in {"domain", "hostname"},
+            "intrusive": safety_level == "aggressive",
+            "masscan_rate": performance.get("masscan_rate", 10000),
+            "max_concurrent": performance.get("max_concurrent_hosts", 20),
+            "timeout": performance.get("timeout", 60),
+        }
+        data.update(extra)
+        return data
+
+    internal_discovery = {"icmp": True, "tcp": True, "arp": True, "udp": False, "retries": 1, "strategy": "validated", "assume_up": False}
+    external_discovery = {"icmp": False, "tcp": True, "arp": False, "udp": False, "retries": 1, "strategy": "fast", "assume_up": False}
+    normal_perf = {"max_concurrent_hosts": 20, "max_concurrent_plugins": 20, "timeout": 60, "masscan_rate": 10000, "nuclei_rate": 25}
+    slow_perf = {"max_concurrent_hosts": 8, "max_concurrent_plugins": 10, "timeout": 90, "masscan_rate": 5000, "nuclei_rate": 15}
+    fast_perf = {"max_concurrent_hosts": 40, "max_concurrent_plugins": 30, "timeout": 45, "masscan_rate": 25000, "nuclei_rate": 50}
+
     SYSTEM_TEMPLATES = [
         {
-            "name": "Quick Scan",
-            "description": "Top 1000 ports, basic plugins only. Good for initial triage.",
-            "profile_json": {
-                "port_range": "top-1000",
-                "plugins": ["network.*", "web.http_headers", "ssl_tls.cert_inspector", "web.sensitive_files"],
-                "max_concurrent": 10,
-                "timeout": 5,
-            },
+            "name": "External Attack Surface",
+            "description": "Internet-facing domain recon with DNS, subdomains, web exposure, TLS, screenshots, and Nuclei.",
+            "profile_json": profile(
+                scan_context="external",
+                target_type="domain",
+                safety_level="safe",
+                depth_level="balanced",
+                performance_profile="normal",
+                port_range="80,443,8080,8443,8000,8001,8888,3000,5000,9000,9443,10443,32400",
+                plugins=["network.dns_recon", "network.dns_zone_transfer", "network.subdomain_enum", "network.subdomain_takeover", "web.*", "ssl_tls.*", "nuclei.runner"],
+                discovery=external_discovery,
+                port_scanning={"scanner": "tcp_connect", "firewall_strategy": "skip_ping"},
+                enumeration={"service_detection": True, "http_probing": True, "tls_checks": True, "security_headers": True, "screenshots": True, "nuclei": True, "directory_enum": False, "subdomain_enum": True, "dns_recon": True},
+                performance=normal_perf,
+                target_mode="bug_bounty",
+                max_subdomains=100,
+            ),
         },
         {
-            "name": "Full Scan",
-            "description": "All ports, all plugins, deeper service fingerprinting.",
-            "profile_json": {
-                "port_range": "1-65535",
-                "plugins": ["*"],
-                "max_concurrent": 5,
-                "timeout": 10,
-            },
+            "name": "Web Application Scan",
+            "description": "Focused HTTP/HTTPS application checks with screenshots, headers, content discovery, TLS, and Nuclei.",
+            "profile_json": profile(
+                scan_context="external",
+                target_type="hostname",
+                safety_level="balanced",
+                depth_level="balanced",
+                performance_profile="normal",
+                port_range="80,443,8080,8443,8000,8888,3000,5000,9000",
+                plugins=["web.*", "ssl_tls.*", "nuclei.runner"],
+                discovery=external_discovery,
+                port_scanning={"scanner": "tcp_connect", "firewall_strategy": "skip_ping"},
+                enumeration={"service_detection": True, "http_probing": True, "tls_checks": True, "security_headers": True, "screenshots": True, "nuclei": True, "directory_enum": True, "subdomain_enum": False, "dns_recon": False},
+                performance=normal_perf,
+            ),
         },
         {
-            "name": "Web Audit",
-            "description": "Focused web security audit on HTTP/HTTPS ports with all web and SSL/TLS plugins.",
-            "profile_json": {
-                "port_range": "80,443,8080,8443,8000,8888,3000,5000,9000",
-                "plugins": ["web.*", "ssl_tls.*", "nuclei.runner"],
-                "max_concurrent": 10,
-                "timeout": 8,
-            },
+            "name": "External Vulnerability Scan",
+            "description": "External host or small range vulnerability coverage without ICMP reliance or unsafe brute-force defaults.",
+            "profile_json": profile(
+                scan_context="external",
+                target_type="ip",
+                safety_level="safe",
+                depth_level="balanced",
+                performance_profile="conservative",
+                port_range="top-1000",
+                plugins=["network.*", "web.*", "ssl_tls.*", "services.*", "ssh.*", "cve.*", "nuclei.runner"],
+                discovery=external_discovery,
+                port_scanning={"scanner": "tcp_connect", "firewall_strategy": "skip_ping"},
+                enumeration={"service_detection": True, "http_probing": True, "tls_checks": True, "security_headers": True, "screenshots": True, "nuclei": True, "directory_enum": False, "subdomain_enum": False, "dns_recon": False},
+                performance=slow_perf,
+            ),
         },
         {
-            "name": "Bug Bounty Recon",
-            "description": "External domain recon with subdomain discovery, common web ports, web, SSL/TLS, and Nuclei checks.",
-            "profile_json": {
-                "target_mode": "bug_bounty",
-                "external_recon": True,
-                "subdomain_enum": True,
-                "max_subdomains": 75,
-                "disable_masscan": True,
-                "port_range": "80,443,8080,8443,8000,8001,8888,3000,5000,9000,9443,10443,32400",
-                "plugins": ["network.dns_recon", "network.dns_zone_transfer", "network.subdomain_enum", "network.subdomain_takeover", "web.*", "ssl_tls.*", "nuclei.runner"],
-                "intrusive": False,
-                "brute_force": {"enabled": False},
-                "max_concurrent": 8,
-                "timeout": 8,
-            },
+            "name": "Internal Network Scan",
+            "description": "Internal IP/CIDR scan with validated discovery, broader ports, service checks, SSH, TLS, and CVE matching.",
+            "profile_json": profile(
+                scan_context="internal",
+                target_type="cidr",
+                safety_level="balanced",
+                depth_level="balanced",
+                performance_profile="normal",
+                port_range="top-10000",
+                plugins=["network.*", "services.*", "ssh.*", "ssl_tls.*", "web.*", "cve.*"],
+                discovery=internal_discovery,
+                port_scanning={"scanner": "syn", "firewall_strategy": "default"},
+                enumeration={"service_detection": True, "http_probing": True, "tls_checks": True, "security_headers": True, "screenshots": True, "nuclei": False, "directory_enum": False, "subdomain_enum": False, "dns_recon": False},
+                performance=normal_perf,
+            ),
         },
         {
-            "name": "Internal Network Audit",
-            "description": "Comprehensive internal network scan including service plugins, database exposure, and auth bypass checks.",
-            "profile_json": {
-                "port_range": "top-10000",
-                "plugins": ["network.*", "services.*", "ssh.*", "ssl_tls.*"],
-                "max_concurrent": 8,
-                "timeout": 7,
-            },
+            "name": "Credentialed Scan",
+            "description": "Internal scan preset for provided credentials and safe authenticated checks.",
+            "profile_json": profile(
+                scan_context="internal",
+                target_type="cidr",
+                safety_level="balanced",
+                depth_level="deep",
+                performance_profile="conservative",
+                port_range="top-10000",
+                plugins=["network.*", "services.*", "ssh.*", "ssl_tls.*", "web.*", "cve.*"],
+                discovery=internal_discovery,
+                port_scanning={"scanner": "syn", "firewall_strategy": "default"},
+                enumeration={"service_detection": True, "http_probing": True, "tls_checks": True, "security_headers": True, "screenshots": True, "nuclei": False, "directory_enum": False, "subdomain_enum": False, "dns_recon": False},
+                performance=slow_perf,
+                credential_chain=True,
+            ),
+        },
+        {
+            "name": "Active Directory / Internal Audit",
+            "description": "Internal audit preset for Windows, SMB, LDAP, Kerberos-adjacent services, SSH, and exposed management services.",
+            "profile_json": profile(
+                scan_context="internal",
+                target_type="cidr",
+                safety_level="balanced",
+                depth_level="deep",
+                performance_profile="conservative",
+                port_range="top-10000",
+                plugins=["network.*", "services.*", "ssh.*", "ssl_tls.*", "cve.*"],
+                discovery=internal_discovery,
+                port_scanning={"scanner": "syn", "firewall_strategy": "default"},
+                enumeration={"service_detection": True, "http_probing": True, "tls_checks": True, "security_headers": False, "screenshots": False, "nuclei": False, "directory_enum": False, "subdomain_enum": False, "dns_recon": False},
+                performance=slow_perf,
+                credential_chain=True,
+            ),
+        },
+        {
+            "name": "TLS / Crypto Audit",
+            "description": "TLS certificate, protocol, cipher, and crypto-focused checks on common HTTPS and service ports.",
+            "profile_json": profile(
+                scan_context="custom",
+                target_type="hostname",
+                safety_level="safe",
+                depth_level="light",
+                performance_profile="normal",
+                port_range="443,8443,9443,10443,993,995,465,636,3389",
+                plugins=["ssl_tls.*", "web.http_headers"],
+                discovery={"icmp": False, "tcp": True, "arp": False, "udp": False, "retries": 1, "strategy": "fast", "assume_up": False},
+                port_scanning={"scanner": "tcp_connect", "firewall_strategy": "skip_ping"},
+                enumeration={"service_detection": True, "http_probing": True, "tls_checks": True, "security_headers": True, "screenshots": False, "nuclei": False, "directory_enum": False, "subdomain_enum": False, "dns_recon": False},
+                performance=normal_perf,
+            ),
+        },
+        {
+            "name": "Advanced Scan",
+            "description": "No opinionated restrictions. Start here when you want full manual control of capabilities.",
+            "profile_json": profile(
+                scan_context="custom",
+                target_type="ip",
+                safety_level="balanced",
+                depth_level="balanced",
+                performance_profile="custom",
+                port_range="top-1000",
+                plugins=["*"],
+                discovery=internal_discovery,
+                port_scanning={"scanner": "tcp_connect", "firewall_strategy": "default"},
+                enumeration={"service_detection": True, "http_probing": True, "tls_checks": True, "security_headers": True, "screenshots": True, "nuclei": True, "directory_enum": False, "subdomain_enum": False, "dns_recon": False},
+                performance=fast_perf,
+            ),
         },
     ]
+
+    old_names = {"Quick Scan", "Full Scan", "Web Audit", "Bug Bounty Recon", "Internal Network Audit"}
+    for old_name in old_names:
+        result = await session.execute(
+            select(ScanTemplate).where(ScanTemplate.name == old_name, ScanTemplate.is_system == True)
+        )
+        old_template = result.scalar_one_or_none()
+        if old_template:
+            await session.delete(old_template)
 
     for t in SYSTEM_TEMPLATES:
         result = await session.execute(

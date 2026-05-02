@@ -42,6 +42,33 @@ docker compose up -d --build
 
 ---
 
+## Secret scanning
+
+ScanR handles credentials, target lists, scanner logs, screenshots, and reports. Check staged changes before every commit:
+
+```bash
+scripts/secret-scan.sh --staged
+```
+
+Check committed history before publishing or opening a PR:
+
+```bash
+scripts/secret-scan.sh --history
+```
+
+For automatic checks:
+
+```bash
+pipx install pre-commit
+pre-commit install
+```
+
+If `gitleaks` is installed, `scripts/secret-scan.sh` runs it automatically for staged/history checks. The built-in checks still run when `gitleaks` is unavailable.
+
+Never commit `.env`, local network target details, private credentials, scanner output, generated reports, Playwright/browser state, debug logs, local database files, or temporary screenshots. Documentation screenshots belong under `docs/screenshots/`; root-level screenshots are ignored as local artifacts.
+
+---
+
 ## Environment
 
 All secrets live in `.env` (gitignored). Copy from `.env.example` on a fresh clone:

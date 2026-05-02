@@ -216,10 +216,6 @@ class MasscanWrapper:
 
     def _rate_from_profile(self, context: "ScanContext") -> int:
         try:
-            import json as _json
-            pj = context.scan.profile_json
-            if isinstance(pj, str):
-                pj = _json.loads(pj)
-            return int(pj.get("masscan_rate", self.DEFAULT_RATE))
+            return int(context.performance_config().get("masscan_rate") or self.DEFAULT_RATE)
         except Exception:
             return self.DEFAULT_RATE

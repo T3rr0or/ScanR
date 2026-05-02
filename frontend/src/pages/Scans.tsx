@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, type Dispatch, type ReactNode, type SetStateAction } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Activity, Scan, Plus, Download, Search,
@@ -9,7 +9,7 @@ import {
 import { scansApi, type ScanCreate, type ScanCredentialIn } from '@/api/scans'
 import { templatesApi, type ScanTemplate } from '@/api/templates'
 import { wordlistsApi } from '@/api/wordlists'
-import { ALL_CATEGORIES, PORT_RANGES, configToJson, jsonToConfig, type ProfileConfig } from '@/components/ProfileEditor'
+import { ALL_CATEGORIES, PORT_RANGES, configToJson, defaultProfileConfig, jsonToConfig, type ProfileConfig } from '@/components/ProfileEditor'
 import ScanDelta from './ScanDelta'
 import { StatusPill, SeverityBar, CHML, Meter, fmtDuration, relTime } from '@/components/ui'
 
@@ -49,23 +49,60 @@ const TYPE_LABELS: Record<InlineCredential['type'], string> = {
   http_basic: 'HTTP Basic',
 }
 
+function parseProfileJson(raw?: string | null): Record<string, unknown> | null {
+  if (!raw) return null
+  try {
+    return JSON.parse(raw) as Record<string, unknown>
+  } catch {
+    return null
+  }
+}
+
 /* ── Design reference template cards ─────────────────────────────── */
 const DESIGN_TEMPLATES = [
-  { id: 'quick',  name: 'Quick Scan',  desc: 'Top 1,000 ports · no brute-force', icon: 'zap'     },
-  { id: 'full',   name: 'Full Scan',   desc: 'All 65,535 ports · all plugins',    icon: 'radar'   },
-  { id: 'web',    name: 'Web Audit',   desc: '80,443,8080,8443 · web + TLS',      icon: 'globe'   },
-  { id: 'custom', name: 'Custom',      desc: 'Pick ports & plugins',              icon: 'sliders' },
+  { id: 'external-attack-surface', name: 'External Attack Surface', desc: 'Domains · DNS · subdomains · web exposure', icon: 'globe' },
+  { id: 'web-application-scan', name: 'Web Application Scan', desc: 'HTTP/HTTPS · headers · screenshots · Nuclei', icon: 'radar' },
+  { id: 'external-vulnerability-scan', name: 'External Vulnerability Scan', desc: 'Internet-facing hosts · TCP discovery', icon: 'zap' },
+  { id: 'internal-network-scan', name: 'Internal Network Scan', desc: 'CIDR · validated discovery · services', icon: 'radar' },
+  { id: 'credentialed-scan', name: 'Credentialed Scan', desc: 'Internal scan prepared for supplied credentials', icon: 'sliders' },
+  { id: 'active-directory-internal-audit', name: 'Active Directory / Internal Audit', desc: 'Windows and internal service audit', icon: 'radar' },
+  { id: 'tls-crypto-audit', name: 'TLS / Crypto Audit', desc: 'Certificates · protocols · ciphers', icon: 'globe' },
+  { id: 'advanced-scan', name: 'Advanced Scan', desc: 'No preset restrictions · full control', icon: 'sliders' },
 ]
 
-const PLUGIN_CATEGORIES = [
-  { id: 'web',      label: 'Web',      count: 10   },
-  { id: 'ssl',      label: 'SSL/TLS',  count: 5    },
-  { id: 'ssh',      label: 'SSH',      count: 3    },
-  { id: 'services', label: 'Services', count: 14   },
-  { id: 'network',  label: 'Network',  count: 3    },
-  { id: 'cve',      label: 'CVE',      count: 1    },
-  { id: 'nuclei',   label: 'Nuclei',   count: 4821 },
-]
+const SAFETY_HELP: Record<ProfileConfig['safety_level'], { title: string; desc: string }> = {
+  safe: {
+    title: 'Safe',
+    desc: 'Low-risk checks only. Skips brute force, default credential attempts, and disruptive probes.',
+  },
+  balanced: {
+    title: 'Balanced',
+    desc: 'Default active scanning. Runs normal vulnerability checks while avoiding obviously risky tests.',
+  },
+  aggressive: {
+    title: 'Aggressive',
+    desc: 'Intrusive checks allowed. Permits heavier fuzzing, default credential attempts, and brute force only when those capabilities are enabled.',
+  },
+}
+
+const PERFORMANCE_HELP: Record<ProfileConfig['performance_profile'], { title: string; desc: string }> = {
+  conservative: {
+    title: 'Conservative',
+    desc: 'Lower concurrency and rates, longer timeouts. Better for fragile networks, VPN, Tailscale, or small devices.',
+  },
+  normal: {
+    title: 'Normal',
+    desc: 'Balanced throughput and reliability. Good default for most internal or external scans.',
+  },
+  fast: {
+    title: 'Fast',
+    desc: 'Higher concurrency and shorter timeouts. Finishes sooner but may miss slow services or create more load.',
+  },
+  custom: {
+    title: 'Custom',
+    desc: 'Use the advanced numeric settings below instead of a preset.',
+  },
+}
 
 function TemplateIcon({ name, size = 14 }: { name: string; size?: number }) {
   if (name === 'zap')     return <Zap size={size} />
@@ -73,6 +110,108 @@ function TemplateIcon({ name, size = 14 }: { name: string; size?: number }) {
   if (name === 'globe')   return <Globe size={size} />
   if (name === 'sliders') return <SlidersHorizontal size={size} />
   return <Scan size={size} />
+}
+
+type TargetPreviewType = 'ip' | 'cidr' | 'range' | 'hostname' | 'domain' | 'invalid'
+
+interface TargetPreviewLine {
+  input: string
+  type: TargetPreviewType
+  label: string
+  count: number | null
+  warning?: string
+}
+
+interface TargetPreview {
+  lines: TargetPreviewLine[]
+  totalKnownHosts: number
+  hasUnknownCount: boolean
+  warnings: string[]
+}
+
+function ipv4ToNumber(value: string): number | null {
+  const parts = value.split('.')
+  if (parts.length !== 4) return null
+  let out = 0
+  for (const part of parts) {
+    if (!/^\d{1,3}$/.test(part)) return null
+    const n = Number(part)
+    if (n < 0 || n > 255) return null
+    out = (out * 256) + n
+  }
+  return out
+}
+
+function classifyTargetInput(input: string, configured: ProfileConfig['target_type']): TargetPreviewLine {
+  const value = input.trim()
+  if (!value) return { input, type: 'invalid', label: 'Empty', count: 0 }
+  if (configured !== 'auto') {
+    if (configured === 'domain') return { input: value, type: 'domain', label: 'Domain seed', count: null, warning: 'DNS/subdomain enumeration can add more hosts after launch.' }
+    if (configured === 'hostname') {
+      return /^[a-zA-Z0-9.-]{1,253}$/.test(value)
+        ? { input: value, type: 'hostname', label: 'Hostname', count: 1 }
+        : { input: value, type: 'invalid', label: 'Invalid hostname', count: 0, warning: 'Hostname can only contain letters, numbers, dots, and hyphens.' }
+    }
+    if (configured === 'ip') {
+      return ipv4ToNumber(value) !== null
+        ? { input: value, type: 'ip', label: 'Exact IP host', count: 1 }
+        : { input: value, type: 'invalid', label: 'Invalid IP address', count: 0, warning: 'IP address must look like 10.0.0.221.' }
+    }
+    if (configured === 'cidr') return cidrPreview(value)
+    if (configured === 'range') return rangePreview(value)
+  }
+  if (value.includes('/')) return cidrPreview(value)
+  if (/^[\d.]+-[\d.]+$/.test(value)) return rangePreview(value)
+  if (ipv4ToNumber(value) !== null) return { input: value, type: 'ip', label: 'Exact IP host', count: 1 }
+  if (/^[a-zA-Z0-9.-]{1,253}$/.test(value)) {
+    return value.includes('.')
+      ? { input: value, type: 'domain', label: 'Domain/hostname', count: null, warning: 'Choose Domain explicitly for subdomain enumeration defaults.' }
+      : { input: value, type: 'hostname', label: 'Hostname', count: 1 }
+  }
+  return { input: value, type: 'invalid', label: 'Invalid target syntax', count: 0, warning: 'Use an IP, CIDR, IP range, hostname, or domain.' }
+}
+
+function cidrPreview(value: string): TargetPreviewLine {
+  const [ip, prefixRaw] = value.split('/')
+  const ipNum = ipv4ToNumber(ip)
+  const prefix = Number(prefixRaw)
+  if (ipNum === null || !Number.isInteger(prefix) || prefix < 0 || prefix > 32) {
+    return { input: value, type: 'invalid', label: 'Invalid CIDR', count: 0, warning: 'CIDR must look like 10.0.0.0/24.' }
+  }
+  const addresses = 2 ** (32 - prefix)
+  const usable = prefix >= 31 ? addresses : Math.max(0, addresses - 2)
+  return {
+    input: value,
+    type: 'cidr',
+    label: 'CIDR subnet',
+    count: usable,
+    warning: usable > 65536 ? 'Very large target set. Backend rejects CIDR blocks larger than /16.' : undefined,
+  }
+}
+
+function rangePreview(value: string): TargetPreviewLine {
+  const match = value.match(/^([\d.]+)-([\d.]+)$/)
+  if (!match) return { input: value, type: 'invalid', label: 'Invalid IP range', count: 0, warning: 'Range must look like 10.0.0.50-80 or 10.0.0.50-10.0.0.80.' }
+  const start = match[1]
+  let end = match[2]
+  if (!end.includes('.')) end = `${start.split('.').slice(0, 3).join('.')}.${end}`
+  const startNum = ipv4ToNumber(start)
+  const endNum = ipv4ToNumber(end)
+  if (startNum === null || endNum === null || endNum < startNum) {
+    return { input: value, type: 'invalid', label: 'Invalid IP range', count: 0, warning: 'Range end must be a valid IP after the start.' }
+  }
+  return { input: value, type: 'range', label: 'Explicit IP range', count: endNum - startNum + 1 }
+}
+
+function buildTargetPreview(targets: string, configured: ProfileConfig['target_type']): TargetPreview {
+  const lines = targets.split('\n').map(t => t.trim()).filter(Boolean).map(t => classifyTargetInput(t, configured))
+  const warnings = lines.map(l => l.warning).filter(Boolean) as string[]
+  return {
+    lines,
+    totalKnownHosts: lines.reduce((sum, line) => sum + (line.count ?? 0), 0),
+    hasUnknownCount: lines.some(line => line.count === null),
+    warnings,
+  }
 }
 
 /* ─────────────────────────────────────────────────────────────────
@@ -478,19 +617,17 @@ function NewScanModal({
   editMode?: boolean
   initialScan?: { id: string; name: string; targets?: string[]; profile_json?: string | null }
 }) {
-  const [selectedDesignTemplate, setSelectedDesignTemplate] = useState('quick')
+  const [step, setStep] = useState(1)
+  const [selectedDesignTemplate, setSelectedDesignTemplate] = useState('advanced-scan')
   const [selectedApiTemplate, setSelectedApiTemplate]       = useState<ScanTemplate | null>(null)
   const [baseProfileJson, setBaseProfileJson]               = useState<Record<string, unknown>>({})
   const [name, setName]       = useState(initialScan?.name ?? '')
   const [targets, setTargets] = useState((initialScan?.targets ?? []).join('\n'))
   const [credentials, setCredentials] = useState<InlineCredential[]>([])
+  const [showAdvanced, setShowAdvanced] = useState(false)
 
-  const [profileConfig, setProfileConfig] = useState<ProfileConfig>({
-    port_range: 'top-1000',
-    categories: ALL_CATEGORIES.map(x => x.id),
-  })
-  const [enabledCategories, setEnabledCategories] = useState<Set<string>>(
-    new Set(PLUGIN_CATEGORIES.map(c => c.id))
+  const [profileConfig, setProfileConfig] = useState<ProfileConfig>(
+    initialScan?.profile_json ? jsonToConfig(parseProfileJson(initialScan.profile_json)) : defaultProfileConfig()
   )
   const [bruteForce, setBruteForce] = useState({
     enabled: false,
@@ -512,20 +649,111 @@ function NewScanModal({
   const credWordlists = wordlists.filter(w => w.type === 'credentials')
   const userWordlists = wordlists.filter(w => w.type === 'usernames')
   const passWordlists = wordlists.filter(w => w.type === 'passwords')
+  const targetPreview = useMemo(() => buildTargetPreview(targets, profileConfig.target_type), [targets, profileConfig.target_type])
 
   function applyApiTemplate(t: ScanTemplate) {
     setSelectedApiTemplate(t)
+    setSelectedDesignTemplate(t.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, ''))
     setBaseProfileJson(t.profile_json ?? {})
     setProfileConfig(jsonToConfig(t.profile_json))
     if (!name) setName(t.name)
   }
 
-  function toggleCategory(id: string) {
-    setEnabledCategories(prev => {
-      const next = new Set(prev)
-      next.has(id) ? next.delete(id) : next.add(id)
-      return next
+  function applyFallbackTemplate(t: typeof DESIGN_TEMPLATES[number]) {
+    setSelectedApiTemplate(null)
+    setSelectedDesignTemplate(t.id)
+    const external = t.id.includes('external') || t.id.includes('web') || t.id.includes('tls')
+    const domain = t.id === 'external-attack-surface'
+    const profile = defaultProfileConfig({
+      scan_context: t.id.includes('internal') || t.id.includes('credentialed') ? 'internal' : external ? 'external' : 'custom',
+      target_type: domain ? 'domain' : 'auto',
+      safety_level: t.id.includes('advanced') ? 'balanced' : 'safe',
+      depth_level: t.id.includes('credentialed') || t.id.includes('active-directory') ? 'deep' : 'balanced',
+      performance_profile: t.id.includes('tls') ? 'normal' : 'normal',
+      port_range: domain || t.id.includes('web') ? '80,443,8080,8443,8000,8888,3000,5000,9000' : t.id.includes('tls') ? '443,8443,9443,10443,993,995,465,636,3389' : 'top-1000',
+      categories: domain ? ['network', 'web', 'ssl_tls', 'nuclei'] : t.id.includes('tls') ? ['ssl_tls', 'web'] : ALL_CATEGORIES.map(x => x.id),
+      discovery: external ? { icmp: false, tcp: true, arp: false, udp: false, retries: 1, strategy: 'fast', assume_up: false } : undefined,
+      enumeration: {
+        service_detection: true,
+        http_probing: true,
+        tls_checks: true,
+        security_headers: true,
+        screenshots: !t.id.includes('active-directory') && !t.id.includes('tls'),
+        nuclei: external,
+        directory_enum: t.id.includes('web'),
+        subdomain_enum: domain,
+        dns_recon: domain,
+      },
     })
+    setBaseProfileJson({})
+    setProfileConfig(profile)
+    if (!name) setName(t.name)
+  }
+
+  function toggleCategory(id: string) {
+    setProfileConfig(p => ({
+      ...p,
+      categories: p.categories.includes(id)
+        ? p.categories.filter(cat => cat !== id)
+        : [...p.categories, id],
+    }))
+  }
+
+  function setTargetType(target_type: ProfileConfig['target_type']) {
+    const isDomain = target_type === 'domain'
+    setProfileConfig(p => ({
+      ...p,
+      target_type,
+      scan_context: isDomain && p.scan_context === 'internal' ? 'external' : p.scan_context,
+      discovery: isDomain
+        ? { ...p.discovery, icmp: false, tcp: true, arp: false, strategy: 'fast' }
+        : p.discovery,
+      enumeration: {
+        ...p.enumeration,
+        subdomain_enum: isDomain ? true : p.enumeration.subdomain_enum,
+        dns_recon: isDomain ? true : p.enumeration.dns_recon,
+      },
+      categories: isDomain
+        ? Array.from(new Set([...p.categories, 'network', 'web', 'ssl_tls']))
+        : p.categories,
+    }))
+  }
+
+  function applyDepth(depth_level: ProfileConfig['depth_level']) {
+    setProfileConfig(p => ({
+      ...p,
+      depth_level,
+      port_range: depth_level === 'light'
+        ? 'top-1000'
+        : depth_level === 'deep'
+          ? (p.scan_context === 'external' ? '80,443,8080,8443,8000,8001,8888,3000,5000,9000,9443,10443,32400' : 'top-10000')
+          : p.port_range,
+      enumeration: {
+        ...p.enumeration,
+        directory_enum: depth_level === 'deep' ? true : depth_level === 'light' ? false : p.enumeration.directory_enum,
+        nuclei: depth_level === 'light' ? false : p.enumeration.nuclei,
+      },
+      performance: {
+        ...p.performance,
+        timeout: depth_level === 'deep' ? 120 : depth_level === 'light' ? 45 : p.performance.timeout,
+      },
+    }))
+  }
+
+  function applyPerformance(performance_profile: ProfileConfig['performance_profile']) {
+    const presets = {
+      conservative: { max_concurrent_hosts: 8, max_concurrent_plugins: 10, timeout: 90, masscan_rate: 5000, nuclei_rate: 15 },
+      normal: { max_concurrent_hosts: 20, max_concurrent_plugins: 20, timeout: 60, masscan_rate: 10000, nuclei_rate: 25 },
+      fast: { max_concurrent_hosts: 40, max_concurrent_plugins: 30, timeout: 45, masscan_rate: 25000, nuclei_rate: 50 },
+      custom: null,
+    } as const
+    setProfileConfig(p => ({
+      ...p,
+      performance_profile,
+      performance: presets[performance_profile]
+        ? { ...p.performance, ...presets[performance_profile] }
+        : p.performance,
+    }))
   }
 
   function addCredential() {
@@ -580,7 +808,7 @@ function NewScanModal({
     }
   }
 
-  const canSubmit = Boolean(name.trim() && targets.trim() && !loading)
+  const canSubmit = Boolean(name.trim() && targets.trim() && !loading && targetPreview.lines.every(line => line.type !== 'invalid'))
 
   return (
     <div
@@ -612,231 +840,230 @@ function NewScanModal({
 
         {/* Modal body */}
         <div style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 14 }}>
-
-          {/* 1. Template cards — use API templates if available, otherwise design defaults */}
-          <div>
-            <div className="label">Start from template</div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 8 }}>
-              {systemTemplates.length > 0
-                ? systemTemplates.map(t => {
-                    const active = selectedApiTemplate?.id === t.id
-                    return (
-                      <button
-                        key={t.id}
-                        onClick={() => applyApiTemplate(t)}
-                        style={{
-                          padding: 12, borderRadius: 8, textAlign: 'left', cursor: 'pointer',
-                          background: active ? 'var(--accent-soft)' : 'var(--bg-0)',
-                          border: '1px solid ' + (active ? 'var(--accent)' : 'var(--border)'),
-                          display: 'flex', alignItems: 'flex-start', gap: 10,
-                        }}
-                      >
-                        <span style={{
-                          width: 28, height: 28, borderRadius: 6, background: 'var(--bg-2)',
-                          color: active ? 'var(--accent)' : 'var(--text-1)',
-                          display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                          flexShrink: 0,
-                        }}>
-                          <Scan size={14} />
-                        </span>
-                        <div>
-                          <div style={{ fontSize: 12.5, fontWeight: 600 }}>{t.name}</div>
-                          <div className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)', marginTop: 2 }}>
-                            {t.description ?? PORT_RANGES.find(r => r.value === (t.profile_json as any)?.port_range)?.label.split(' —')[0]}
-                          </div>
-                        </div>
-                      </button>
-                    )
-                  })
-                : DESIGN_TEMPLATES.map(t => {
-                    const active = selectedDesignTemplate === t.id
-                    return (
-                      <button
-                        key={t.id}
-                        onClick={() => setSelectedDesignTemplate(t.id)}
-                        style={{
-                          padding: 12, borderRadius: 8, textAlign: 'left', cursor: 'pointer',
-                          background: active ? 'var(--accent-soft)' : 'var(--bg-0)',
-                          border: '1px solid ' + (active ? 'var(--accent)' : 'var(--border)'),
-                          display: 'flex', alignItems: 'flex-start', gap: 10,
-                        }}
-                      >
-                        <span style={{
-                          width: 28, height: 28, borderRadius: 6, background: 'var(--bg-2)',
-                          color: active ? 'var(--accent)' : 'var(--text-1)',
-                          display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                          flexShrink: 0,
-                        }}>
-                          <TemplateIcon name={t.icon} size={14} />
-                        </span>
-                        <div>
-                          <div style={{ fontSize: 12.5, fontWeight: 600 }}>{t.name}</div>
-                          <div className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)', marginTop: 2 }}>
-                            {t.desc}
-                          </div>
-                        </div>
-                      </button>
-                    )
-                  })
-              }
-            </div>
-          </div>
-
-          {/* 2. Scan name */}
-          <div>
-            <label className="label">Scan name</label>
-            <input
-              className="input"
-              value={name}
-              onChange={e => setName(e.target.value)}
-              placeholder="Internal Network — Q2 2026"
-            />
-          </div>
-
-          {/* 3. Targets */}
-          <div>
-            <label className="label">
-              Targets{' '}
-              <span style={{ color: 'var(--text-3)', fontWeight: 400, textTransform: 'none', letterSpacing: 0 }}>
-                — one per line · IP, CIDR, hostname, range
-              </span>
-            </label>
-            <textarea
-              className="textarea"
-              rows={3}
-              value={targets}
-              onChange={e => setTargets(e.target.value)}
-              placeholder={'10.42.0.0/20\nedge.acme.corp'}
-            />
-          </div>
-
-          {/* 4. Credentials */}
-          <div>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-              <label className="label" style={{ margin: 0 }}>Credentials</label>
-              <button className="btn btn-ghost btn-sm" onClick={addCredential} type="button">
-                <Plus size={11} /> Add Credential
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 6 }}>
+            {['Template', 'Context', 'Targets', 'Capabilities', 'Review'].map((label, idx) => (
+              <button
+                key={label}
+                type="button"
+                onClick={() => setStep(idx + 1)}
+                className={`btn btn-sm ${step === idx + 1 ? 'btn-primary' : 'btn-ghost'}`}
+              >
+                {idx + 1}. {label}
               </button>
-            </div>
-
-            {credentials.map(cred => (
-              <CredentialCard
-                key={cred.id}
-                cred={cred}
-                onChange={patch => updateCredential(cred.id, patch)}
-                onRemove={() => removeCredential(cred.id)}
-              />
             ))}
           </div>
 
-          {/* 5. Plugin categories */}
-          <div>
-            <label className="label">Plugin categories</label>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-              {PLUGIN_CATEGORIES.map(c => {
-                const on = enabledCategories.has(c.id)
-                return (
-                  <button
-                    key={c.id}
-                    onClick={() => toggleCategory(c.id)}
-                    type="button"
-                    style={{
-                      padding: '6px 10px', borderRadius: 6, fontSize: 11.5, cursor: 'pointer',
-                      background: on ? 'var(--accent-soft)' : 'var(--bg-0)',
-                      border: '1px solid ' + (on ? 'oklch(0.78 0.14 200 / 0.4)' : 'var(--border)'),
-                      color: on ? 'var(--accent)' : 'var(--text-1)',
-                      display: 'inline-flex', alignItems: 'center', gap: 6,
-                      transition: 'background 100ms ease, border-color 100ms ease, color 100ms ease',
-                    }}
-                  >
-                    {on && <Check size={11} />}
-                    {c.label}
-                    <span className="mono" style={{ fontSize: 10, color: 'var(--text-3)' }}>{c.count}</span>
-                  </button>
-                )
-              })}
-            </div>
-          </div>
-
-          {/* 5b. Brute Force */}
-          <div>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-              <div style={{ fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-3)' }}>
-                Brute Force
+          {step === 1 && (
+            <div>
+              <div className="label">Start from template</div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 8 }}>
+                {(systemTemplates.length > 0 ? systemTemplates : DESIGN_TEMPLATES).map(t => {
+                  const isApi = 'profile_json' in t
+                  const active = isApi
+                    ? selectedApiTemplate?.id === (t as ScanTemplate).id
+                    : selectedDesignTemplate === (t as typeof DESIGN_TEMPLATES[number]).id
+                  return (
+                    <button
+                      key={isApi ? (t as ScanTemplate).id : (t as typeof DESIGN_TEMPLATES[number]).id}
+                      type="button"
+                      onClick={() => isApi ? applyApiTemplate(t as ScanTemplate) : applyFallbackTemplate(t as typeof DESIGN_TEMPLATES[number])}
+                      style={{
+                        padding: 12, borderRadius: 8, textAlign: 'left', cursor: 'pointer',
+                        background: active ? 'var(--accent-soft)' : 'var(--bg-0)',
+                        border: '1px solid ' + (active ? 'var(--accent)' : 'var(--border)'),
+                        display: 'flex', alignItems: 'flex-start', gap: 10,
+                      }}
+                    >
+                      <span style={{
+                        width: 28, height: 28, borderRadius: 6, background: 'var(--bg-2)',
+                        color: active ? 'var(--accent)' : 'var(--text-1)',
+                        display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                        flexShrink: 0,
+                      }}>
+                        {isApi ? <Scan size={14} /> : <TemplateIcon name={(t as typeof DESIGN_TEMPLATES[number]).icon} size={14} />}
+                      </span>
+                      <div>
+                        <div style={{ fontSize: 12.5, fontWeight: 600 }}>{t.name}</div>
+                        <div className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)', marginTop: 2 }}>
+                          {isApi ? ((t as ScanTemplate).description ?? 'Capability preset') : (t as typeof DESIGN_TEMPLATES[number]).desc}
+                        </div>
+                      </div>
+                    </button>
+                  )
+                })}
               </div>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontSize: 12, color: 'var(--text-2)' }}>
-                <input type="checkbox" checked={bruteForce.enabled}
-                  onChange={e => setBruteForce(b => ({ ...b, enabled: e.target.checked }))}
-                  style={{ accentColor: 'var(--accent)' }} />
-                Enable
-              </label>
             </div>
+          )}
 
-            {bruteForce.enabled && (
-              <div style={{ background: 'var(--bg-2)', border: '1px solid var(--border)', borderRadius: 6, padding: 12, display: 'flex', flexDirection: 'column', gap: 10 }}>
-                <div>
-                  <label className="label">Credential pairs list <span className="dimmer" style={{ fontWeight: 400 }}>(user:password format)</span></label>
-                  <select className="select-field" value={bruteForce.credential_wordlist_id}
-                    onChange={e => setBruteForce(b => ({ ...b, credential_wordlist_id: e.target.value }))}>
-                    <option value="">None — use separate lists below</option>
-                    {credWordlists.map(w => (
-                      <option key={w.id} value={w.id}>{w.name} ({w.entry_count.toLocaleString()} pairs)</option>
-                    ))}
-                  </select>
+          {step === 2 && (
+            <>
+              <div>
+                <label className="label">Scan name</label>
+                <input className="input" value={name} onChange={e => setName(e.target.value)} placeholder="Internal Network - Q2 2026" />
+              </div>
+              <div>
+                <label className="label">Scan context</label>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
+                  {[
+                    ['internal', 'Internal', 'Validated discovery, ARP/ICMP options, internal protocols.'],
+                    ['external', 'External', 'TCP discovery, no ICMP reliance, web and DNS defaults.'],
+                    ['custom', 'Custom', 'Neutral defaults with every capability editable.'],
+                  ].map(([value, label, desc]) => (
+                    <button
+                      key={value}
+                      type="button"
+                      onClick={() => setProfileConfig(p => ({ ...p, scan_context: value as ProfileConfig['scan_context'] }))}
+                      style={{
+                        padding: 12, borderRadius: 8, textAlign: 'left', cursor: 'pointer',
+                        background: profileConfig.scan_context === value ? 'var(--accent-soft)' : 'var(--bg-0)',
+                        border: '1px solid ' + (profileConfig.scan_context === value ? 'var(--accent)' : 'var(--border)'),
+                      }}
+                    >
+                      <div style={{ fontSize: 12.5, fontWeight: 600 }}>{label}</div>
+                      <div className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)', marginTop: 3 }}>{desc}</div>
+                    </button>
+                  ))}
                 </div>
+              </div>
+            </>
+          )}
 
-                {!bruteForce.credential_wordlist_id && (
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-                    <div>
-                      <label className="label">Username list</label>
-                      <select className="select-field" value={bruteForce.username_wordlist_id}
-                        onChange={e => setBruteForce(b => ({ ...b, username_wordlist_id: e.target.value }))}>
-                        <option value="">Built-in defaults</option>
-                        {userWordlists.map(w => (
-                          <option key={w.id} value={w.id}>{w.name} ({w.entry_count.toLocaleString()})</option>
-                        ))}
-                      </select>
-                    </div>
-                    <div>
-                      <label className="label">Password list</label>
-                      <select className="select-field" value={bruteForce.password_wordlist_id}
-                        onChange={e => setBruteForce(b => ({ ...b, password_wordlist_id: e.target.value }))}>
-                        <option value="">Built-in defaults</option>
-                        {passWordlists.map(w => (
-                          <option key={w.id} value={w.id}>{w.name} ({w.entry_count.toLocaleString()})</option>
-                        ))}
-                      </select>
-                    </div>
+          {step === 3 && (
+            <>
+              <div>
+                <label className="label">Target handling</label>
+                <select className="select-field" value={profileConfig.target_type} onChange={e => setTargetType(e.target.value as ProfileConfig['target_type'])}>
+                  <option value="auto">Auto detect from each line</option>
+                  <option value="domain">Domain - DNS and subdomain workflow</option>
+                  <option value="hostname">Hostname - resolve one named host</option>
+                  <option value="ip">IP address - one or more exact hosts</option>
+                  <option value="cidr">CIDR subnet - example 10.0.0.0/24</option>
+                  <option value="range">IP range - example 10.0.0.50-80</option>
+                </select>
+                <p className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)', marginTop: 5 }}>
+                  Auto detects each line: 10.0.0.221 scans that host, 10.0.0.0/24 expands the subnet, and 10.0.0.50-80 scans that explicit range.
+                  Choose Domain when you want DNS and subdomain enumeration.
+                </p>
+              </div>
+              <div>
+                <label className="label">Targets <span style={{ color: 'var(--text-3)', fontWeight: 400, textTransform: 'none', letterSpacing: 0 }}>- one per line</span></label>
+                <textarea className="textarea" rows={4} value={targets} onChange={e => setTargets(e.target.value)} placeholder={'10.42.0.0/20\nexample.com'} />
+              </div>
+              <TargetPreviewPanel preview={targetPreview} />
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                  <div>
+                    <label className="label" style={{ margin: 0 }}>Known credentials</label>
+                    <p className="mono" style={{ margin: '4px 0 0', fontSize: 10.5, color: 'var(--text-3)' }}>
+                      Used for authenticated checks. This is different from brute force wordlists.
+                    </p>
+                  </div>
+                  <button className="btn btn-ghost btn-sm" onClick={addCredential} type="button"><Plus size={11} /> Add Credential</button>
+                </div>
+                {credentials.map(cred => (
+                  <CredentialCard key={cred.id} cred={cred} onChange={patch => updateCredential(cred.id, patch)} onRemove={() => removeCredential(cred.id)} />
+                ))}
+              </div>
+            </>
+          )}
+
+          {step === 4 && (
+            <>
+              <CapabilityGroup title="Host Discovery">
+                <Toggle label="ICMP" checked={profileConfig.discovery.icmp} onChange={icmp => setProfileConfig(p => ({ ...p, discovery: { ...p.discovery, icmp } }))} />
+                <Toggle label="TCP probes" checked={profileConfig.discovery.tcp} onChange={tcp => setProfileConfig(p => ({ ...p, discovery: { ...p.discovery, tcp } }))} />
+                <Toggle label="ARP (local L2 only / limited support)" checked={profileConfig.discovery.arp} onChange={arp => setProfileConfig(p => ({ ...p, discovery: { ...p.discovery, arp } }))} />
+                <Toggle label="Assume up" checked={profileConfig.discovery.assume_up} onChange={assume_up => setProfileConfig(p => ({ ...p, discovery: { ...p.discovery, assume_up } }))} />
+                <p className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)', margin: 0 }}>
+                  If internal hosts block ping, use Assume up or broader port discovery. UDP discovery is not part of the default pipeline yet.
+                </p>
+              </CapabilityGroup>
+
+              <CapabilityGroup title="Ports">
+                <select className="select-field" value={profileConfig.port_range} onChange={e => setProfileConfig(p => ({ ...p, port_range: e.target.value }))}>
+                  {PORT_RANGES.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
+                </select>
+                <select className="select-field" value={profileConfig.port_scanning.scanner} onChange={e => setProfileConfig(p => ({ ...p, port_scanning: { ...p.port_scanning, scanner: e.target.value as ProfileConfig['port_scanning']['scanner'] } }))}>
+                  <option value="tcp_connect">TCP connect</option>
+                  <option value="syn">SYN / masscan where available</option>
+                  <option value="udp">UDP</option>
+                </select>
+              </CapabilityGroup>
+
+              <CapabilityGroup title="Enumeration">
+                <Segmented value={profileConfig.depth_level} options={['light', 'balanced', 'deep']} onChange={depth_level => applyDepth(depth_level as ProfileConfig['depth_level'])} />
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                  {ALL_CATEGORIES.map(cat => {
+                    const on = profileConfig.categories.includes(cat.id)
+                    return (
+                      <button key={cat.id} type="button" onClick={() => toggleCategory(cat.id)}
+                        style={{ padding: '6px 10px', borderRadius: 6, fontSize: 11.5, cursor: 'pointer', background: on ? 'var(--accent-soft)' : 'var(--bg-0)', border: '1px solid ' + (on ? 'var(--accent)' : 'var(--border)'), color: on ? 'var(--accent)' : 'var(--text-1)', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                        {on && <Check size={11} />}{cat.label}
+                      </button>
+                    )
+                  })}
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 8 }}>
+                  {[
+                    ['service_detection', 'Service detection'],
+                    ['http_probing', 'HTTP probing'],
+                    ['tls_checks', 'TLS checks'],
+                    ['security_headers', 'Security headers'],
+                    ['screenshots', 'Screenshots'],
+                    ['nuclei', 'Nuclei'],
+                    ['directory_enum', 'Directory/file enum'],
+                    ['subdomain_enum', 'Subdomain enum'],
+                    ['dns_recon', 'DNS recon'],
+                  ].map(([key, label]) => (
+                    <Toggle key={key} label={label} checked={Boolean(profileConfig.enumeration[key as keyof ProfileConfig['enumeration']])} onChange={value => setProfileConfig(p => ({ ...p, enumeration: { ...p.enumeration, [key]: value } }))} />
+                  ))}
+                </div>
+              </CapabilityGroup>
+
+              <CapabilityGroup title="Safety">
+                <p className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)', margin: 0 }}>
+                  Controls what ScanR is allowed to try against the target.
+                </p>
+                <Segmented value={profileConfig.safety_level} options={['safe', 'balanced', 'aggressive']} onChange={safety_level => setProfileConfig(p => ({ ...p, safety_level: safety_level as ProfileConfig['safety_level'] }))} />
+                <PresetHelp selected={profileConfig.safety_level} items={SAFETY_HELP} />
+              </CapabilityGroup>
+
+              <CapabilityGroup title="Performance">
+                <p className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)', margin: 0 }}>
+                  Controls how hard ScanR runs: concurrency, rates, and timeout pressure.
+                </p>
+                <Segmented value={profileConfig.performance_profile} options={['conservative', 'normal', 'fast', 'custom']} onChange={performance_profile => applyPerformance(performance_profile as ProfileConfig['performance_profile'])} />
+                <PresetHelp selected={profileConfig.performance_profile} items={PERFORMANCE_HELP} />
+                <button type="button" className="btn btn-ghost btn-sm" onClick={() => setShowAdvanced(v => !v)}>
+                  <SlidersHorizontal size={12} /> {showAdvanced ? 'Hide advanced' : 'Show advanced'}
+                </button>
+                {showAdvanced && (
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
+                    <NumberField label="Hosts" value={profileConfig.performance.max_concurrent_hosts} onChange={max_concurrent_hosts => setProfileConfig(p => ({ ...p, performance: { ...p.performance, max_concurrent_hosts } }))} />
+                    <NumberField label="Plugins" value={profileConfig.performance.max_concurrent_plugins} onChange={max_concurrent_plugins => setProfileConfig(p => ({ ...p, performance: { ...p.performance, max_concurrent_plugins } }))} />
+                    <NumberField label="Timeout" value={profileConfig.performance.timeout} onChange={timeout => setProfileConfig(p => ({ ...p, performance: { ...p.performance, timeout } }))} />
+                    <NumberField label="Masscan rate" value={profileConfig.performance.masscan_rate} onChange={masscan_rate => setProfileConfig(p => ({ ...p, performance: { ...p.performance, masscan_rate } }))} />
+                    <NumberField label="Nuclei rate" value={profileConfig.performance.nuclei_rate} onChange={nuclei_rate => setProfileConfig(p => ({ ...p, performance: { ...p.performance, nuclei_rate } }))} />
+                    <NumberField label="Retries" value={profileConfig.discovery.retries} onChange={retries => setProfileConfig(p => ({ ...p, discovery: { ...p.discovery, retries } }))} />
                   </div>
                 )}
+              </CapabilityGroup>
 
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
-                  <div>
-                    <label className="label">Max concurrent</label>
-                    <input type="number" min={1} max={20} className="input"
-                      value={bruteForce.max_concurrent}
-                      onChange={e => setBruteForce(b => ({ ...b, max_concurrent: +e.target.value }))} />
-                  </div>
-                  <div>
-                    <label className="label">Delay (ms)</label>
-                    <input type="number" min={0} max={5000} step={100} className="input"
-                      value={bruteForce.delay_ms}
-                      onChange={e => setBruteForce(b => ({ ...b, delay_ms: +e.target.value }))} />
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'flex-end', paddingBottom: 2 }}>
-                    <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontSize: 12, color: 'var(--text-2)' }}>
-                      <input type="checkbox" checked={bruteForce.stop_on_success}
-                        onChange={e => setBruteForce(b => ({ ...b, stop_on_success: e.target.checked }))}
-                        style={{ accentColor: 'var(--accent)' }} />
-                      Stop on first success
-                    </label>
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
+              <BruteForceSection bruteForce={bruteForce} setBruteForce={setBruteForce} credWordlists={credWordlists} userWordlists={userWordlists} passWordlists={passWordlists} />
+            </>
+          )}
 
-          {/* 6. Legal notice */}
+          {step === 5 && (
+            <ReviewStep
+              name={name}
+              targets={targets}
+              profileConfig={profileConfig}
+              targetPreview={targetPreview}
+              credentialCount={credentials.length}
+              bruteForce={bruteForce}
+            />
+          )}
+
           <div style={{
             background: 'var(--bg-0)',
             border: '1px solid var(--border)',
@@ -849,12 +1076,9 @@ function NewScanModal({
             alignItems: 'flex-start',
           }}>
             <AlertTriangle size={13} color="var(--sev-medium)" style={{ marginTop: 1, flexShrink: 0 }} />
-            <div>
-              <strong style={{ color: 'var(--text-1)' }}>Legal notice.</strong>{' '}
-              Only scan networks and systems you own or have explicit written permission to test.
-              Unauthorized scanning is illegal.
-            </div>
+            <div><strong style={{ color: 'var(--text-1)' }}>Legal notice.</strong> Only scan systems you own or have permission to test.</div>
           </div>
+
         </div>
 
         {/* Modal footer */}
@@ -866,16 +1090,330 @@ function NewScanModal({
           justifyContent: 'flex-end',
         }}>
           <button className="btn" onClick={onClose}>Cancel</button>
-          <button
-            className="btn btn-primary"
-            onClick={() => canSubmit && onSaveAsDraft(buildPayload())}
-            disabled={!canSubmit}
-          >
-            <FileText size={12} /> {editMode ? 'Save changes' : 'Create scan'}
-          </button>
+          {step > 1 && (
+            <button className="btn" onClick={() => setStep(s => Math.max(1, s - 1))}>Back</button>
+          )}
+          {step < 5 && (
+            <button className="btn btn-primary" onClick={() => setStep(s => Math.min(5, s + 1))}>Next</button>
+          )}
+          {step === 5 && (
+            <button
+              className="btn btn-primary"
+              onClick={() => canSubmit && onSaveAsDraft(buildPayload())}
+              disabled={!canSubmit}
+            >
+              <FileText size={12} /> {editMode ? 'Save changes' : 'Create pending scan'}
+            </button>
+          )}
         </div>
       </div>
     </div>
+  )
+}
+
+function TargetPreviewPanel({ preview }: { preview: TargetPreview }) {
+  if (preview.lines.length === 0) {
+    return (
+      <div style={{ border: '1px solid var(--border)', borderRadius: 8, padding: 10, background: 'var(--bg-0)' }}>
+        <div className="label" style={{ margin: 0 }}>Target preview</div>
+        <p className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)', margin: '6px 0 0' }}>
+          Examples: 10.0.0.221 is one host, 10.0.0.0/24 is a subnet, 10.0.0.50-80 is an explicit range.
+        </p>
+      </div>
+    )
+  }
+  return (
+    <div style={{ border: '1px solid var(--border)', borderRadius: 8, padding: 10, background: 'var(--bg-0)', display: 'grid', gap: 8 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10 }}>
+        <div className="label" style={{ margin: 0 }}>Target preview</div>
+        <div className="mono" style={{ fontSize: 10.5, color: 'var(--text-2)' }}>
+          {preview.totalKnownHosts.toLocaleString()}{preview.hasUnknownCount ? '+' : ''} estimated host{preview.totalKnownHosts === 1 && !preview.hasUnknownCount ? '' : 's'}
+        </div>
+      </div>
+      <div style={{ display: 'grid', gap: 5 }}>
+        {preview.lines.map((line, idx) => (
+          <div key={`${line.input}-${idx}`} className="mono" style={{ display: 'grid', gridTemplateColumns: '1fr 130px 86px', gap: 8, fontSize: 10.5, color: line.type === 'invalid' ? 'var(--sev-high)' : 'var(--text-2)' }}>
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{line.input}</span>
+            <span>{line.label}</span>
+            <span style={{ textAlign: 'right' }}>{line.count === null ? 'DNS' : line.count.toLocaleString()}</span>
+          </div>
+        ))}
+      </div>
+      {preview.warnings.length > 0 && (
+        <div style={{ display: 'grid', gap: 4 }}>
+          {Array.from(new Set(preview.warnings)).map(warning => (
+            <div key={warning} className="mono" style={{ fontSize: 10.5, color: 'var(--sev-medium)' }}>{warning}</div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function ReviewStep({
+  name,
+  targets,
+  profileConfig,
+  targetPreview,
+  credentialCount,
+  bruteForce,
+}: {
+  name: string
+  targets: string
+  profileConfig: ProfileConfig
+  targetPreview: TargetPreview
+  credentialCount: number
+  bruteForce: {
+    enabled: boolean
+    credential_wordlist_id: string
+    username_wordlist_id: string
+    password_wordlist_id: string
+    max_concurrent: number
+    delay_ms: number
+    stop_on_success: boolean
+  }
+}) {
+  const portLabel = PORT_RANGES.find(p => p.value === profileConfig.port_range)?.label ?? profileConfig.port_range
+  const targetLines = targets.split('\n').map(t => t.trim()).filter(Boolean)
+  const warnings = [
+    profileConfig.scan_context === 'internal' && profileConfig.port_range === 'top-1000'
+      ? 'Top 1000 ports can miss internal web apps on high ports such as 30050, 30051, 8000-9999, or NodePort 30000-32767.'
+      : null,
+    profileConfig.discovery.arp
+      ? 'ARP is shown as a local-network intent, but backend discovery support is limited. Use Assume up when hosts block ping.'
+      : null,
+    profileConfig.enumeration.screenshots
+      ? 'Screenshots require Playwright/Chromium in the worker container; missing browser binaries will skip or fail screenshot capture.'
+      : null,
+    profileConfig.port_scanning.scanner === 'tcp_connect'
+      ? 'Masscan/SYN discovery is skipped because TCP connect is selected.'
+      : null,
+    credentialCount === 0
+      ? 'Authenticated checks will be skipped unless credentials are supplied.'
+      : null,
+    profileConfig.safety_level === 'aggressive' && !bruteForce.enabled
+      ? 'Aggressive allows intrusive checks, but brute force wordlists are still disabled.'
+      : null,
+    ...targetPreview.warnings,
+  ].filter(Boolean) as string[]
+
+  return (
+    <div style={{ display: 'grid', gap: 12 }}>
+      <CapabilityGroup title="Review">
+        <ReviewRow label="Name" value={name || 'Untitled scan'} />
+        <ReviewRow label="Targets" value={`${targetLines.length} input line${targetLines.length === 1 ? '' : 's'} · ${targetPreview.totalKnownHosts.toLocaleString()}${targetPreview.hasUnknownCount ? '+' : ''} estimated host${targetPreview.totalKnownHosts === 1 && !targetPreview.hasUnknownCount ? '' : 's'}`} />
+        <ReviewRow label="Context" value={profileConfig.scan_context} />
+        <ReviewRow label="Target handling" value={profileConfig.target_type === 'auto' ? 'Auto detect per line' : profileConfig.target_type} />
+        <ReviewRow label="Ports" value={portLabel} />
+        <ReviewRow label="Discovery" value={[
+          profileConfig.discovery.icmp ? 'ICMP' : null,
+          profileConfig.discovery.tcp ? 'TCP probes' : null,
+          profileConfig.discovery.arp ? 'ARP intent' : null,
+          profileConfig.discovery.assume_up ? 'Assume up' : null,
+        ].filter(Boolean).join(', ') || 'No discovery probes'} />
+        <ReviewRow label="Safety / depth" value={`${profileConfig.safety_level} / ${profileConfig.depth_level}`} />
+        <ReviewRow label="Performance" value={profileConfig.performance_profile} />
+        <ReviewRow label="Credentials" value={`${credentialCount} known credential set${credentialCount === 1 ? '' : 's'} · brute force ${bruteForce.enabled ? 'enabled' : 'disabled'}`} />
+      </CapabilityGroup>
+
+      <TargetPreviewPanel preview={targetPreview} />
+
+      <CapabilityGroup title="Execution Preview">
+        <div style={{ display: 'grid', gap: 6 }}>
+          {ALL_CATEGORIES.map(cat => {
+            const enabled = profileConfig.categories.includes(cat.id)
+            return (
+              <div key={cat.id} className="mono" style={{ display: 'grid', gridTemplateColumns: '110px 1fr', gap: 8, fontSize: 10.5, color: enabled ? 'var(--text-1)' : 'var(--text-3)' }}>
+                <span>{enabled ? 'Will run' : 'Disabled'}</span>
+                <span>{cat.label} - {cat.desc}</span>
+              </div>
+            )
+          })}
+          <div className="mono" style={{ fontSize: 10.5, color: profileConfig.enumeration.subdomain_enum ? 'var(--text-1)' : 'var(--text-3)' }}>
+            {profileConfig.enumeration.subdomain_enum ? 'Will run' : 'Skipped'} - Subdomain enumeration {profileConfig.enumeration.subdomain_enum ? 'enabled' : 'disabled'}
+          </div>
+          <div className="mono" style={{ fontSize: 10.5, color: bruteForce.enabled ? 'var(--sev-medium)' : 'var(--text-3)' }}>
+            {bruteForce.enabled ? 'Will run' : 'Skipped'} - Brute force wordlist checks
+          </div>
+        </div>
+      </CapabilityGroup>
+
+      {warnings.length > 0 && (
+        <CapabilityGroup title="Warnings / Skipped Reasons">
+          {Array.from(new Set(warnings)).map(warning => (
+            <div key={warning} className="mono" style={{ display: 'flex', gap: 7, fontSize: 10.5, color: 'var(--sev-medium)', lineHeight: 1.45 }}>
+              <AlertTriangle size={12} style={{ flexShrink: 0, marginTop: 1 }} />
+              <span>{warning}</span>
+            </div>
+          ))}
+        </CapabilityGroup>
+      )}
+    </div>
+  )
+}
+
+function ReviewRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: '130px 1fr', gap: 10, alignItems: 'start' }}>
+      <span className="label" style={{ margin: 0 }}>{label}</span>
+      <span className="mono" style={{ fontSize: 11, color: 'var(--text-1)', lineHeight: 1.4 }}>{value}</span>
+    </div>
+  )
+}
+
+function CapabilityGroup({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <div style={{ border: '1px solid var(--border)', borderRadius: 8, background: 'var(--bg-0)', padding: 12, display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <div className="label" style={{ margin: 0 }}>{title}</div>
+      {children}
+    </div>
+  )
+}
+
+function Toggle({ label, checked, onChange }: { label: string; checked: boolean; onChange: (value: boolean) => void }) {
+  return (
+    <label style={{ display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer', fontSize: 12, color: 'var(--text-1)' }}>
+      <input type="checkbox" checked={checked} onChange={e => onChange(e.target.checked)} style={{ accentColor: 'var(--accent)' }} />
+      {label}
+    </label>
+  )
+}
+
+function Segmented({ value, options, onChange }: { value: string; options: string[]; onChange: (value: string) => void }) {
+  return (
+    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+      {options.map(option => (
+        <button key={option} type="button" className={`btn btn-sm ${value === option ? 'btn-primary' : 'btn-ghost'}`} onClick={() => onChange(option)}>
+          {option}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+function PresetHelp<T extends string>({
+  selected,
+  items,
+}: {
+  selected: T
+  items: Record<T, { title: string; desc: string }>
+}) {
+  return (
+    <div style={{ display: 'grid', gap: 6 }}>
+      {(Object.entries(items) as [T, { title: string; desc: string }][]).map(([key, item]) => {
+        const active = key === selected
+        return (
+          <div
+            key={key}
+            style={{
+              display: 'grid',
+              gridTemplateColumns: '110px 1fr',
+              gap: 10,
+              alignItems: 'start',
+              padding: '6px 0',
+              borderTop: '1px solid var(--border)',
+              color: active ? 'var(--text-0)' : 'var(--text-2)',
+            }}
+          >
+            <span
+              style={{
+                fontSize: 11.5,
+                fontWeight: 600,
+                color: active ? 'var(--accent)' : 'var(--text-2)',
+                textTransform: 'capitalize',
+              }}
+            >
+              {item.title}
+            </span>
+            <span className="mono" style={{ fontSize: 10.5, color: active ? 'var(--text-1)' : 'var(--text-3)', lineHeight: 1.45 }}>
+              {item.desc}
+            </span>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+function NumberField({ label, value, onChange }: { label: string; value: number; onChange: (value: number) => void }) {
+  return (
+    <div>
+      <label className="label">{label}</label>
+      <input className="input" type="number" min={0} value={value} onChange={e => onChange(Number(e.target.value))} />
+    </div>
+  )
+}
+
+function BruteForceSection({
+  bruteForce,
+  setBruteForce,
+  credWordlists,
+  userWordlists,
+  passWordlists,
+}: {
+  bruteForce: {
+    enabled: boolean
+    credential_wordlist_id: string
+    username_wordlist_id: string
+    password_wordlist_id: string
+    max_concurrent: number
+    delay_ms: number
+    stop_on_success: boolean
+  }
+  setBruteForce: Dispatch<SetStateAction<{
+    enabled: boolean
+    credential_wordlist_id: string
+    username_wordlist_id: string
+    password_wordlist_id: string
+    max_concurrent: number
+    delay_ms: number
+    stop_on_success: boolean
+  }>>
+  credWordlists: { id: string; name: string; entry_count: number }[]
+  userWordlists: { id: string; name: string; entry_count: number }[]
+  passWordlists: { id: string; name: string; entry_count: number }[]
+}) {
+  return (
+    <CapabilityGroup title="Brute Force">
+      <p className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)', margin: 0 }}>
+        Actively tries username/password lists against detected services. Known credentials above are for authenticated checks.
+      </p>
+      <Toggle label="Enable credential checks from wordlists" checked={bruteForce.enabled} onChange={enabled => setBruteForce(b => ({ ...b, enabled }))} />
+      {bruteForce.enabled && (
+        <>
+          <div>
+            <label className="label">Credential pairs list <span className="dimmer" style={{ fontWeight: 400 }}>(user:password)</span></label>
+            <select className="select-field" value={bruteForce.credential_wordlist_id} onChange={e => setBruteForce(b => ({ ...b, credential_wordlist_id: e.target.value }))}>
+              <option value="">None - use separate lists below</option>
+              {credWordlists.map(w => <option key={w.id} value={w.id}>{w.name} ({w.entry_count.toLocaleString()} pairs)</option>)}
+            </select>
+          </div>
+          {!bruteForce.credential_wordlist_id && (
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+              <div>
+                <label className="label">Username list</label>
+                <select className="select-field" value={bruteForce.username_wordlist_id} onChange={e => setBruteForce(b => ({ ...b, username_wordlist_id: e.target.value }))}>
+                  <option value="">Built-in defaults</option>
+                  {userWordlists.map(w => <option key={w.id} value={w.id}>{w.name} ({w.entry_count.toLocaleString()})</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="label">Password list</label>
+                <select className="select-field" value={bruteForce.password_wordlist_id} onChange={e => setBruteForce(b => ({ ...b, password_wordlist_id: e.target.value }))}>
+                  <option value="">Built-in defaults</option>
+                  {passWordlists.map(w => <option key={w.id} value={w.id}>{w.name} ({w.entry_count.toLocaleString()})</option>)}
+                </select>
+              </div>
+            </div>
+          )}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
+            <NumberField label="Max concurrent" value={bruteForce.max_concurrent} onChange={max_concurrent => setBruteForce(b => ({ ...b, max_concurrent }))} />
+            <NumberField label="Delay ms" value={bruteForce.delay_ms} onChange={delay_ms => setBruteForce(b => ({ ...b, delay_ms }))} />
+            <Toggle label="Stop on success" checked={bruteForce.stop_on_success} onChange={stop_on_success => setBruteForce(b => ({ ...b, stop_on_success }))} />
+          </div>
+        </>
+      )}
+    </CapabilityGroup>
   )
 }
 
