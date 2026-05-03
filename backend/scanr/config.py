@@ -13,7 +13,7 @@ class Settings(BaseSettings):
 
     # Application
     app_name: str = "ScanR"
-    app_version: str = "0.9.0"
+    app_version: str = "0.9.1"
     debug: bool = False
     base_dir: Path = Path(__file__).parent.parent
 
