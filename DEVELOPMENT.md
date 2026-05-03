@@ -2,22 +2,23 @@
 
 ## Releasing a new version
 
-One command does everything: bumps version in all files, commits, tags, pushes, creates GitHub release.
+Release from a clean working tree.
 
 ```bash
-./scripts/release.sh 0.7.0 "Add external webapp scanning, CVE feed refresh"
+# Update the version in:
+# - backend/scanr/config.py
+# - backend/pyproject.toml
+# - frontend/package.json
+# - frontend/package-lock.json
+
+git add backend/scanr/config.py backend/pyproject.toml frontend/package.json frontend/package-lock.json
+git commit -m "chore: release v0.7.0"
+git tag -a v0.7.0 -m "ScanR v0.7.0"
+git push origin master --tags
+gh release create v0.7.0 --title "ScanR v0.7.0" --generate-notes
 ```
 
-What it does:
-1. Checks working tree is clean (aborts if uncommitted changes)
-2. Bumps version in `backend/scanr/config.py`, `backend/pyproject.toml`, `frontend/package.json`
-3. Commits the version bump
-4. Creates and pushes git tag `v0.7.0`
-5. Creates GitHub release via `gh` CLI (auto-generates notes from commits if no message given)
-
 **Requires:** `gh` CLI authenticated (`gh auth login`)
-
-If you omit the release notes argument, GitHub auto-generates them from commit messages since the last tag — usually good enough.
 
 ---
 
@@ -42,30 +43,9 @@ docker compose up -d --build
 
 ---
 
-## Secret scanning
+## Sensitive data
 
-ScanR handles credentials, target lists, scanner logs, screenshots, and reports. Check staged changes before every commit:
-
-```bash
-scripts/secret-scan.sh --staged
-```
-
-Check committed history before publishing or opening a PR:
-
-```bash
-scripts/secret-scan.sh --history
-```
-
-For automatic checks:
-
-```bash
-pipx install pre-commit
-pre-commit install
-```
-
-If `gitleaks` is installed, `scripts/secret-scan.sh` runs it automatically for staged/history checks. The built-in checks still run when `gitleaks` is unavailable.
-
-Never commit `.env`, local network target details, private credentials, scanner output, generated reports, Playwright/browser state, debug logs, local database files, or temporary screenshots. Documentation screenshots belong under `docs/screenshots/`; root-level screenshots are ignored as local artifacts.
+ScanR handles credentials, target lists, scanner logs, screenshots, and reports. Never commit `.env`, local network target details, private credentials, scanner output, generated reports, Playwright/browser state, debug logs, local database files, or temporary screenshots. Documentation screenshots belong under `docs/screenshots/`; root-level screenshots are ignored as local artifacts.
 
 ---
 
