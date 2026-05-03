@@ -54,6 +54,12 @@ class Settings(BaseSettings):
     admin_email: str = "admin@scanr.local"
     admin_password: str  # Required — no default; must be set in environment
 
+    # Self-update is intentionally opt-in. Enabling it means the API process can
+    # run the configured update command on behalf of an admin user.
+    self_update_enabled: bool = False
+    self_update_command: str = "docker-compose pull && docker-compose up -d"
+    self_update_workdir: Path = Path("/opt/scanr")
+
     @property
     def cors_origins(self) -> list[str]:
         return [o.strip() for o in self.allowed_origins.split(",") if o.strip()]

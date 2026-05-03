@@ -26,6 +26,7 @@ services:
       - postgres_data:/var/lib/postgresql/data
 
   api:
+    image: ghcr.io/t3rr0or/scanr-api:${SCANR_VERSION:-latest}
     build:
       context: ./backend
       dockerfile: Dockerfile
@@ -46,6 +47,9 @@ services:
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:?ADMIN_PASSWORD must be set in .env}
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost}
       SECURE_COOKIES: ${SECURE_COOKIES:-true}
+      SELF_UPDATE_ENABLED: ${SELF_UPDATE_ENABLED:-false}
+      SELF_UPDATE_COMMAND: ${SELF_UPDATE_COMMAND:-docker-compose pull && docker-compose up -d}
+      SELF_UPDATE_WORKDIR: ${SELF_UPDATE_WORKDIR:-/opt/scanr}
       WORDLIST_DIR: /app/wordlists
     ports:
       - "8000:8000"
@@ -56,6 +60,7 @@ services:
     command: uvicorn scanr.main:app --host 0.0.0.0 --port 8000
 
   worker:
+    image: ghcr.io/t3rr0or/scanr-worker:${SCANR_VERSION:-latest}
     build:
       context: ./backend
       dockerfile: Dockerfile
@@ -84,6 +89,7 @@ services:
     command: celery -A scanr.tasks.celery_app worker --beat --loglevel=info --concurrency=4
 
   frontend:
+    image: ghcr.io/t3rr0or/scanr-frontend:${SCANR_VERSION:-latest}
     build:
       context: ./frontend
       dockerfile: Dockerfile

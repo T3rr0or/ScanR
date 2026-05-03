@@ -110,7 +110,7 @@ ScanR refuses to start if `SECRET_KEY`, `ADMIN_PASSWORD`, or `POSTGRES_PASSWORD`
 ### 3. Start
 
 ```bash
-docker compose up -d --build
+docker compose up -d
 ```
 
 Services:
@@ -122,6 +122,8 @@ Services:
 - **redis** - task queue, result backend, and event bus
 
 First boot runs migrations and seeds system templates/plugins.
+
+For local development from source, use `docker compose up -d --build`.
 
 ### 4. Open
 
@@ -340,12 +342,22 @@ Celery worker
 
 ## Updating
 
+For normal Docker installs:
+
 ```bash
-git pull
-docker compose up -d --build
+docker compose pull
+docker compose up -d
 ```
 
 Database migrations run automatically on API startup.
+
+Admins can optionally enable in-app updates by starting ScanR with the self-update override:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.self-update.yml up -d
+```
+
+This enables the **Update now** button when a newer GitHub release is available. It mounts the host Docker socket into the API container, so only use it for trusted admin-only deployments.
 
 ---
 

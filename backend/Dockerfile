@@ -14,6 +14,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     wget \
     unzip \
     libcap2-bin \
+    docker-compose \
     gosu \
     && rm -rf /var/lib/apt/lists/*
 

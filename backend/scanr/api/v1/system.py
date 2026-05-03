@@ -1,7 +1,14 @@
 from __future__ import annotations
 
 import logging
-from fastapi import APIRouter, BackgroundTasks, Depends
+import asyncio
+import json
+import os
+import shlex
+import subprocess
+from datetime import datetime, timezone
+
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from sqlalchemy import Integer, cast, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,6 +21,116 @@ from scanr.models.user import User
 router = APIRouter(prefix="/system", tags=["system"])
 logger = logging.getLogger(__name__)
 settings = get_settings()
+UPDATE_STATUS_KEY = "scanr:update:status"
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _default_update_status() -> dict:
+    return {
+        "enabled": settings.self_update_enabled,
+        "state": "idle",
+        "started_at": None,
+        "finished_at": None,
+        "exit_code": None,
+        "message": None,
+        "log": "",
+    }
+
+
+def _redis_client():
+    import redis
+    return redis.from_url(settings.redis_url, decode_responses=True)
+
+
+def _get_update_status() -> dict:
+    try:
+        raw = _redis_client().get(UPDATE_STATUS_KEY)
+        if raw:
+            data = json.loads(raw)
+            data["enabled"] = settings.self_update_enabled
+            return data
+    except Exception:
+        logger.debug("Could not read update status", exc_info=True)
+    return _default_update_status()
+
+
+def _set_update_status(data: dict) -> None:
+    data["enabled"] = settings.self_update_enabled
+    try:
+        _redis_client().setex(UPDATE_STATUS_KEY, 86400, json.dumps(data))
+    except Exception:
+        logger.debug("Could not persist update status", exc_info=True)
+
+
+def _split_update_command(command: str) -> list[list[str]]:
+    parts: list[list[str]] = []
+    for segment in command.split("&&"):
+        argv = shlex.split(segment.strip())
+        if argv:
+            parts.append(argv)
+    if not parts:
+        raise ValueError("Update command is empty")
+    return parts
+
+
+def _run_self_update() -> None:
+    status = {
+        "enabled": settings.self_update_enabled,
+        "state": "running",
+        "started_at": _utc_now(),
+        "finished_at": None,
+        "exit_code": None,
+        "message": "Update started",
+        "log": "",
+    }
+    _set_update_status(status)
+
+    logs: list[str] = []
+    exit_code = 0
+    try:
+        workdir = settings.self_update_workdir
+        if not workdir.exists():
+            raise RuntimeError(f"Update directory does not exist: {workdir}")
+
+        env = os.environ.copy()
+        for argv in _split_update_command(settings.self_update_command):
+            logs.append(f"$ {' '.join(shlex.quote(x) for x in argv)}")
+            proc = subprocess.run(
+                argv,
+                cwd=workdir,
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                timeout=900,
+            )
+            output = (proc.stdout or "").strip()
+            if output:
+                logs.append(output[-8000:])
+            exit_code = proc.returncode
+            if proc.returncode != 0:
+                raise RuntimeError(f"Command exited with code {proc.returncode}: {' '.join(argv)}")
+
+        status.update({
+            "state": "succeeded",
+            "finished_at": _utc_now(),
+            "exit_code": exit_code,
+            "message": "Update completed. ScanR may restart briefly.",
+            "log": "\n".join(logs)[-12000:],
+        })
+    except Exception as exc:
+        logger.exception("Self-update failed")
+        status.update({
+            "state": "failed",
+            "finished_at": _utc_now(),
+            "exit_code": exit_code or 1,
+            "message": str(exc),
+            "log": "\n".join(logs)[-12000:],
+        })
+    _set_update_status(status)
 
 
 @router.get("/health")
@@ -105,7 +222,42 @@ async def version_check():
         "latest": latest,
         "update_available": update_available,
         "release_url": release_url,
+        "self_update_enabled": settings.self_update_enabled,
     }
+
+
+@router.get("/update/status")
+async def update_status(current_user: User = Depends(require_admin)):
+    return _get_update_status()
+
+
+@router.post("/update")
+async def start_update(
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(require_admin),
+):
+    if not settings.self_update_enabled:
+        raise HTTPException(
+            status_code=403,
+            detail="Self-update is disabled. Set SELF_UPDATE_ENABLED=true and configure SELF_UPDATE_WORKDIR/SELF_UPDATE_COMMAND.",
+        )
+
+    status = _get_update_status()
+    if status.get("state") == "running":
+        raise HTTPException(status_code=409, detail="Update already running")
+
+    _set_update_status({
+        "enabled": True,
+        "state": "queued",
+        "started_at": _utc_now(),
+        "finished_at": None,
+        "exit_code": None,
+        "message": "Update queued",
+        "log": "",
+    })
+    background_tasks.add_task(_run_self_update)
+    await asyncio.sleep(0)
+    return _get_update_status()
 
 
 @router.get("/cve-status")

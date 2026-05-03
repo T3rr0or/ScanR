@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   type LucideIcon,
   LayoutDashboard, Scan, AlertTriangle, Puzzle, FileText, LogOut,
@@ -55,13 +55,21 @@ function useIsMobile() {
 }
 
 export default function Layout() {
+  const qc = useQueryClient()
   const [page, setPage] = useState<PageId>('dashboard')
   const [activeScanId, setActiveScanId] = useState<string | null>(null)
   const [bannerDismissed, setBannerDismissed] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const isMobile = useIsMobile()
 
+  const token = useAuthStore((s) => s.token)
   const _storeLogout = useAuthStore((s) => s.logout)
+  let role = 'analyst'
+  try {
+    const payload = JSON.parse(atob(token!.split('.')[1]))
+    role = payload.role ?? 'analyst'
+  } catch {}
+
   const logout = async () => {
     try { await api.post('/auth/logout', {}) } catch { /* ignore */ }
     _storeLogout()
@@ -78,6 +86,18 @@ export default function Layout() {
     queryFn: () => api.get('/system/version').then(r => r.data),
     refetchInterval: 60 * 60 * 1000,
     staleTime: 60 * 60 * 1000,
+  })
+
+  const { data: updateStatus } = useQuery({
+    queryKey: ['system-update-status'],
+    queryFn: () => api.get('/system/update/status').then(r => r.data),
+    enabled: Boolean(versionData?.self_update_enabled) && role === 'admin',
+    refetchInterval: (query) => query.state.data?.state === 'running' || query.state.data?.state === 'queued' ? 2500 : false,
+  })
+
+  const updateMut = useMutation({
+    mutationFn: () => api.post('/system/update').then(r => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['system-update-status'] }),
   })
 
   const PageComponent = {
@@ -97,6 +117,8 @@ export default function Layout() {
   }[page] ?? Dashboard
 
   const showBanner = versionData?.update_available && !bannerDismissed
+  const canSelfUpdate = Boolean(versionData?.self_update_enabled) && role === 'admin'
+  const updateRunning = updateStatus?.state === 'running' || updateStatus?.state === 'queued'
   const activePage = activeScanId ? null : page
 
   const sidebar = (
@@ -211,7 +233,27 @@ export default function Layout() {
                     View release notes
                   </a>
                 )}
+                {updateStatus?.state === 'failed' && (
+                  <span style={{ color: 'var(--sev-high)', marginLeft: 8 }}>
+                    Update failed: {updateStatus.message}
+                  </span>
+                )}
+                {updateStatus?.state === 'succeeded' && (
+                  <span style={{ color: 'var(--ok)', marginLeft: 8 }}>
+                    Update completed. ScanR may restart briefly.
+                  </span>
+                )}
               </span>
+              {canSelfUpdate && (
+                <button
+                  className="btn btn-primary btn-sm"
+                  onClick={() => updateMut.mutate()}
+                  disabled={updateRunning || updateMut.isPending}
+                  style={{ flexShrink: 0, height: 26 }}
+                >
+                  {updateRunning || updateMut.isPending ? 'Updating…' : 'Update now'}
+                </button>
+              )}
               <button
                 onClick={() => setBannerDismissed(true)}
                 style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--accent)', display: 'flex', padding: 4, flexShrink: 0 }}
