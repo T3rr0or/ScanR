@@ -1,72 +1,25 @@
-# Python
+# Bytecode and Python environments
 __pycache__/
 *.py[cod]
 *.pyo
+*.pyc
 .venv/
 venv/
 env/
 *.egg-info/
+.eggs/
 dist/
 build/
-.eggs/
-*.pyc
+
+# Python tooling
 .mypy_cache/
 .ruff_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+coverage/
 
-# Database
-*.db
-*.db-shm
-*.db-wal
-*.sqlite
-*.sqlite3
-*.sqlite-shm
-*.sqlite-wal
-
-# Secrets
-.env
-.env.*
-!.env.example
-*.pem
-*.key
-*.p12
-*.pfx
-id_rsa
-id_rsa.pub
-id_ed25519
-id_ed25519.pub
-*.crt
-*.csr
-
-# Reports / scanner output / cache
-reports/
-report-output/
-generated-reports/
-scan-output/
-scan-results/
-scanner-state/
-screenshots/
-!docs/
-!docs/screenshots/
-!docs/screenshots/*.png
-docs/screenshots/preview-contact-sheet.png
-captures/
-artifacts/
-nvd_cache/
-backend/test_scanr.db
-
-# Playwright / browser tooling state
-.playwright-mcp/
-playwright-report/
-test-results/
-blob-report/
-trace.zip
-traces/
-storageState*.json
-**/.auth/
-**/.cache/ms-playwright/
-**/playwright/.cache/
-
-# Node
+# Node and frontend builds
 node_modules/
 frontend/dist/
 frontend/.vite/
@@ -76,31 +29,79 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
-# IDE
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.csr
+id_rsa
+id_rsa.pub
+id_ed25519
+id_ed25519.pub
+storageState*.json
+
+# Local databases
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+*.sqlite-shm
+*.sqlite-wal
+backend/test_scanr.db
+test_scanr.db
+
+# Scanner output and generated artifacts
+reports/
+report-output/
+generated-reports/
+scan-output/
+scan-results/
+scanner-state/
+captures/
+artifacts/
+nvd_cache/
+
+# Browser automation output
+.playwright-mcp/
+playwright-report/
+test-results/
+blob-report/
+trace.zip
+traces/
+**/.auth/
+**/.cache/ms-playwright/
+**/playwright/.cache/
+
+# Temporary screenshots and captures
+screenshots/
+/*.png
+!docs/
+!docs/screenshots/
+!docs/screenshots/*.png
+docs/screenshots/preview-contact-sheet.png
+
+# Editor and OS metadata
 .vscode/
 .idea/
 *.swp
 *.swo
+.DS_Store
+Thumbs.db
 
-# Testing
-.pytest_cache/
-.coverage
-htmlcov/
-test_scanr.db
-coverage/
-
-# Docker
+# Docker and local handoff files
 .docker/
-
-# Local assistant/tool state
-.claude/
-.codex
-
-# Root-level temporary UI screenshots. Keep documentation screenshots under docs/.
-/*.png
-!/docs/**/*.png
-docs/screenshots/preview-contact-sheet.png
-
 design_handoff_scans_page/
 HANDOFF.md
+restart
 *.log
+
+# Local AI assistant state
+.claude/
+.codex
+.codex/
