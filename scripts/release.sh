@@ -51,7 +51,7 @@ echo ""
 
 # ── Push ───────────────────────────────────────────────────────────────
 echo "Pushing master and tag…"
-git push origin master --tags
+git push origin master "v$NEW_VERSION"
 
 # ── Create GitHub Release ──────────────────────────────────────────────
 echo ""
