@@ -56,6 +56,7 @@ class ScanSummary(BaseModel):
     findings_low: int
     findings_info: int
     error_message: str | None = None
+    profile_json: str | None = None
 
     model_config = {"from_attributes": True}
 
