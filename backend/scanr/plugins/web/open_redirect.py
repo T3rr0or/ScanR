@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from typing import TYPE_CHECKING
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse
 
 import httpx
 
@@ -52,7 +52,20 @@ class OpenRedirectPlugin(PluginBase):
                     try:
                         resp = await client.get(url)
                         location = resp.headers.get("location", "")
-                        if CANARY in location or "evil.example.com" in location:
+                        # Only flag if redirect goes TO external host, not just contains it as query param
+                        if location:
+                            parsed = urlparse(location)
+                            if parsed.hostname and "evil.example.com" in parsed.hostname:
+                                pass  # true open redirect — will fall through to return
+                            elif "evil.example.com" in parsed.query or "evil.example.com" in parsed.path:
+                                # Canary appears in redirect query/path but host is internal — likely login redirect
+                                if resp.status_code in (301, 302, 307, 308) and parsed.hostname is None:
+                                    # Relative redirect to same origin with canary in params — skip
+                                    continue
+                            else:
+                                continue  # no canary in location at all
+                        else:
+                            continue
                             return FindingData(
                                 plugin_id=self.id,
                                 severity=Severity.medium,

@@ -148,8 +148,6 @@ class ScanContext:
         scanners = cfg.get("scanners") or []
         if not scanners and cfg.get("scanner"):
             scanners = [cfg["scanner"]]
-        if not scanners:
-            scanners = ["tcp_connect"]
         return {
             "scanners": scanners,
             "firewall_strategy": cfg.get("firewall_strategy", "default"),

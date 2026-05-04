@@ -51,7 +51,7 @@ class NmapWrapper:
             args: str
             if scanner == "udp":
                 args = f"-sU -sV -T4 {ping_arg} {port_arg} --host-timeout {host_timeout}s".strip()
-            elif scanner == "tcp_connect" or euid != 0:
+            elif scanner == "tcp_connect":
                 service = "-sV" if service_detection else ""
                 args = f"-sT {service} -T4 {ping_arg} {port_arg} --host-timeout {host_timeout}s".strip()
             else:

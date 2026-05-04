@@ -152,6 +152,7 @@ export function configToJson(c: ProfileConfig): Record<string, unknown> {
     external_recon: c.scan_context === 'external',
     subdomain_enum: c.enumeration.subdomain_enum,
     disable_masscan: c.scan_context === 'external' && targetType === 'domain',
+    allow_full_port_scan: c.port_range === '1-65535' || c.port_range === 'all',
     intrusive: c.safety_level === 'aggressive',
     masscan_rate: c.performance.masscan_rate,
     max_concurrent: c.performance.max_concurrent_hosts,

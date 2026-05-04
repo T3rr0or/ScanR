@@ -63,8 +63,6 @@ def _is_domain_mode(profile: dict, targets: list[str]) -> bool:
         return True
     if profile.get("target_mode") in {"domain", "bug_bounty", "external"}:
         return True
-    if profile.get("external_recon") is True:
-        return True
     return bool(targets) and all(not is_valid_ip(t) for t in targets)
 
 
@@ -394,14 +392,16 @@ class ScanEngine:
         if not live_targets:
             discovery_mode = context.discovery_config().get("mode", "fast")
             if discovery_mode == "aggressive":
-                # Force scan anyway — assume hosts are up and use -Pn
                 await scan_log.warn(
                     f"No hosts detected via discovery, but "
                     f"'{discovery_mode}' mode forces scan with -Pn",
                     phase="engine",
                 )
-                context.discovery_config()["assume_up"] = True
-                context.port_scanning_config()["firewall_strategy"] = "skip_ping"
+                # Mutate profile_json so subsequent config reads pick up the override
+                _pj.setdefault("discovery", {})["assume_up"] = True
+                _pj.setdefault("port_scanning", {})["firewall_strategy"] = "skip_ping"
+                import json as _json
+                context.scan.profile_json = _json.dumps(_pj)
                 live_targets = all_targets[:]
             else:
                 await scan_log.warn("No live hosts found — scan complete", phase="engine")
@@ -422,7 +422,7 @@ class ScanEngine:
             MasscanWrapper.is_available()
             and not _pj.get("disable_masscan", False)
             and not domain_mode
-            and not ("tcp_connect" in scanners and len(scanners) == 1)
+            and ("tcp_connect" in scanners or "syn" in scanners)
             and all(is_valid_ip(t) for t in live_targets)
         )
         if use_masscan:

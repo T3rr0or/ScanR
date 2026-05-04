@@ -77,15 +77,43 @@ class SshVersionPlugin(PluginBase):
 
     def _analyse_banner(self, banner: str, ip: str, port: int) -> FindingData | None:
         # Match OpenSSH version: SSH-2.0-OpenSSH_8.9p1 Ubuntu-3ubuntu0.6
-        m = re.search(r"OpenSSH[_\s](\d+)\.(\d+)", banner, re.IGNORECASE)
+        m = re.search(r"OpenSSH[_\s](\d+)\.(\d+)(?:p(\d+))?(?:\s+(\w+)-(\S+))?", banner, re.IGNORECASE)
         if not m:
             return None
 
         major, minor = int(m.group(1)), int(m.group(2))
         version = f"{major}.{minor}"
+        distro = (m.group(4) or "").lower()
+        distro_release = m.group(5) or ""
+
+        # Debian/Ubuntu backported patches — specific releases known to be patched
+        # Format: distro -> {(major, minor): frozenset of patched release suffixes}
+        _DISTRO_PATCHED = {
+            "debian": {
+                (9, 7): frozenset(["2+deb12u7", "2+deb12u8", "2+deb12u9"]),
+                (9, 2): frozenset(["2+deb12u7", "2+deb12u8", "2+deb12u9"]),
+                (8, 9): frozenset(["3ubuntu0.6", "3ubuntu0.7"]),  # Ubuntu-patched
+            },
+            "ubuntu": {
+                (9, 7): frozenset(["3ubuntu1", "3ubuntu2"]),
+                (9, 6): frozenset(["3ubuntu0.6", "3ubuntu0.7", "3ubuntu1"]),
+                (8, 9): frozenset(["3ubuntu0.6", "3ubuntu0.7"]),
+            },
+        }
 
         for (max_maj, max_min), cves, sev, desc in _VULNERABLE_OPENSSH:
             if (major, minor) <= (max_maj, max_min):
+                # Check if distribution has backported the fix
+                if distro and distro in _DISTRO_PATCHED:
+                    patches = _DISTRO_PATCHED[distro]
+                    if (max_maj, max_min) in patches and distro_release in patches[(max_maj, max_min)]:
+                        logger.debug("SSH %s on %s %s is patched — skipping", version, distro, distro_release)
+                        return None
+                    elif (max_maj, max_min) in patches:
+                        # Distro has patches for this CVE but this specific release is unknown
+                        sev = Severity.medium
+                        desc = f"{desc} (distribution patch status unknown for {distro} {distro_release})"
+
                 return FindingData(
                     plugin_id=self.id,
                     severity=sev,
@@ -95,7 +123,7 @@ class SshVersionPlugin(PluginBase):
                         f"{desc}."
                     ),
                     evidence=f"SSH banner: {banner}",
-                    remediation=f"Upgrade OpenSSH to the latest stable release (≥{max_maj}.{max_min + 1}).",
+                    remediation=f"Upgrade OpenSSH to the latest stable release (≥{max_maj}.{max_min + 1}) or check distribution backports.",
                     references=[f"https://nvd.nist.gov/vuln/detail/{cve}" for cve in cves],
                     cve_ids=cves,
                     port_number=port,

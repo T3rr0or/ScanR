@@ -568,12 +568,12 @@ export default function Scans({ onOpenScan }: Props) {
                       </button>
                     )}
 
-                    {(s.status === 'completed' || s.status === 'failed') && (
+                    {(s.status === 'completed' || s.status === 'failed' || s.status === 'cancelled') && (
                       <>
                         <button
                           className="btn btn-ghost btn-icon"
                           title="Rerun with same config"
-                          onClick={() => rerunMut.mutate(s.id)}
+                          onClick={() => { if (confirm('Rerun this scan with the same config?')) rerunMut.mutate(s.id) }}
                           style={{ color: 'var(--ok)' }}
                         >
                           <RotateCcw size={13} />

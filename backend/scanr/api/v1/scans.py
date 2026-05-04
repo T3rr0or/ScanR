@@ -58,10 +58,10 @@ class _PortScanningConfig(BaseModel):
     @field_validator("scanners", mode="before")
     @classmethod
     def _normalize_scanners(cls, v, info):
-        """Accept old single-string 'scanner' field or new 'scanners' array."""
-        if v is not None and len(v) > 0:
+        """Accept old single-string 'scanner' field or new 'scanners' array.
+        An explicitly-empty array means no port scanning."""
+        if v is not None:
             return v
-        # Fall back to legacy single-scanner field
         old = info.data.get("scanner")
         if old:
             return [old]
@@ -149,7 +149,9 @@ def _validate_profile_json(raw: str) -> str:
 async def _get_own_scan(scan_id: str, user_id: str, db: AsyncSession) -> Scan:
     """Load a scan and verify it belongs to the requesting user. Raises 404 if not found."""
     result = await db.execute(
-        select(Scan).where(Scan.id == scan_id, Scan.user_id == user_id)
+        select(Scan)
+        .where(Scan.id == scan_id, Scan.user_id == user_id)
+        .options(selectinload(Scan.targets))
     )
     scan = result.scalar_one_or_none()
     if not scan:
@@ -256,14 +258,18 @@ async def create_scan(
 
             db.add(scan_cred)
 
+    scan_id = scan.id
     try:
         await db.commit()
     except Exception:
         await db.rollback()
         logger.exception("create_scan commit failed")
         raise HTTPException(status_code=500, detail="Internal error creating scan")
-    await db.refresh(scan)
-    return scan
+
+    result = await db.execute(
+        select(Scan).where(Scan.id == scan_id).options(selectinload(Scan.targets))
+    )
+    return result.scalar_one()
 
 
 @router.get("/{scan_id}", response_model=ScanRead)
@@ -491,7 +497,6 @@ async def rerun_scan(
     if source.status not in (ScanStatus.completed, ScanStatus.failed, ScanStatus.cancelled):
         raise HTTPException(status_code=409, detail=f"Cannot rerun scan in status '{source.status.value}'")
 
-    # Load original targets
     targets_result = await db.execute(
         select(Target.value).where(Target.scan_id == scan_id)
     )
@@ -499,8 +504,9 @@ async def rerun_scan(
     if not target_values:
         raise HTTPException(status_code=400, detail="Source scan has no targets")
 
+    clone_id = new_uuid()
     clone = Scan(
-        id=new_uuid(),
+        id=clone_id,
         name=f"{source.name} (rerun)",
         description=source.description,
         status=ScanStatus.pending,
@@ -514,7 +520,7 @@ async def rerun_scan(
     db.add(clone)
 
     for raw in target_values:
-        db.add(Target(id=new_uuid(), scan_id=clone.id, value=raw, type=classify_target(raw)))
+        db.add(Target(id=new_uuid(), scan_id=clone_id, value=raw, type=classify_target(raw)))
 
     try:
         await db.commit()
@@ -522,14 +528,27 @@ async def rerun_scan(
         await db.rollback()
         raise HTTPException(status_code=500, detail="Failed to create rerun scan")
 
-    # Launch immediately
-    from scanr.tasks.scan_tasks import run_scan_task
-    task = run_scan_task.delay(clone.id)
-    clone.status = ScanStatus.running
-    clone.celery_task_id = task.id
+    try:
+        from scanr.tasks.scan_tasks import run_scan_task
+        task = run_scan_task.delay(clone_id)
+    except Exception:
+        await db.execute(
+            text("UPDATE scans SET status = :status, error_message = :msg WHERE id = :id"),
+            {"status": ScanStatus.failed.value, "msg": "Failed to dispatch scan task", "id": clone_id},
+        )
+        await db.commit()
+        raise HTTPException(status_code=500, detail="Failed to dispatch scan task")
+
+    await db.execute(
+        text("UPDATE scans SET status = :status, celery_task_id = :tid WHERE id = :id"),
+        {"status": ScanStatus.running.value, "tid": task.id, "id": clone_id},
+    )
     await db.commit()
-    await db.refresh(clone)
-    return clone
+
+    result = await db.execute(
+        select(Scan).where(Scan.id == clone_id).options(selectinload(Scan.targets))
+    )
+    return result.scalar_one()
 
 
 @router.post("/{scan_id}/clone", response_model=ScanRead, status_code=status.HTTP_201_CREATED)
@@ -567,14 +586,17 @@ async def clone_scan(
     for raw in target_values:
         db.add(Target(id=new_uuid(), scan_id=clone.id, value=raw, type=classify_target(raw)))
 
+    clone_id = clone.id
     try:
         await db.commit()
     except Exception:
         await db.rollback()
         raise HTTPException(status_code=500, detail="Failed to clone scan")
 
-    await db.refresh(clone)
-    return clone
+    result = await db.execute(
+        select(Scan).where(Scan.id == clone_id).options(selectinload(Scan.targets))
+    )
+    return result.scalar_one()
 
 
 @router.delete("/{scan_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -590,6 +612,10 @@ async def delete_scan(
     # than begin() which raises InvalidRequestError on an already-open transaction.
     sid = {"scan_id": scan_id}
     async with db.begin_nested():
+        # 0. nullify self-referential FKs from other scans
+        await db.execute(text(
+            "UPDATE scans SET compare_scan_id = NULL WHERE compare_scan_id = :scan_id"
+        ), sid)
         # 1. services → ports → hosts
         await db.execute(text(
             "DELETE FROM services WHERE port_id IN "
@@ -609,6 +635,7 @@ async def delete_scan(
         ), sid)
         # 4. plugin runs plus scan-owned records
         await db.execute(text("DELETE FROM plugin_runs WHERE scan_id = :scan_id"), sid)
+        await db.execute(text("DELETE FROM scan_credentials WHERE scan_id = :scan_id"), sid)
         await db.execute(text("DELETE FROM findings WHERE scan_id = :scan_id"), sid)
         await db.execute(text("DELETE FROM hosts WHERE scan_id = :scan_id"), sid)
         await db.execute(text("DELETE FROM targets WHERE scan_id = :scan_id"), sid)

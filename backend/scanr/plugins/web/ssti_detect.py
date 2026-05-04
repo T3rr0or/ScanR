@@ -118,13 +118,19 @@ class SstiDetectPlugin(PluginBase):
                                 except Exception:
                                     pass
 
-                # Also test common headers
+                # Also test common headers — with baseline to avoid false positives
                 for engine, payload, expected in _PAYLOADS[:4]:  # top 4 most common
                     for header in ["User-Agent", "Referer", "X-Forwarded-For"]:
                         async with sem:
                             try:
+                                # First request baseline with benign header
+                                try:
+                                    base_resp = await client.get(f"{base_url}/", headers={header: _BASELINE_VALUE})
+                                except Exception:
+                                    continue
+                                # Then request with payload
                                 resp = await client.get(f"{base_url}/", headers={header: payload})
-                                if expected in resp.text:
+                                if expected in resp.text and expected not in base_resp.text:
                                     return FindingData(
                                         plugin_id=self.id,
                                         severity=Severity.critical,

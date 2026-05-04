@@ -7,7 +7,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   X, RefreshCw, Terminal, AlertTriangle, Camera, Server, Network, Shield,
   ChevronLeft, GitCompare, StopCircle, CheckSquare, Square,
-  ExternalLink, Copy, Link2,
+  ExternalLink, Copy, Link2, RotateCcw,
 } from 'lucide-react'
 import { scansApi } from '@/api/scans'
 import { findingsApi, type Finding } from '@/api/findings'
@@ -62,6 +62,11 @@ export default function ScanDetail({ scanId, onBack }: Props) {
   const resumeMut = useMutation({
     mutationFn: () => api.post(`/scans/${scanId}/resume`),
     onSuccess: () => refetch(),
+  })
+
+  const rerunMut = useMutation({
+    mutationFn: () => scansApi.rerun(scanId),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['scans'] }); onBack() },
   })
 
   const { data: scan, refetch } = useQuery({
@@ -121,6 +126,18 @@ export default function ScanDetail({ scanId, onBack }: Props) {
           )}
           {!isActive && scan?.status === 'completed' && (
             <button className="btn btn-sm" onClick={() => setShowDelta(true)}><GitCompare size={12} /> Compare</button>
+          )}
+          {!isActive && (scan?.status === 'completed' || scan?.status === 'failed' || scan?.status === 'cancelled') && (
+            <>
+              <button
+                className="btn btn-sm"
+                onClick={() => { if (confirm('Rerun this scan with the same config?')) rerunMut.mutate() }}
+                disabled={rerunMut.isPending}
+                style={{ color: 'var(--ok)' }}
+              >
+                <RotateCcw size={12} /> {rerunMut.isPending ? 'Rerunning…' : 'Rerun'}
+              </button>
+            </>
           )}
           <button className="btn btn-sm" onClick={() => refetch()}>
             <RefreshCw size={12} /> Refresh

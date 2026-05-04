@@ -41,6 +41,22 @@ _PROTECTED_PATHS = [
 ]
 
 # Keywords indicating a real admin page (not a redirect to login)
+# Known paths that are intentionally public by design
+_PUBLIC_BY_DESIGN = {
+    "/actuator/health", "/actuator/info", "/swagger-ui.html", "/swagger-ui",
+    "/api-docs", "/openapi.json", "/docs",
+}
+
+# If response contains login-form markers, it's a login page — not broken access control
+_LOGIN_INDICATORS = [
+    re.compile(r'type=["\']password["\']', re.I),
+    re.compile(r'action=["\'][^"\']*(?:login|signin|auth)[^"\']*["\']', re.I),
+    re.compile(r'<input[^>]*name=["\'](?:username|email|user)["\']', re.I),
+    re.compile(r'(?:please|sign in|log in)\s+(?:to|with)', re.I),
+    re.compile(r'access[-_\s]denied|unauthorized|forbidden', re.I),
+    re.compile(r'authentication\s+(?:required|needed|failed)', re.I),
+]
+
 _ADMIN_CONTENT_SIGNATURES = [
     re.compile(r"dashboard|admin\s+panel|admin\s+dashboard|control\s+panel|management\s+console", re.I),
     re.compile(r"logout|sign\s+out|log\s+out", re.I),
@@ -84,6 +100,12 @@ class BrokenAccessControlPlugin(PluginBase):
                         if resp.status_code != 200:
                             continue
                         body = resp.text
+                        # Skip paths that are intentionally public by design
+                        if path.rstrip("/") in _PUBLIC_BY_DESIGN or path.rstrip("/") + "/" in _PUBLIC_BY_DESIGN:
+                            continue
+                        # If response looks like a login page, skip — it's not broken access control
+                        if any(li.search(body) for li in _LOGIN_INDICATORS):
+                            continue
                         # Must match admin content signature — avoids false positives on
                         # generic 200 pages that happen to share a path name
                         matched = [s for s in _ADMIN_CONTENT_SIGNATURES if s.search(body)]
