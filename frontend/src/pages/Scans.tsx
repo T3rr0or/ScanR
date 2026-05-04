@@ -600,6 +600,7 @@ export default function Scans({ onOpenScan }: Props) {
                       className="btn btn-ghost btn-icon"
                       title="Delete"
                       onClick={() => { if (confirm('Delete this scan?')) deleteMut.mutate(s.id) }}
+                      style={{ marginLeft: 4, paddingLeft: 8, borderLeft: '1px solid var(--border)' }}
                     >
                       <Trash2 size={13} />
                     </button>
