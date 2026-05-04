@@ -38,9 +38,10 @@ OLD_VERSION="$(grep '^version = ' "$REPO_ROOT/backend/pyproject.toml" | head -1 
 # ── Bump versions ──────────────────────────────────────────────────────
 sed -i "s/^version = \".*\"/version = \"$NEW_VERSION\"/" "$REPO_ROOT/backend/pyproject.toml"
 sed -i "s/app_version: str = \".*\"/app_version: str = \"$NEW_VERSION\"/" "$REPO_ROOT/backend/scanr/config.py"
+sed -i "s/\"version\": \".*\"/\"version\": \"$NEW_VERSION\"/" "$REPO_ROOT/frontend/package.json"
 
 # ── Commit & tag ───────────────────────────────────────────────────────
-git add "$REPO_ROOT/backend/pyproject.toml" "$REPO_ROOT/backend/scanr/config.py"
+git add "$REPO_ROOT/backend/pyproject.toml" "$REPO_ROOT/backend/scanr/config.py" "$REPO_ROOT/frontend/package.json"
 git commit -m "chore: release $NEW_VERSION"
 git tag "v$NEW_VERSION"
 
