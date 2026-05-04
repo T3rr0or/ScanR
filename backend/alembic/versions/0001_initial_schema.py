@@ -10,7 +10,6 @@ from __future__ import annotations
 from typing import Sequence, Union
 
 from alembic import op
-import sqlalchemy as sa
 from sqlalchemy import inspect as sa_inspect, text
 
 revision: str = "0001"
@@ -24,7 +23,7 @@ def upgrade() -> None:
     inspector = sa_inspect(bind)
     existing_tables = set(inspector.get_table_names())
 
-    if not existing_tables:
+    if "users" not in existing_tables:
         # Fresh install — create the full schema via SQLAlchemy metadata
         from scanr.models.base import Base
         import scanr.models  # noqa: F401 — registers all ORM classes
