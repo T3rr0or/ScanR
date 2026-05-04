@@ -39,10 +39,11 @@ export interface ProfileConfig {
     udp: boolean
     retries: number
     strategy: 'fast' | 'validated'
+    mode: 'fast' | 'aggressive' | 'skip'
     assume_up: boolean
   }
   port_scanning: {
-    scanner: 'tcp_connect' | 'syn' | 'udp'
+    scanners: ('tcp_connect' | 'syn' | 'udp')[]
     firewall_strategy: 'default' | 'skip_ping'
   }
   enumeration: {
@@ -82,11 +83,12 @@ const DEFAULT_PROFILE: ProfileConfig = {
     udp: false,
     retries: 1,
     strategy: 'validated',
+    mode: 'fast' as const,
     assume_up: false,
   },
   port_scanning: {
-    scanner: 'tcp_connect',
-    firewall_strategy: 'default',
+    scanners: ['tcp_connect' as const],
+    firewall_strategy: 'default' as const,
   },
   enumeration: {
     service_detection: true,
@@ -141,12 +143,16 @@ export function configToJson(c: ProfileConfig): Record<string, unknown> {
     port_range: c.port_range,
     plugins,
     discovery: c.discovery,
-    port_scanning: c.port_scanning,
+    port_scanning: {
+      scanners: c.port_scanning.scanners,
+      firewall_strategy: c.port_scanning.firewall_strategy,
+    },
     enumeration: c.enumeration,
     performance: c.performance,
     external_recon: c.scan_context === 'external',
     subdomain_enum: c.enumeration.subdomain_enum,
     disable_masscan: c.scan_context === 'external' && targetType === 'domain',
+    allow_full_port_scan: c.port_range === '1-65535' || c.port_range === 'all',
     intrusive: c.safety_level === 'aggressive',
     masscan_rate: c.performance.masscan_rate,
     max_concurrent: c.performance.max_concurrent_hosts,
@@ -162,7 +168,15 @@ export function jsonToConfig(pj: Record<string, unknown> | null | undefined): Pr
     ? allIds
     : allIds.filter(cat => plugins.some(p => p === `${cat}.*` || p === cat || p.startsWith(`${cat}.`)))
   const discovery = (pj.discovery ?? {}) as Partial<ProfileConfig['discovery']>
-  const portScanning = (pj.port_scanning ?? {}) as Partial<ProfileConfig['port_scanning']>
+  const portScanningRaw = (pj.port_scanning ?? {}) as Record<string, unknown>
+  const scannersArr = (portScanningRaw.scanners as string[] | undefined)
+  const legacyScanner = portScanningRaw.scanner as string | undefined
+  const portScanning: Partial<ProfileConfig['port_scanning']> = {
+    ...(portScanningRaw.firewall_strategy !== undefined ? { firewall_strategy: portScanningRaw.firewall_strategy as 'default' | 'skip_ping' } : {}),
+    ...(scannersArr?.length ? { scanners: scannersArr as ProfileConfig['port_scanning']['scanners'] }
+      : legacyScanner ? { scanners: [legacyScanner as 'tcp_connect' | 'syn' | 'udp'] }
+      : {}),
+  }
   const enumeration = (pj.enumeration ?? {}) as Partial<ProfileConfig['enumeration']>
   const performance = (pj.performance ?? {}) as Partial<ProfileConfig['performance']>
   const rawContext = pj.scan_context ?? pj.target_mode ?? (pj.external_recon ? 'external' : undefined)
@@ -330,16 +344,25 @@ export function ProfileEditor({
               Custom range from template: <code style={{ fontFamily: 'var(--font-mono)' }}>{config.port_range}</code> - pick a preset above to override
             </p>
           )}
-          <Field label="Scanner">
-            <select
-              className="select-field"
-              value={config.port_scanning.scanner}
-              onChange={e => onChange({ ...config, port_scanning: { ...config.port_scanning, scanner: e.target.value as ProfileConfig['port_scanning']['scanner'] } })}
-            >
-              <option value="tcp_connect">TCP connect</option>
-              <option value="syn">SYN / masscan where available</option>
-              <option value="udp">UDP</option>
-            </select>
+          <Field label="Scan protocols">
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              {(['tcp_connect', 'syn', 'udp'] as const).map(scanner => (
+                <Toggle
+                  key={scanner}
+                  label={scanner === 'tcp_connect' ? 'TCP connect' : scanner === 'syn' ? 'SYN / masscan' : 'UDP'}
+                  checked={config.port_scanning.scanners.includes(scanner)}
+                  onChange={checked => onChange({
+                    ...config,
+                    port_scanning: {
+                      ...config.port_scanning,
+                      scanners: checked
+                        ? [...config.port_scanning.scanners, scanner]
+                        : config.port_scanning.scanners.filter(s => s !== scanner),
+                    },
+                  })}
+                />
+              ))}
+            </div>
           </Field>
         </EditorGroup>
       )}
@@ -352,14 +375,15 @@ export function ProfileEditor({
           <Toggle label="Assume up" checked={config.discovery.assume_up} onChange={assume_up => onChange({ ...config, discovery: { ...config.discovery, assume_up } })} />
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-          <Field label="Discovery strategy">
+          <Field label="Discovery mode">
             <select
               className="select-field"
-              value={config.discovery.strategy}
-              onChange={e => onChange({ ...config, discovery: { ...config.discovery, strategy: e.target.value as ProfileConfig['discovery']['strategy'] } })}
+              value={config.discovery.mode}
+              onChange={e => onChange({ ...config, discovery: { ...config.discovery, mode: e.target.value as ProfileConfig['discovery']['mode'] } })}
             >
-              <option value="fast">Fast</option>
-              <option value="validated">Validated</option>
+              <option value="fast">Fast (ICMP + TCP)</option>
+              <option value="aggressive">Aggressive (SYN + ACK + UDP ping)</option>
+              <option value="skip">Skip (assume hosts are up)</option>
             </select>
           </Field>
           <NumberField label="Retries" value={config.discovery.retries} onChange={retries => onChange({ ...config, discovery: { ...config.discovery, retries } })} />

@@ -66,7 +66,7 @@ class HttpMethodsPlugin(PluginBase):
             for method in DANGEROUS_METHODS:
                 try:
                     resp = await client.request(method, url)
-                    if resp.status_code < 405:
+                    if 200 <= resp.status_code < 400:
                         enabled.append(method)
                 except Exception:
                     pass

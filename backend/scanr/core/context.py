@@ -138,14 +138,18 @@ class ScanContext:
             "udp": bool(cfg.get("udp", False)),
             "retries": int(cfg.get("retries", 1)),
             "strategy": cfg.get("strategy", "fast" if external_domain else "validated"),
+            "mode": cfg.get("mode", "fast"),
             "assume_up": bool(cfg.get("assume_up", False)),
         }
 
     def port_scanning_config(self) -> dict:
         pj = self.profile_json()
         cfg = pj.get("port_scanning") or {}
+        scanners = cfg.get("scanners") or []
+        if not scanners and cfg.get("scanner"):
+            scanners = [cfg["scanner"]]
         return {
-            "scanner": cfg.get("scanner", "tcp_connect"),
+            "scanners": scanners,
             "firewall_strategy": cfg.get("firewall_strategy", "default"),
         }
 

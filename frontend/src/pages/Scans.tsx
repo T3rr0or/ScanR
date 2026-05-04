@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Activity, Scan, Plus, Download, Search,
   Terminal, Play, StopCircle, GitCompare, Trash2,
-  Radar, Globe, Zap, SlidersHorizontal,
+  Radar, Globe, Zap, SlidersHorizontal, RotateCcw,
   X, FileText, AlertTriangle, Check, Pencil,
 } from 'lucide-react'
 import { scansApi, type ScanCreate, type ScanCredentialIn } from '@/api/scans'
@@ -221,6 +221,7 @@ export default function Scans({ onOpenScan }: Props) {
   const qc = useQueryClient()
   const [showForm, setShowForm]       = useState(false)
   const [editScanId, setEditScanId]   = useState<string | null>(null)
+  const [rerunScan, setRerunScan]     = useState<{ id: string; name: string; targets?: string[]; profile_json?: string | null } | null>(null)
   const [deltaScan, setDeltaScan]     = useState<{ id: string; name: string } | null>(null)
   const [page, setPage]               = useState(0)
   const [filter, setFilter]           = useState<FilterStatus>('all')
@@ -264,6 +265,17 @@ export default function Scans({ onOpenScan }: Props) {
   const deleteMut = useMutation({
     mutationFn: (id: string) => scansApi.delete(id),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['scans'] }),
+    onError: _onErr,
+  })
+  const rerunMut = useMutation({
+    mutationFn: (id: string) => scansApi.rerun(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['scans'] }),
+    onError: _onErr,
+  })
+  const cloneMut = useMutation({
+    mutationFn: ({ id, body }: { id: string; body?: ScanCreate }) =>
+      body ? scansApi.create(body) : scansApi.clone(id),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['scans'] }); setRerunScan(null); setShowForm(false) },
     onError: _onErr,
   })
 
@@ -332,6 +344,18 @@ export default function Scans({ onOpenScan }: Props) {
           />
         )
       })()}
+
+      {/* ── Rerun / Edit & Rerun modal ── */}
+      {rerunScan && (
+        <NewScanModal
+          key={`rerun-${rerunScan.id}`}
+          editMode
+          initialScan={rerunScan}
+          onClose={() => setRerunScan(null)}
+          onSaveAsDraft={body => cloneMut.mutate({ id: rerunScan.id, body })}
+          loading={cloneMut.isPending}
+        />
+      )}
 
       {/* ── Page header ── */}
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 16 }}>
@@ -544,20 +568,39 @@ export default function Scans({ onOpenScan }: Props) {
                       </button>
                     )}
 
-                    {(s.status === 'completed' || s.status === 'failed') && (
-                      <button
-                        className="btn btn-ghost btn-icon"
-                        title="Compare"
-                        onClick={() => setDeltaScan({ id: s.id, name: s.name })}
-                      >
-                        <GitCompare size={13} />
-                      </button>
+                    {(s.status === 'completed' || s.status === 'failed' || s.status === 'cancelled') && (
+                      <>
+                        <button
+                          className="btn btn-ghost btn-icon"
+                          title="Rerun with same config"
+                          onClick={() => { if (confirm('Rerun this scan with the same config?')) rerunMut.mutate(s.id) }}
+                          style={{ color: 'var(--ok)' }}
+                        >
+                          <RotateCcw size={13} />
+                        </button>
+                        <button
+                          className="btn btn-ghost btn-icon"
+                          title="Edit config & rerun"
+                          onClick={() => setRerunScan({ id: s.id, name: s.name, targets: s.targets, profile_json: s.profile_json })}
+                          style={{ color: 'var(--accent)' }}
+                        >
+                          <Pencil size={11} />
+                        </button>
+                        <button
+                          className="btn btn-ghost btn-icon"
+                          title="Compare"
+                          onClick={() => setDeltaScan({ id: s.id, name: s.name })}
+                        >
+                          <GitCompare size={13} />
+                        </button>
+                      </>
                     )}
 
                     <button
                       className="btn btn-ghost btn-icon"
                       title="Delete"
                       onClick={() => { if (confirm('Delete this scan?')) deleteMut.mutate(s.id) }}
+                      style={{ marginLeft: 4, paddingLeft: 8, borderLeft: '1px solid var(--border)' }}
                     >
                       <Trash2 size={13} />
                     </button>
@@ -974,6 +1017,32 @@ function NewScanModal({
                 <Toggle label="TCP probes" checked={profileConfig.discovery.tcp} onChange={tcp => setProfileConfig(p => ({ ...p, discovery: { ...p.discovery, tcp } }))} />
                 <Toggle label="ARP (local L2 only / limited support)" checked={profileConfig.discovery.arp} onChange={arp => setProfileConfig(p => ({ ...p, discovery: { ...p.discovery, arp } }))} />
                 <Toggle label="Assume up" checked={profileConfig.discovery.assume_up} onChange={assume_up => setProfileConfig(p => ({ ...p, discovery: { ...p.discovery, assume_up } }))} />
+                <div style={{ marginTop: 4 }}>
+                  <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)', marginBottom: 4, display: 'block' }}>Discovery mode:</span>
+                  <select
+                    className="select-field"
+                    value={profileConfig.discovery.mode}
+                    onChange={e => {
+                      const mode = e.target.value as ProfileConfig['discovery']['mode']
+                      setProfileConfig(p => ({
+                        ...p,
+                        discovery: {
+                          ...p.discovery,
+                          mode,
+                          ...(mode === 'skip' ? { assume_up: true } : {}),
+                        },
+                        port_scanning: {
+                          ...p.port_scanning,
+                          ...(mode === 'skip' ? { firewall_strategy: 'skip_ping' as const } : {}),
+                        },
+                      }))
+                    }}
+                  >
+                    <option value="fast">Fast (ICMP + TCP probe)</option>
+                    <option value="aggressive">Aggressive (SYN + ACK + UDP ping)</option>
+                    <option value="skip">Skip (assume hosts are up)</option>
+                  </select>
+                </div>
                 <p className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)', margin: 0 }}>
                   If internal hosts block ping, use Assume up or broader port discovery. UDP discovery is not part of the default pipeline yet.
                 </p>
@@ -983,11 +1052,25 @@ function NewScanModal({
                 <select className="select-field" value={profileConfig.port_range} onChange={e => setProfileConfig(p => ({ ...p, port_range: e.target.value }))}>
                   {PORT_RANGES.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
                 </select>
-                <select className="select-field" value={profileConfig.port_scanning.scanner} onChange={e => setProfileConfig(p => ({ ...p, port_scanning: { ...p.port_scanning, scanner: e.target.value as ProfileConfig['port_scanning']['scanner'] } }))}>
-                  <option value="tcp_connect">TCP connect</option>
-                  <option value="syn">SYN / masscan where available</option>
-                  <option value="udp">UDP</option>
-                </select>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 8 }}>
+                  <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)', width: '100%', marginBottom: 2 }}>Scan protocols:</span>
+                  {(['tcp_connect', 'syn', 'udp'] as const).map(scanner => (
+                    <Toggle
+                      key={scanner}
+                      label={scanner === 'tcp_connect' ? 'TCP connect' : scanner === 'syn' ? 'SYN / masscan' : 'UDP'}
+                      checked={profileConfig.port_scanning.scanners.includes(scanner)}
+                      onChange={checked => setProfileConfig(p => ({
+                        ...p,
+                        port_scanning: {
+                          ...p.port_scanning,
+                          scanners: checked
+                            ? [...p.port_scanning.scanners, scanner]
+                            : p.port_scanning.scanners.filter(s => s !== scanner),
+                        },
+                      }))}
+                    />
+                  ))}
+                </div>
               </CapabilityGroup>
 
               <CapabilityGroup title="Enumeration">
@@ -1185,8 +1268,8 @@ function ReviewStep({
     profileConfig.enumeration.screenshots
       ? 'Screenshots require Playwright/Chromium in the worker container; missing browser binaries will skip or fail screenshot capture.'
       : null,
-    profileConfig.port_scanning.scanner === 'tcp_connect'
-      ? 'Masscan/SYN discovery is skipped because TCP connect is selected.'
+    profileConfig.port_scanning.scanners.length === 1 && profileConfig.port_scanning.scanners[0] === 'tcp_connect'
+      ? 'Masscan/SYN discovery is skipped because only TCP connect is selected.'
       : null,
     credentialCount === 0
       ? 'Authenticated checks will be skipped unless credentials are supplied.'
@@ -1210,7 +1293,9 @@ function ReviewStep({
           profileConfig.discovery.tcp ? 'TCP probes' : null,
           profileConfig.discovery.arp ? 'ARP intent' : null,
           profileConfig.discovery.assume_up ? 'Assume up' : null,
+          profileConfig.discovery.mode === 'aggressive' ? 'Aggressive mode' : profileConfig.discovery.mode === 'skip' ? 'Skip mode' : null,
         ].filter(Boolean).join(', ') || 'No discovery probes'} />
+        <ReviewRow label="Scan type" value={profileConfig.port_scanning.scanners.map(s => s === 'tcp_connect' ? 'TCP' : s === 'syn' ? 'SYN' : 'UDP').join(' + ') || 'TCP'} />
         <ReviewRow label="Safety / depth" value={`${profileConfig.safety_level} / ${profileConfig.depth_level}`} />
         <ReviewRow label="Performance" value={profileConfig.performance_profile} />
         <ReviewRow label="Credentials" value={`${credentialCount} known credential set${credentialCount === 1 ? '' : 's'} · brute force ${bruteForce.enabled ? 'enabled' : 'disabled'}`} />

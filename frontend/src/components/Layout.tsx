@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   type LucideIcon,
@@ -56,11 +56,30 @@ function useIsMobile() {
 
 export default function Layout() {
   const qc = useQueryClient()
-  const [page, setPage] = useState<PageId>('dashboard')
+  const parseHash = useCallback((): PageId => {
+    const h = window.location.hash.replace(/^#\/?/, '')
+    return (NAV.some(n => n.id === h) ? h : 'dashboard') as PageId
+  }, [])
+
+  const [page, setPage] = useState<PageId>(parseHash)
   const [activeScanId, setActiveScanId] = useState<string | null>(null)
   const [bannerDismissed, setBannerDismissed] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const isMobile = useIsMobile()
+
+  // Sync URL hash <=> page state
+  useEffect(() => {
+    const onHashChange = () => setPage(parseHash())
+    window.addEventListener('hashchange', onHashChange)
+    return () => window.removeEventListener('hashchange', onHashChange)
+  }, [parseHash])
+
+  const navigate = (id: PageId) => {
+    setPage(id)
+    setActiveScanId(null)
+    setSidebarOpen(false)
+    window.location.hash = `#/${id}`
+  }
 
   const token = useAuthStore((s) => s.token)
   const _storeLogout = useAuthStore((s) => s.logout)
@@ -73,12 +92,6 @@ export default function Layout() {
   const logout = async () => {
     try { await api.post('/auth/logout', {}) } catch { /* ignore */ }
     _storeLogout()
-  }
-
-  const navigate = (id: PageId) => {
-    setPage(id)
-    setActiveScanId(null)
-    setSidebarOpen(false)
   }
 
   const { data: versionData } = useQuery({

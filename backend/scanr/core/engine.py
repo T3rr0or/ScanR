@@ -63,8 +63,6 @@ def _is_domain_mode(profile: dict, targets: list[str]) -> bool:
         return True
     if profile.get("target_mode") in {"domain", "bug_bounty", "external"}:
         return True
-    if profile.get("external_recon") is True:
-        return True
     return bool(targets) and all(not is_valid_ip(t) for t in targets)
 
 
@@ -392,8 +390,22 @@ class ScanEngine:
         )
 
         if not live_targets:
-            await scan_log.warn("No live hosts found — scan complete", phase="engine")
-            return
+            discovery_mode = context.discovery_config().get("mode", "fast")
+            if discovery_mode == "aggressive":
+                await scan_log.warn(
+                    f"No hosts detected via discovery, but "
+                    f"'{discovery_mode}' mode forces scan with -Pn",
+                    phase="engine",
+                )
+                # Mutate profile_json so subsequent config reads pick up the override
+                _pj.setdefault("discovery", {})["assume_up"] = True
+                _pj.setdefault("port_scanning", {})["firewall_strategy"] = "skip_ping"
+                import json as _json
+                context.scan.profile_json = _json.dumps(_pj)
+                live_targets = all_targets[:]
+            else:
+                await scan_log.warn("No live hosts found — scan complete", phase="engine")
+                return
 
         await scan_log.phase_start(
             "portscan",
@@ -405,11 +417,12 @@ class ScanEngine:
         masscan_results: dict[str, list[int]] = {}
         from scanr.scanner.port_scanner.masscan_wrapper import MasscanWrapper
         port_scan_cfg = context.port_scanning_config()
+        scanners = port_scan_cfg.get("scanners", ["tcp_connect"])
         use_masscan = (
             MasscanWrapper.is_available()
             and not _pj.get("disable_masscan", False)
             and not domain_mode
-            and not ((_pj.get("port_scanning") or {}).get("scanner") == "tcp_connect")
+            and ("tcp_connect" in scanners or "syn" in scanners)
             and all(is_valid_ip(t) for t in live_targets)
         )
         if use_masscan:
