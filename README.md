@@ -1,4 +1,4 @@
-> This project was built with the assistance of [Claude](https://claude.ai) (Anthropic AI).
+> This project was built with the assistance of AI.
 
 # ScanR
 
