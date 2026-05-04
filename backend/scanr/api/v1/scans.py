@@ -477,9 +477,6 @@ async def scan_delta_latest(
     return delta
 
 
-@router.delete("/{scan_id}", status_code=status.HTTP_204_NO_CONTENT)
-
-
 @router.post("/{scan_id}/rerun", response_model=ScanRead, status_code=status.HTTP_202_ACCEPTED)
 @limiter.limit("10/minute")
 async def rerun_scan(
