@@ -24,6 +24,11 @@ class NmapWrapper:
 
         If known_ports is provided (from a prior masscan run), nmap only scans
         those specific ports, which is significantly faster.
+
+        When multiple scanners are selected (e.g. tcp_connect + udp), runs each
+        scan type sequentially and merges results — ports are deduplicated by
+        (number, protocol). OS fingerprint data comes from whichever scan
+        produced it.
         """
         if known_ports:
             port_arg = "-p " + ",".join(str(p) for p in sorted(set(known_ports)))
@@ -31,52 +36,76 @@ class NmapWrapper:
             port_arg = context.get_port_range()
         port_cfg = context.port_scanning_config()
         perf_cfg = context.performance_config()
-        service_arg = "-sV" if context.profile_json().get("enumeration", {}).get("service_detection", True) else ""
+        service_detection = context.profile_json().get("enumeration", {}).get("service_detection", True)
         ping_arg = "-Pn" if port_cfg["firewall_strategy"] == "skip_ping" else ""
+        discovery_cfg = context.discovery_config()
+        if discovery_cfg.get("mode") == "skip" or discovery_cfg.get("assume_up"):
+            ping_arg = "-Pn"
         host_timeout = int(perf_cfg.get("timeout") or 60)
-        common_args = f"{service_arg} -T4 {ping_arg} {port_arg} --host-timeout {host_timeout}s".strip()
+        euid = os.geteuid()
 
-        if port_cfg["scanner"] == "udp":
-            udp_args = f"-sU {common_args}"
-            await context.log.info(f"$ nmap {udp_args} {ip}", phase="portscan", host=ip)
+        scanners: list[str] = port_cfg.get("scanners", ["tcp_connect"])
+        merged: dict[str, Any] | None = None
+
+        for scanner in scanners:
+            args: str
+            if scanner == "udp":
+                args = f"-sU -sV -T4 {ping_arg} {port_arg} --host-timeout {host_timeout}s".strip()
+            elif scanner == "tcp_connect" or euid != 0:
+                service = "-sV" if service_detection else ""
+                args = f"-sT {service} -T4 {ping_arg} {port_arg} --host-timeout {host_timeout}s".strip()
+            else:
+                service = "-sV" if service_detection else ""
+                args = f"-sS {service} -O --osscan-guess -T4 {ping_arg} {port_arg} --host-timeout {host_timeout}s".strip()
+
+            cmd = f"nmap {args} {ip}"
+            await context.log.info(f"$ {cmd}", phase="portscan", host=ip)
             try:
-                return await self._run_nmap(ip, udp_args)
+                result = await self._run_nmap(ip, args)
             except asyncio.TimeoutError:
-                logger.warning("nmap UDP scan timed out for %s", ip)
-                return None
+                logger.warning("nmap %s scan timed out for %s", scanner, ip)
+                if scanner == "syn":
+                    # Fallback to TCP connect on SYN failure
+                    service = "-sV" if service_detection else ""
+                    fallback_args = f"-sT {service} -T4 {ping_arg} {port_arg} --host-timeout {host_timeout}s".strip()
+                    await context.log.info(f"$ nmap {fallback_args} {ip} (TCP fallback)", phase="portscan", host=ip)
+                    try:
+                        result = await self._run_nmap(ip, fallback_args)
+                    except asyncio.TimeoutError:
+                        logger.warning("nmap TCP fallback timed out for %s", ip)
+                        continue
+                    except Exception:
+                        logger.warning("nmap TCP fallback failed for %s", ip)
+                        continue
+                else:
+                    continue
+            except Exception:
+                logger.warning("nmap %s scan failed for %s", scanner, ip)
+                continue
 
-        # SYN scanning and OS fingerprinting require elevated privileges.
-        # The container normally runs as scanr, so use TCP connect scanning there.
-        if os.geteuid() != 0 or port_cfg["scanner"] == "tcp_connect":
-            tcp_args = f"-sT {common_args}"
-            tcp_cmd = f"nmap {tcp_args} {ip}"
-            await context.log.info(f"$ {tcp_cmd}", phase="portscan", host=ip)
-            try:
-                return await self._run_nmap(ip, tcp_args)
-            except asyncio.TimeoutError:
-                logger.warning("nmap TCP scan timed out for %s", ip)
-                return None
+            if result is None:
+                continue
 
-        # Root can use SYN scanning and OS fingerprinting.
-        privileged_args = f"{service_arg} -O --osscan-guess -T4 {ping_arg} {port_arg} --host-timeout {host_timeout}s".strip()
-        syn_cmd = f"nmap -sS {privileged_args} {ip}"
-        await context.log.info(f"$ {syn_cmd}", phase="portscan", host=ip)
-        try:
-            return await self._run_nmap(ip, f"-sS {privileged_args}")
-        except asyncio.TimeoutError:
-            logger.warning("nmap SYN scan timed out for %s", ip)
-            return None
-        except Exception as exc:
-            logger.warning("nmap SYN scan failed for %s, falling back to TCP: %s", ip, exc)
+            # Merge results — deduplicate ports by (number, protocol)
+            if merged is None:
+                merged = result
+            else:
+                seen = {(p["number"], p["protocol"]) for p in merged["ports"]}
+                for p in result.get("ports", []):
+                    key = (p["number"], p["protocol"])
+                    if key not in seen:
+                        merged["ports"].append(p)
+                        seen.add(key)
+                # Carry over OS data if not already set
+                if not merged.get("os_name") and result.get("os_name"):
+                    merged["os_name"] = result["os_name"]
+                    merged["os_accuracy"] = result.get("os_accuracy", 0)
+                    merged["os_family"] = result.get("os_family")
+                # Carry over hostname if not already set
+                if not merged.get("hostname") and result.get("hostname"):
+                    merged["hostname"] = result["hostname"]
 
-        tcp_args = f"-sT {common_args}"
-        tcp_cmd = f"nmap {tcp_args} {ip}"
-        await context.log.info(f"$ {tcp_cmd} (TCP fallback)", phase="portscan", host=ip)
-        try:
-            return await self._run_nmap(ip, tcp_args)
-        except asyncio.TimeoutError:
-            logger.warning("nmap TCP scan timed out for %s", ip)
-            return None
+        return merged
 
     async def _run_nmap(self, ip: str, args: str) -> dict[str, Any] | None:
         loop = asyncio.get_event_loop()

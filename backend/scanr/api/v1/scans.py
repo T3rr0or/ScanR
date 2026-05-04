@@ -46,12 +46,26 @@ class _DiscoveryConfig(BaseModel):
     udp: bool = False
     retries: int = Field(default=1, ge=0, le=10)
     strategy: Literal["fast", "validated"] = "validated"
+    mode: Literal["fast", "aggressive", "skip"] = "fast"
     assume_up: bool = False
 
 
 class _PortScanningConfig(BaseModel):
-    scanner: Literal["tcp_connect", "syn", "udp"] = "tcp_connect"
+    scanner: Literal["tcp_connect", "syn", "udp"] | None = None
+    scanners: list[Literal["tcp_connect", "syn", "udp"]] = Field(default_factory=lambda: ["tcp_connect"])
     firewall_strategy: Literal["default", "skip_ping"] = "default"
+
+    @field_validator("scanners", mode="before")
+    @classmethod
+    def _normalize_scanners(cls, v, info):
+        """Accept old single-string 'scanner' field or new 'scanners' array."""
+        if v is not None and len(v) > 0:
+            return v
+        # Fall back to legacy single-scanner field
+        old = info.data.get("scanner")
+        if old:
+            return [old]
+        return ["tcp_connect"]
 
 
 class _EnumerationConfig(BaseModel):
@@ -243,7 +257,7 @@ async def create_scan(
 
     try:
         await db.commit()
-    except Exception as exc:
+    except Exception:
         await db.rollback()
         logger.exception("create_scan commit failed")
         raise HTTPException(status_code=500, detail="Internal error creating scan")
@@ -318,7 +332,6 @@ async def get_scan_hosts(
 ):
     await _get_own_scan(scan_id, current_user.id, db)
     from scanr.models.port import Port
-    from scanr.models.service import Service
     result = await db.execute(
         select(Host)
         .where(Host.scan_id == scan_id)
@@ -462,6 +475,108 @@ async def scan_delta_latest(
         "created_at": baseline_scan.created_at.isoformat() if baseline_scan.created_at else None,
     }
     return delta
+
+
+@router.delete("/{scan_id}", status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post("/{scan_id}/rerun", response_model=ScanRead, status_code=status.HTTP_202_ACCEPTED)
+@limiter.limit("10/minute")
+async def rerun_scan(
+    request: Request,
+    scan_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_scope("scans:write")),
+):
+    """Clone a completed scan and launch it immediately with the same config."""
+    source = await _get_own_scan(scan_id, current_user.id, db)
+    if source.status not in (ScanStatus.completed, ScanStatus.failed, ScanStatus.cancelled):
+        raise HTTPException(status_code=409, detail=f"Cannot rerun scan in status '{source.status.value}'")
+
+    # Load original targets
+    targets_result = await db.execute(
+        select(Target.value).where(Target.scan_id == scan_id)
+    )
+    target_values = [row[0] for row in targets_result.all()]
+    if not target_values:
+        raise HTTPException(status_code=400, detail="Source scan has no targets")
+
+    clone = Scan(
+        id=new_uuid(),
+        name=f"{source.name} (rerun)",
+        description=source.description,
+        status=ScanStatus.pending,
+        profile=source.profile,
+        profile_json=source.profile_json,
+        credential_id=source.credential_id,
+        template_id=source.template_id,
+        compare_scan_id=source.id,
+        user_id=current_user.id,
+    )
+    db.add(clone)
+
+    for raw in target_values:
+        db.add(Target(id=new_uuid(), scan_id=clone.id, value=raw, type=classify_target(raw)))
+
+    try:
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        raise HTTPException(status_code=500, detail="Failed to create rerun scan")
+
+    # Launch immediately
+    from scanr.tasks.scan_tasks import run_scan_task
+    task = run_scan_task.delay(clone.id)
+    clone.status = ScanStatus.running
+    clone.celery_task_id = task.id
+    await db.commit()
+    await db.refresh(clone)
+    return clone
+
+
+@router.post("/{scan_id}/clone", response_model=ScanRead, status_code=status.HTTP_201_CREATED)
+@limiter.limit("10/minute")
+async def clone_scan(
+    request: Request,
+    scan_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_scope("scans:write")),
+):
+    """Clone a scan as pending so the user can modify and launch it later."""
+    source = await _get_own_scan(scan_id, current_user.id, db)
+
+    targets_result = await db.execute(
+        select(Target.value).where(Target.scan_id == scan_id)
+    )
+    target_values = [row[0] for row in targets_result.all()]
+    if not target_values:
+        raise HTTPException(status_code=400, detail="Source scan has no targets")
+
+    clone = Scan(
+        id=new_uuid(),
+        name=f"{source.name} (copy)",
+        description=source.description,
+        status=ScanStatus.pending,
+        profile=source.profile,
+        profile_json=source.profile_json,
+        credential_id=source.credential_id,
+        template_id=source.template_id,
+        compare_scan_id=source.id,
+        user_id=current_user.id,
+    )
+    db.add(clone)
+
+    for raw in target_values:
+        db.add(Target(id=new_uuid(), scan_id=clone.id, value=raw, type=classify_target(raw)))
+
+    try:
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        raise HTTPException(status_code=500, detail="Failed to clone scan")
+
+    await db.refresh(clone)
+    return clone
 
 
 @router.delete("/{scan_id}", status_code=status.HTTP_204_NO_CONTENT)

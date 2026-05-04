@@ -10,6 +10,7 @@ export interface ScanSummary {
   duration_s?: number
   progress?: number
   error_message?: string | null
+  profile_json?: string | null
 }
 
 export interface ScanCredentialIn {
@@ -39,6 +40,8 @@ export const scansApi = {
   launch: (id: string) => api.post(`/scans/${id}/launch`).then(r => r.data),
   cancel: (id: string) => api.post(`/scans/${id}/cancel`).then(r => r.data),
   delete: (id: string) => api.delete(`/scans/${id}`),
+  rerun: (id: string) => api.post<ScanSummary>(`/scans/${id}/rerun`).then(r => r.data),
+  clone: (id: string) => api.post<ScanSummary>(`/scans/${id}/clone`).then(r => r.data),
   hosts: (id: string) => api.get(`/scans/${id}/hosts`).then(r => r.data),
   delta: (id: string, baseline: string) =>
     api.get(`/scans/${id}/delta`, { params: { baseline } }).then(r => r.data),

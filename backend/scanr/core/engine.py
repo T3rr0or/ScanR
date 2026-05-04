@@ -392,8 +392,20 @@ class ScanEngine:
         )
 
         if not live_targets:
-            await scan_log.warn("No live hosts found — scan complete", phase="engine")
-            return
+            discovery_mode = context.discovery_config().get("mode", "fast")
+            if discovery_mode == "aggressive":
+                # Force scan anyway — assume hosts are up and use -Pn
+                await scan_log.warn(
+                    f"No hosts detected via discovery, but "
+                    f"'{discovery_mode}' mode forces scan with -Pn",
+                    phase="engine",
+                )
+                context.discovery_config()["assume_up"] = True
+                context.port_scanning_config()["firewall_strategy"] = "skip_ping"
+                live_targets = all_targets[:]
+            else:
+                await scan_log.warn("No live hosts found — scan complete", phase="engine")
+                return
 
         await scan_log.phase_start(
             "portscan",
@@ -405,11 +417,12 @@ class ScanEngine:
         masscan_results: dict[str, list[int]] = {}
         from scanr.scanner.port_scanner.masscan_wrapper import MasscanWrapper
         port_scan_cfg = context.port_scanning_config()
+        scanners = port_scan_cfg.get("scanners", ["tcp_connect"])
         use_masscan = (
             MasscanWrapper.is_available()
             and not _pj.get("disable_masscan", False)
             and not domain_mode
-            and not ((_pj.get("port_scanning") or {}).get("scanner") == "tcp_connect")
+            and not ("tcp_connect" in scanners and len(scanners) == 1)
             and all(is_valid_ip(t) for t in live_targets)
         )
         if use_masscan:
