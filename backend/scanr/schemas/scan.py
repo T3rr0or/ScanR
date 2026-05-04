@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 
 class ScanCredentialIn(BaseModel):
@@ -57,8 +57,19 @@ class ScanSummary(BaseModel):
     findings_info: int
     error_message: str | None = None
     profile_json: str | None = None
+    targets: list[str] = []
 
     model_config = {"from_attributes": True}
+
+    @field_validator("targets", mode="before")
+    @classmethod
+    def _extract_target_values(cls, v):
+        """Convert ORM Target objects to string values."""
+        if v is None:
+            return []
+        if isinstance(v, list):
+            return [t.value if hasattr(t, 'value') else str(t) for t in v]
+        return v
 
 
 class ScanRead(ScanSummary):

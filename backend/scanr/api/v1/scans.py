@@ -170,6 +170,7 @@ async def list_scans(
         .order_by(Scan.created_at.desc())
         .offset(offset)
         .limit(limit)
+        .options(selectinload(Scan.targets))
     )
     return result.scalars().all()
 
