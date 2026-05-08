@@ -400,6 +400,7 @@ class ScanEngine:
             and MasscanWrapper.is_available()
             and not _pj.get("disable_masscan", False)
             and ("tcp_connect" in scanners or "syn" in scanners)
+            and _pj.get("port_range") == "all"
         )
 
         if use_masscan_discovery:
