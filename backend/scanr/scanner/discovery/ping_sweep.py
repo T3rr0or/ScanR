@@ -29,9 +29,12 @@ class PingSweep:
     TIMEOUT = 0.5  # per-port timeout
     TIMEOUT_THOROUGH = 1.0  # used when strategy=="validated"
 
-    # Max concurrent host probes. Prevents FD exhaustion on large CIDR ranges (/16 = 65534 hosts).
-    # Each slot opens at most 1 TCP connection at a time, so this bounds open FDs.
+    # Max concurrent host probes (TCP connect path).
     CONCURRENCY = 500
+    # Separate, lower cap for nmap subprocess launches. Each nmap process opens ~4-6 FDs
+    # (stdout pipe + internal sockets). 500 concurrent nmap processes = ~3000 extra FDs,
+    # which exceeds the default ulimit -n 1024 on many Docker containers.
+    NMAP_CONCURRENCY = 50
 
     async def discover(self, targets: list[str], context: "ScanContext") -> list[str]:
         """Return list of responsive IP/hostname strings."""
@@ -57,19 +60,28 @@ class PingSweep:
             )
 
         sem = asyncio.Semaphore(self.CONCURRENCY)
+        nmap_sem = asyncio.Semaphore(self.NMAP_CONCURRENCY)
         completed = 0
         live: list[str] = []
         log_interval = max(1000, total // 20)  # log every ~5% or every 1000 hosts
 
         async def _bounded_probe(target: str) -> tuple[str, bool]:
             async with sem:
-                result = await self._probe_host(target, context, cfg=cfg, probe_ports=probe_ports, timeout=timeout)
-                return target, result is True
+                result = await self._probe_host(
+                    target, context, cfg=cfg,
+                    probe_ports=probe_ports, timeout=timeout, nmap_sem=nmap_sem,
+                )
+                return target, bool(result)
 
         tasks = [asyncio.create_task(_bounded_probe(t)) for t in targets]
 
         for coro in asyncio.as_completed(tasks):
-            target, is_up = await coro
+            try:
+                target, is_up = await coro
+            except Exception as exc:
+                logger.warning("Unexpected probe error: %s", exc)
+                completed += 1
+                continue
             completed += 1
             if is_up:
                 live.append(target)
@@ -89,6 +101,7 @@ class PingSweep:
         cfg: dict | None = None,
         probe_ports: list[int] | None = None,
         timeout: float | None = None,
+        nmap_sem: asyncio.Semaphore | None = None,
     ) -> bool:
         context.check_cancelled()
         if cfg is None:
@@ -101,16 +114,8 @@ class PingSweep:
         # Aggressive mode: use nmap multi-probe (-PS, -PA, -PU) for best detection
         if mode == "aggressive":
             for _ in range(retries):
-                try:
-                    result = await asyncio.wait_for(
-                        self._nmap_aggressive_ping(target),
-                        timeout=8.0,
-                    )
-                    if result:
-                        await context.log.debug(f"{target} -- up (aggressive nmap ping)", phase="discovery", host=target)
-                        return True
-                except Exception:
-                    pass
+                if await self._nmap_probe(target, aggressive=True, nmap_sem=nmap_sem, context=context):
+                    return True
 
             # Fall back to TCP connect probe if nmap aggressive did not find host
             if cfg.get("tcp", True):
@@ -125,16 +130,8 @@ class PingSweep:
         # Fast mode (default): ICMP + TCP connect probe
         if cfg["icmp"]:
             for _ in range(retries):
-                try:
-                    result = await asyncio.wait_for(
-                        self._nmap_ping(target),
-                        timeout=5.0,
-                    )
-                    if result:
-                        await context.log.debug(f"{target} -- up (nmap ping)", phase="discovery", host=target)
-                        return True
-                except Exception:
-                    pass
+                if await self._nmap_probe(target, aggressive=False, nmap_sem=nmap_sem, context=context):
+                    return True
 
         # TCP connect probe
         if cfg["tcp"]:
@@ -144,6 +141,31 @@ class PingSweep:
                         return True
 
         await context.log.debug(f"{target} -- no response", phase="discovery", host=target)
+        return False
+
+    async def _nmap_probe(
+        self,
+        target: str,
+        aggressive: bool,
+        nmap_sem: asyncio.Semaphore | None,
+        context: "ScanContext",
+    ) -> bool:
+        """Run nmap ping probe with subprocess concurrency cap. Handles EMFILE gracefully."""
+        import errno as _errno
+        sem = nmap_sem or asyncio.Semaphore(self.NMAP_CONCURRENCY)
+        try:
+            async with sem:
+                coro = self._nmap_aggressive_ping(target) if aggressive else self._nmap_ping(target)
+                result = await asyncio.wait_for(coro, timeout=8.0 if aggressive else 5.0)
+            if result:
+                label = "aggressive nmap ping" if aggressive else "nmap ping"
+                await context.log.debug(f"{target} -- up ({label})", phase="discovery", host=target)
+                return True
+        except OSError as exc:
+            if exc.errno in (_errno.EMFILE, _errno.ENFILE):
+                logger.warning("nmap subprocess skipped for %s: FD exhaustion (EMFILE)", target)
+        except Exception:
+            pass
         return False
 
     async def _tcp_probe(self, target: str, port: int, timeout: float, context: "ScanContext") -> bool:

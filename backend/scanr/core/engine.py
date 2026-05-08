@@ -391,17 +391,21 @@ class ScanEngine:
         port_scan_cfg = context.port_scanning_config()
         scanners = port_scan_cfg.get("scanners", ["tcp_connect"])
         masscan_results: dict[str, list[int]] = {}
+        masscan_ran = False
         # Computed once; live_targets is always a subset of all_targets so reused below.
+        # all_are_ips encodes domain_mode=False already so no need to repeat below.
         all_are_ips = not domain_mode and all(is_valid_ip(t) for t in all_targets)
+        # Accept any way users can express "all ports": profile value, nmap flag, or explicit range.
+        _port_range_val = _pj.get("port_range", "")
+        _full_port_scan = _port_range_val in {"all", "-p-", "-p -", "1-65535"}
 
         use_masscan_discovery = (
             len(all_targets) > 1024
             and all_are_ips
-            and not domain_mode
             and MasscanWrapper.is_available()
             and not _pj.get("disable_masscan", False)
             and ("tcp_connect" in scanners or "syn" in scanners)
-            and _pj.get("port_range") == "all"
+            and _full_port_scan
         )
 
         if use_masscan_discovery:
@@ -411,6 +415,7 @@ class ScanEngine:
             )
             ms = MasscanWrapper()
             masscan_results = await ms.scan(all_targets, context.get_port_range(), context)
+            masscan_ran = True
             live_targets = list(masscan_results.keys())
             await scan_log.info(
                 f"masscan discovery complete: {len(live_targets)} hosts with open ports found "
@@ -470,6 +475,7 @@ class ScanEngine:
             )
             ms = MasscanWrapper()
             masscan_results = await ms.scan(live_targets, context.get_port_range(), context)
+            masscan_ran = True
             await scan_log.info(
                 f"masscan complete: {sum(len(v) for v in masscan_results.values())} open ports across "
                 f"{len(masscan_results)} hosts",
@@ -509,7 +515,7 @@ class ScanEngine:
         # Warn if nothing was scanned AND masscan also found nothing — strong signal
         # of a privilege/network problem. Don't raise: zero open ports is a valid
         # result on a firewalled network and should complete, not fail, the scan.
-        if live_targets and context.hosts_scanned == 0 and not masscan_results:
+        if live_targets and context.hosts_scanned == 0 and not masscan_ran:
             await scan_log.warn(
                 f"Port scanning returned 0 results for {len(live_targets)} live host(s). "
                 "Possible cause: nmap lacks raw-socket privileges or all hosts block probes. "
