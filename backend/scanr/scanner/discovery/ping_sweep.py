@@ -45,7 +45,7 @@ class PingSweep:
 
         total = len(targets)
         # Use fast/reduced probe set for large ranges to keep discovery time reasonable.
-        # /16 = 65534 hosts: fast (3 ports x 0.5s) ~4 min; thorough (15 ports x 1s) ~33 min.
+        # /16 = 65534 hosts: fast (13 ports x 0.5s) → ~17 min; thorough (15 ports x 1s) → ~33 min.
         large_range = total > 1024
         probe_ports = self.PROBE_PORTS_FAST if large_range else self.PROBE_PORTS
         timeout = self.TIMEOUT if large_range else self.TIMEOUT_THOROUGH
@@ -63,10 +63,10 @@ class PingSweep:
 
         async def _bounded_probe(target: str) -> tuple[str, bool]:
             async with sem:
-                result = await self._probe_host(target, context, probe_ports=probe_ports, timeout=timeout)
+                result = await self._probe_host(target, context, cfg=cfg, probe_ports=probe_ports, timeout=timeout)
                 return target, result is True
 
-        tasks = [asyncio.ensure_future(_bounded_probe(t)) for t in targets]
+        tasks = [asyncio.create_task(_bounded_probe(t)) for t in targets]
 
         for coro in asyncio.as_completed(tasks):
             target, is_up = await coro
@@ -86,13 +86,15 @@ class PingSweep:
         self,
         target: str,
         context: "ScanContext",
+        cfg: dict | None = None,
         probe_ports: list[int] | None = None,
         timeout: float | None = None,
     ) -> bool:
         context.check_cancelled()
-        cfg = context.discovery_config()
+        if cfg is None:
+            cfg = context.discovery_config()
         mode: str = cfg.get("mode", "fast")
-        retries = max(1, cfg["retries"] + 1)
+        retries = max(1, cfg["retries"] + 1)  # retries = extra attempts; +1 = total runs
         ports = probe_ports if probe_ports is not None else self.PROBE_PORTS
         t = timeout if timeout is not None else self.TIMEOUT
 
@@ -114,28 +116,8 @@ class PingSweep:
             if cfg.get("tcp", True):
                 for _ in range(retries):
                     for port in ports:
-                        try:
-                            _, writer = await asyncio.wait_for(
-                                asyncio.open_connection(target, port),
-                                timeout=t,
-                            )
-                            writer.close()
-                            try:
-                                await writer.wait_closed()
-                            except Exception:
-                                pass
-                            await context.log.debug(f"{target} -- up (TCP:{port})", phase="discovery", host=target)
+                        if await self._tcp_probe(target, port, t, context):
                             return True
-                        except ConnectionRefusedError:
-                            await context.log.debug(f"{target} -- up (TCP:{port} refused)", phase="discovery", host=target)
-                            return True
-                        except OSError as exc:
-                            import errno as _errno
-                            if exc.errno in (_errno.EMFILE, _errno.ENFILE):
-                                await asyncio.sleep(0.05)
-                            continue
-                        except asyncio.TimeoutError:
-                            continue
 
             await context.log.debug(f"{target} -- no response", phase="discovery", host=target)
             return False
@@ -158,33 +140,40 @@ class PingSweep:
         if cfg["tcp"]:
             for _ in range(retries):
                 for port in ports:
-                    try:
-                        _, writer = await asyncio.wait_for(
-                            asyncio.open_connection(target, port),
-                            timeout=t,
-                        )
-                        writer.close()
-                        try:
-                            await writer.wait_closed()
-                        except Exception:
-                            pass
-                        await context.log.debug(f"{target} -- up (TCP:{port})", phase="discovery", host=target)
+                    if await self._tcp_probe(target, port, t, context):
                         return True
-                    except ConnectionRefusedError:
-                        # RST received -- host is up but port is closed
-                        await context.log.debug(f"{target} -- up (TCP:{port} refused)", phase="discovery", host=target)
-                        return True
-                    except OSError as exc:
-                        import errno as _errno
-                        if exc.errno in (_errno.EMFILE, _errno.ENFILE):
-                            # Local FD exhaustion -- not the remote host's fault; wait briefly and retry
-                            await asyncio.sleep(0.05)
-                        # No route / network unreachable / host unreachable -- try next port
-                        continue
-                    except asyncio.TimeoutError:
-                        continue
 
         await context.log.debug(f"{target} -- no response", phase="discovery", host=target)
+        return False
+
+    async def _tcp_probe(self, target: str, port: int, timeout: float, context: "ScanContext") -> bool:
+        """Attempt TCP connect to target:port. Returns True if host is up. Retries on EMFILE."""
+        import errno as _errno
+        for _attempt in range(3):
+            try:
+                _, writer = await asyncio.wait_for(
+                    asyncio.open_connection(target, port),
+                    timeout=timeout,
+                )
+                writer.close()
+                try:
+                    await writer.wait_closed()
+                except Exception:
+                    pass
+                await context.log.debug(f"{target} -- up (TCP:{port})", phase="discovery", host=target)
+                return True
+            except ConnectionRefusedError:
+                # RST received — host is up but port is closed
+                await context.log.debug(f"{target} -- up (TCP:{port} refused)", phase="discovery", host=target)
+                return True
+            except OSError as exc:
+                if exc.errno in (_errno.EMFILE, _errno.ENFILE):
+                    # Local FD exhaustion — retry same port after brief wait
+                    await asyncio.sleep(0.05 * (_attempt + 1))
+                    continue
+                return False  # no route / network unreachable — skip to next port
+            except asyncio.TimeoutError:
+                return False  # host silent on this port — skip to next port
         return False
 
     async def _nmap_ping(self, target: str) -> bool:
