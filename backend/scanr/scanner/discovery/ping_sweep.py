@@ -21,8 +21,11 @@ class PingSweep:
 
     # Full port list for small ranges / thorough scans
     PROBE_PORTS = [80, 443, 22, 445, 3389, 8080, 8443, 25, 53, 21, 23, 3306, 5432, 6379, 8888]
-    # Reduced port list for large ranges (>1024 hosts) — faster, 3 probes x 0.5s = 1.5s max per dead host
-    PROBE_PORTS_FAST = [80, 443, 22]
+    # Fallback probe list for large ranges when masscan is unavailable.
+    # Covers: web (80/443/8080/8443), SSH (22), Windows (445/3389/135), mail (25),
+    # DNS (53), FTP (21), common DB (3306), Telnet (23) — 13 ports vs 3.
+    # At 0.5s timeout: 6.5s max per dead host → ~17 min for /16 (vs ~33 min full list).
+    PROBE_PORTS_FAST = [80, 443, 22, 445, 3389, 135, 8080, 8443, 25, 53, 21, 23, 3306]
     TIMEOUT = 0.5  # per-port timeout
     TIMEOUT_THOROUGH = 1.0  # used when strategy=="validated"
 

@@ -378,9 +378,67 @@ class ScanEngine:
         )
 
         # Phase 1: Host discovery
-        from scanr.scanner.discovery.ping_sweep import PingSweep
-        sweeper = PingSweep()
-        live_targets = await sweeper.discover(all_targets, context)
+        #
+        # For large IP ranges (>1024 hosts) when masscan is available, use masscan for
+        # discovery instead of TCP connect. Masscan scans the full CIDR for all ports
+        # simultaneously — it finds hosts that have any port open regardless of which
+        # specific ports they use (e.g. Windows boxes on 445/3389, printers on 9100,
+        # IoT on custom ports). TCP connect with a fixed probe list misses these.
+        #
+        # Masscan discovery also produces port data, so we reuse those results in the
+        # port-scan phase (no separate masscan pass needed).
+        from scanr.scanner.port_scanner.masscan_wrapper import MasscanWrapper
+        port_scan_cfg = context.port_scanning_config()
+        scanners = port_scan_cfg.get("scanners", ["tcp_connect"])
+        all_ips = all(is_valid_ip(t) for t in all_targets)
+        masscan_results: dict[str, list[int]] = {}
+
+        use_masscan_discovery = (
+            len(all_targets) > 1024
+            and all_ips
+            and not domain_mode
+            and MasscanWrapper.is_available()
+            and not _pj.get("disable_masscan", False)
+            and ("tcp_connect" in scanners or "syn" in scanners)
+        )
+
+        if use_masscan_discovery:
+            await scan_log.info(
+                f"Large range ({len(all_targets)} hosts) — using masscan for host discovery + port scan",
+                phase="discovery",
+            )
+            ms = MasscanWrapper()
+            masscan_results = await ms.scan(all_targets, context.get_port_range(), context)
+            live_targets = list(masscan_results.keys())
+            await scan_log.info(
+                f"masscan discovery complete: {len(live_targets)} hosts with open ports found "
+                f"({sum(len(v) for v in masscan_results.values())} open ports total)",
+                phase="discovery",
+            )
+            # TCP connect fallback for hosts that may be alive but have all scanned ports
+            # filtered (no open ports returned by masscan). Runs only on hosts NOT already
+            # found by masscan, using the full probe-port list to catch edge cases.
+            if not _pj.get("skip_tcp_fallback_discovery", False):
+                remaining = [t for t in all_targets if t not in masscan_results]
+                if remaining:
+                    await scan_log.info(
+                        f"TCP fallback discovery on {len(remaining)} hosts not found by masscan",
+                        phase="discovery",
+                    )
+                    from scanr.scanner.discovery.ping_sweep import PingSweep
+                    sweeper = PingSweep()
+                    tcp_live = await sweeper.discover(remaining, context)
+                    new_hosts = [h for h in tcp_live if h not in masscan_results]
+                    if new_hosts:
+                        await scan_log.info(
+                            f"TCP fallback found {len(new_hosts)} additional host(s)",
+                            phase="discovery",
+                        )
+                        live_targets.extend(new_hosts)
+        else:
+            from scanr.scanner.discovery.ping_sweep import PingSweep
+            sweeper = PingSweep()
+            live_targets = await sweeper.discover(all_targets, context)
 
         scan.hosts_up = len(live_targets)
         await self.db.commit()
@@ -412,14 +470,10 @@ class ScanEngine:
             f"Port scanning {len(live_targets)} host(s) ...",
         )
 
-        # Optional fast pre-scan with masscan: discovers open ports in bulk
-        # before nmap runs per-host service detection only on known-open ports.
-        masscan_results: dict[str, list[int]] = {}
-        from scanr.scanner.port_scanner.masscan_wrapper import MasscanWrapper
-        port_scan_cfg = context.port_scanning_config()
-        scanners = port_scan_cfg.get("scanners", ["tcp_connect"])
+        # Masscan port scan (skipped if masscan already ran for discovery above)
         use_masscan = (
-            MasscanWrapper.is_available()
+            not use_masscan_discovery
+            and MasscanWrapper.is_available()
             and not _pj.get("disable_masscan", False)
             and not domain_mode
             and ("tcp_connect" in scanners or "syn" in scanners)
@@ -434,6 +488,12 @@ class ScanEngine:
             masscan_results = await ms.scan(live_targets, context.get_port_range(), context)
             await scan_log.info(
                 f"masscan complete: {sum(len(v) for v in masscan_results.values())} open ports across "
+                f"{len(masscan_results)} hosts",
+                phase="portscan",
+            )
+        elif use_masscan_discovery:
+            await scan_log.info(
+                f"Reusing masscan discovery results — {sum(len(v) for v in masscan_results.values())} ports across "
                 f"{len(masscan_results)} hosts",
                 phase="portscan",
             )
