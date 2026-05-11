@@ -372,14 +372,27 @@ export function ProfileEditor({
           <Toggle label="ICMP" checked={config.discovery.icmp} onChange={icmp => onChange({ ...config, discovery: { ...config.discovery, icmp } })} />
           <Toggle label="TCP probes" checked={config.discovery.tcp} onChange={tcp => onChange({ ...config, discovery: { ...config.discovery, tcp } })} />
           <Toggle label="ARP (limited/local)" checked={config.discovery.arp} onChange={arp => onChange({ ...config, discovery: { ...config.discovery, arp } })} />
-          <Toggle label="Assume up" checked={config.discovery.assume_up} onChange={assume_up => onChange({ ...config, discovery: { ...config.discovery, assume_up } })} />
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
           <Field label="Discovery mode">
             <select
               className="select-field"
               value={config.discovery.mode}
-              onChange={e => onChange({ ...config, discovery: { ...config.discovery, mode: e.target.value as ProfileConfig['discovery']['mode'] } })}
+              onChange={e => {
+                const mode = e.target.value as ProfileConfig['discovery']['mode']
+                onChange({
+                  ...config,
+                  discovery: {
+                    ...config.discovery,
+                    mode,
+                    ...(mode === 'skip' ? { assume_up: true } : {}),
+                  },
+                  port_scanning: {
+                    ...config.port_scanning,
+                    ...(mode === 'skip' ? { firewall_strategy: 'skip_ping' as const } : {}),
+                  },
+                })
+              }}
             >
               <option value="fast">Fast (ICMP + TCP)</option>
               <option value="aggressive">Aggressive (SYN + ACK + UDP ping)</option>

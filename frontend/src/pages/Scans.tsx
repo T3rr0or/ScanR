@@ -1016,7 +1016,6 @@ function NewScanModal({
                 <Toggle label="ICMP" checked={profileConfig.discovery.icmp} onChange={icmp => setProfileConfig(p => ({ ...p, discovery: { ...p.discovery, icmp } }))} />
                 <Toggle label="TCP probes" checked={profileConfig.discovery.tcp} onChange={tcp => setProfileConfig(p => ({ ...p, discovery: { ...p.discovery, tcp } }))} />
                 <Toggle label="ARP (local L2 only / limited support)" checked={profileConfig.discovery.arp} onChange={arp => setProfileConfig(p => ({ ...p, discovery: { ...p.discovery, arp } }))} />
-                <Toggle label="Assume up" checked={profileConfig.discovery.assume_up} onChange={assume_up => setProfileConfig(p => ({ ...p, discovery: { ...p.discovery, assume_up } }))} />
                 <div style={{ marginTop: 4 }}>
                   <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)', marginBottom: 4, display: 'block' }}>Discovery mode:</span>
                   <select
@@ -1044,7 +1043,7 @@ function NewScanModal({
                   </select>
                 </div>
                 <p className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)', margin: 0 }}>
-                  If internal hosts block ping, use Assume up or broader port discovery. UDP discovery is not part of the default pipeline yet.
+                  Aggressive mode adds SYN + ACK + UDP nmap probes for better detection. Skip mode bypasses discovery and scans all targets with -Pn.
                 </p>
               </CapabilityGroup>
 
@@ -1263,7 +1262,7 @@ function ReviewStep({
       ? 'Top 1000 ports can miss internal web apps on high ports such as 30050, 30051, 8000-9999, or NodePort 30000-32767.'
       : null,
     profileConfig.discovery.arp
-      ? 'ARP is shown as a local-network intent, but backend discovery support is limited. Use Assume up when hosts block ping.'
+      ? 'ARP is shown as a local-network intent, but backend discovery support is limited.'
       : null,
     profileConfig.enumeration.screenshots
       ? 'Screenshots require Playwright/Chromium in the worker container; missing browser binaries will skip or fail screenshot capture.'
@@ -1292,8 +1291,7 @@ function ReviewStep({
           profileConfig.discovery.icmp ? 'ICMP' : null,
           profileConfig.discovery.tcp ? 'TCP probes' : null,
           profileConfig.discovery.arp ? 'ARP intent' : null,
-          profileConfig.discovery.assume_up ? 'Assume up' : null,
-          profileConfig.discovery.mode === 'aggressive' ? 'Aggressive mode' : profileConfig.discovery.mode === 'skip' ? 'Skip mode' : null,
+          profileConfig.discovery.mode === 'aggressive' ? 'Aggressive mode' : profileConfig.discovery.mode === 'skip' ? 'Skip (assume up)' : 'Fast',
         ].filter(Boolean).join(', ') || 'No discovery probes'} />
         <ReviewRow label="Scan type" value={profileConfig.port_scanning.scanners.map(s => s === 'tcp_connect' ? 'TCP' : s === 'syn' ? 'SYN' : 'UDP').join(' + ') || 'TCP'} />
         <ReviewRow label="Safety / depth" value={`${profileConfig.safety_level} / ${profileConfig.depth_level}`} />
