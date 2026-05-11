@@ -508,6 +508,10 @@ class ScanEngine:
 
         await self.db.commit()
 
+        # Update hosts_up to reflect actually scanned hosts (not just discovery projection)
+        scan.hosts_up = context.hosts_scanned
+        await self.db.commit()
+
         # Warn if nothing was scanned AND masscan also found nothing — strong signal
         # of a privilege/network problem. Don't raise: zero open ports is a valid
         # result on a firewalled network and should complete, not fail, the scan.
