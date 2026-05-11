@@ -395,9 +395,6 @@ class ScanEngine:
         # Computed once; live_targets is always a subset of all_targets so reused below.
         # all_are_ips encodes domain_mode=False already so no need to repeat below.
         all_are_ips = not domain_mode and all(is_valid_ip(t) for t in all_targets)
-        # Accept any way users can express "all ports": profile value, nmap flag, or explicit range.
-        _port_range_val = _pj.get("port_range", "")
-        _full_port_scan = _port_range_val in {"all", "-p-", "-p -", "1-65535"}
 
         use_masscan_discovery = (
             len(all_targets) > 1024
@@ -405,26 +402,26 @@ class ScanEngine:
             and MasscanWrapper.is_available()
             and not _pj.get("disable_masscan", False)
             and ("tcp_connect" in scanners or "syn" in scanners)
-            and _full_port_scan
         )
 
         if use_masscan_discovery:
+            from scanr.scanner.discovery.ping_sweep import PingSweep
             await scan_log.info(
-                f"Large range ({len(all_targets)} hosts) — using masscan for host discovery + port scan",
+                f"Large range ({len(all_targets)} hosts) — using masscan for host discovery",
                 phase="discovery",
             )
             ms = MasscanWrapper()
-            masscan_results = await ms.scan(all_targets, context.get_port_range(), context)
+            # Discovery: scan only common probe ports to find live hosts quickly
+            discovery_ports = ",".join(str(p) for p in PingSweep.PROBE_PORTS_FAST) if hasattr(PingSweep, 'PROBE_PORTS_FAST') else "80,443,22,445,3389,8080,8443,25,53,21,23,3306,5432,6379,8888"
+            discovery_results = await ms.scan(all_targets, discovery_ports, context)
             masscan_ran = True
-            live_targets = list(masscan_results.keys())
+            live_targets = list(discovery_results.keys())
+            # Keep masscan_results empty so port scan phase runs full range
+            masscan_results = {}
             await scan_log.info(
-                f"masscan discovery complete: {len(live_targets)} hosts with open ports found "
-                f"({sum(len(v) for v in masscan_results.values())} open ports total)",
+                f"masscan discovery complete: {len(live_targets)} hosts with open ports found",
                 phase="discovery",
             )
-            # No TCP fallback: masscan's FULL_RANGE_CAP covers every port in PROBE_PORTS_FAST
-            # (all 13 probe ports are within 1-10000). A TCP connect sweep would find zero
-            # additional hosts and would waste ~17 min on ~65000 remaining IPs.
         else:
             from scanr.scanner.discovery.ping_sweep import PingSweep
             sweeper = PingSweep()
@@ -460,10 +457,10 @@ class ScanEngine:
             f"Port scanning {len(live_targets)} host(s) ...",
         )
 
-        # Masscan port scan (skipped if masscan already ran for discovery above)
+        # Masscan port scan (runs full port range on live hosts)
+        # Only skip if discovery masscan already did the full port scan
         use_masscan = (
-            not use_masscan_discovery
-            and MasscanWrapper.is_available()
+            MasscanWrapper.is_available()
             and not _pj.get("disable_masscan", False)
             and all_are_ips
             and ("tcp_connect" in scanners or "syn" in scanners)
@@ -483,8 +480,7 @@ class ScanEngine:
             )
         elif use_masscan_discovery:
             await scan_log.info(
-                f"Reusing masscan discovery results — {sum(len(v) for v in masscan_results.values())} ports across "
-                f"{len(masscan_results)} hosts",
+                f"masscan already used for discovery — running nmap with full port range on {len(live_targets)} hosts",
                 phase="portscan",
             )
         else:
