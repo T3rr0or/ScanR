@@ -92,6 +92,10 @@ class ReportEngine:
             case "sarif":
                 from scanr.reporting.sarif_renderer import render_sarif
                 out = await render_sarif(context, report_id)
+            case "bloodhound":
+                from scanr.reporting.bloodhound_renderer import render_bloodhound_json
+                output_path = settings.reports_dir / f"{report_id}.json"
+                out = await render_bloodhound_json(context["scan"], context["findings"], self.db, output_path)
             case _:
                 raise ValueError(f"Unknown report format: {report.format}")
 

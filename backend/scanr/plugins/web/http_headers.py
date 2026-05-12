@@ -115,7 +115,9 @@ class HttpHeadersPlugin(PluginBase):
     async def _fetch_headers(self, ip: str, port: int, scheme: str) -> dict | None:
         url = f"{scheme}://{ip}:{port}/"
         try:
-            async with httpx.AsyncClient(verify=False, timeout=5.0, follow_redirects=True) as client:
+            async with httpx.AsyncClient(verify=False, timeout=5.0, follow_redirects=True,
+                **context.proxy_config()
+            ) as client:
                 resp = await client.get(url)
                 return dict(resp.headers)
         except Exception:

@@ -153,6 +153,11 @@ class ScanContext:
             "firewall_strategy": cfg.get("firewall_strategy", "default"),
         }
 
+    def proxy_config(self) -> dict:
+        """Return httpx-compatible proxy kwargs for HTTP plugins."""
+        from scanr.utils.proxy import get_proxy_config
+        return get_proxy_config()
+
     def iter_wordlist(self, wordlist_id: str):
         """
         Yield lines from a wordlist file one at a time.

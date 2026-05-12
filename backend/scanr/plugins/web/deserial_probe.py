@@ -94,7 +94,9 @@ class DeseriProbePlugin(PluginBase):
             scheme = web_scheme(port)
             base_url = f"{scheme}://{host.ip}:{port.number}"
 
-            async with httpx.AsyncClient(verify=False, timeout=8.0, follow_redirects=True) as client:
+            async with httpx.AsyncClient(verify=False, timeout=8.0, follow_redirects=True,
+                **context.proxy_config()
+            ) as client:
                 result = await asyncio.gather(
                     self._probe_java(client, base_url, port.number),
                     self._probe_php(client, base_url, port.number),

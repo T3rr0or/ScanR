@@ -79,8 +79,9 @@ class Log4ShellCheckPlugin(PluginBase):
         endpoints = ["/", "/login", "/api", "/search", "/api/v1/search"]
 
         async with httpx.AsyncClient(
-            verify=False, timeout=8.0, follow_redirects=True
-        ) as client:
+            verify=False, timeout=8.0, follow_redirects=True,
+                **context.proxy_config()
+            ) as client:
             for endpoint in endpoints:
                 url = f"{base_url}{endpoint}"
 

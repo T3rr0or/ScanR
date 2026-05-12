@@ -89,8 +89,9 @@ class XxeDetectPlugin(PluginBase):
             "<root>&xxe;</root>"
         )
         async with httpx.AsyncClient(
-            verify=False, timeout=8.0, follow_redirects=True
-        ) as client:
+            verify=False, timeout=8.0, follow_redirects=True,
+                **context.proxy_config()
+            ) as client:
             # Discover XML-accepting endpoints
             xml_endpoints: list[tuple[str, dict]] = []
 

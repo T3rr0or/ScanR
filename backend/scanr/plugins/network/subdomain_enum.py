@@ -153,7 +153,7 @@ class SubdomainEnumPlugin(PluginBase):
                         if pattern.search(cname):
                             # Probe HTTP to confirm not-found response
                             try:
-                                async with httpx.AsyncClient(verify=False, timeout=5.0) as client:
+                                async with httpx.AsyncClient(verify=False, timeout=5.0, **context.proxy_config()) as client:
                                     resp = await client.get(f"http://{fqdn}/")
                                     if not_found_body.lower() in resp.text.lower() or resp.status_code in (404, 410):
                                         return FindingData(

@@ -40,14 +40,11 @@ def _default_update_status() -> dict:
     }
 
 
-def _redis_client():
-    import redis
-    return redis.from_url(settings.redis_url, decode_responses=True)
-
-
-def _get_update_status() -> dict:
+async def _get_update_status() -> dict:
     try:
-        raw = _redis_client().get(UPDATE_STATUS_KEY)
+        from scanr.db.redis import get_redis
+        r = get_redis()
+        raw = await r.get(UPDATE_STATUS_KEY)
         if raw:
             data = json.loads(raw)
             data["enabled"] = settings.self_update_enabled
@@ -57,10 +54,12 @@ def _get_update_status() -> dict:
     return _default_update_status()
 
 
-def _set_update_status(data: dict) -> None:
+async def _set_update_status(data: dict) -> None:
     data["enabled"] = settings.self_update_enabled
     try:
-        _redis_client().setex(UPDATE_STATUS_KEY, 86400, json.dumps(data))
+        from scanr.db.redis import get_redis
+        r = get_redis()
+        await r.setex(UPDATE_STATUS_KEY, 86400, json.dumps(data))
     except Exception:
         logger.debug("Could not persist update status", exc_info=True)
 
@@ -76,7 +75,7 @@ def _split_update_command(command: str) -> list[list[str]]:
     return parts
 
 
-def _run_self_update() -> None:
+async def _run_self_update() -> None:
     status = {
         "enabled": settings.self_update_enabled,
         "state": "running",
@@ -86,7 +85,7 @@ def _run_self_update() -> None:
         "message": "Update started",
         "log": "",
     }
-    _set_update_status(status)
+    await _set_update_status(status)
 
     logs: list[str] = []
     exit_code = 0
@@ -130,7 +129,7 @@ def _run_self_update() -> None:
             "message": str(exc),
             "log": "\n".join(logs)[-12000:],
         })
-    _set_update_status(status)
+    await _set_update_status(status)
 
 
 @router.get("/health")
@@ -178,9 +177,9 @@ async def version_check():
 
     # Cache in Redis to avoid hammering GitHub API
     try:
-        import redis
-        r = redis.from_url(settings.redis_url, decode_responses=True)
-        cached = r.get("scanr:version:latest")
+        from scanr.db.redis import get_redis
+        r = get_redis()
+        cached = await r.get("scanr:version:latest")
         if cached:
             import json
             cached_data = json.loads(cached)
@@ -203,9 +202,10 @@ async def version_check():
                     _raw_url = data.get("html_url", "")
                     release_url = _raw_url if _raw_url.startswith("https://github.com/") else None
                     # Cache 1 hour
-                    import redis, json
-                    r = redis.from_url(settings.redis_url, decode_responses=True)
-                    r.setex("scanr:version:latest", 3600, json.dumps(data))
+                    import json
+                    from scanr.db.redis import get_redis as _gred
+                    _rc = _gred()
+                    await _rc.setex("scanr:version:latest", 3600, json.dumps(data))
         except Exception as exc:
             logger.debug("Version check failed: %s", exc)
 
@@ -228,7 +228,7 @@ async def version_check():
 
 @router.get("/update/status")
 async def update_status(current_user: User = Depends(require_admin)):
-    return _get_update_status()
+    return await _get_update_status()
 
 
 @router.post("/update")
@@ -242,11 +242,11 @@ async def start_update(
             detail="Self-update is disabled. Set SELF_UPDATE_ENABLED=true and configure SELF_UPDATE_WORKDIR/SELF_UPDATE_COMMAND.",
         )
 
-    status = _get_update_status()
+    status = await _get_update_status()
     if status.get("state") == "running":
         raise HTTPException(status_code=409, detail="Update already running")
 
-    _set_update_status({
+    await _set_update_status({
         "enabled": True,
         "state": "queued",
         "started_at": _utc_now(),
@@ -257,7 +257,7 @@ async def start_update(
     })
     background_tasks.add_task(_run_self_update)
     await asyncio.sleep(0)
-    return _get_update_status()
+    return await _get_update_status()
 
 
 @router.get("/cve-status")

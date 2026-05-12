@@ -159,7 +159,7 @@ class JwtMisconfigPlugin(PluginBase):
 
     async def _test_token_accepted(self, base_url: str, token: str) -> bool:
         try:
-            async with httpx.AsyncClient(verify=False, timeout=5.0) as client:
+            async with httpx.AsyncClient(verify=False, timeout=5.0, **context.proxy_config()) as client:
                 resp = await client.get(base_url, headers={"Authorization": f"Bearer {token}"})
                 return resp.status_code == 200
         except Exception:

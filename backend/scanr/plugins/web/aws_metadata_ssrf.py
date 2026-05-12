@@ -229,6 +229,7 @@ class AwsMetadataSsrfPlugin(PluginBase):
                 timeout=6.0,
                 follow_redirects=True,
                 headers={"User-Agent": "Mozilla/5.0 (compatible; ScanR)"},
+            **context.proxy_config(),
             ) as client:
                 for param in _URL_PARAMS:
                     urls_to_try = [

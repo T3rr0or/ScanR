@@ -42,7 +42,7 @@ class KubernetesApiUnauthPlugin(PluginBase):
             return await self._probe_kubelet_readonly(ip, port)
 
         try:
-            async with httpx.AsyncClient(verify=False, timeout=5.0) as client:
+            async with httpx.AsyncClient(verify=False, timeout=5.0, **context.proxy_config()) as client:
                 resp = await client.get(f"{scheme}://{ip}:{port}/api")
                 if resp.status_code == 200:
                     data = resp.json()
@@ -90,7 +90,7 @@ class KubernetesApiUnauthPlugin(PluginBase):
 
     async def _probe_kubelet_readonly(self, ip: str, port: int) -> FindingData | None:
         try:
-            async with httpx.AsyncClient(verify=False, timeout=5.0) as client:
+            async with httpx.AsyncClient(verify=False, timeout=5.0, **context.proxy_config()) as client:
                 resp = await client.get(f"http://{ip}:{port}/pods")
                 if resp.status_code == 200 and "items" in resp.text:
                     return FindingData(

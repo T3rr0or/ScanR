@@ -45,16 +45,14 @@ async def get_user_from_api_key(raw_key: str, db: AsyncSession) -> tuple[User | 
 
     # Update last_used_at at most once per minute to avoid a DB write on every request
     try:
-        import redis as _redis
-        from scanr.config import get_settings as _gs
-        _r = _redis.from_url(_gs().redis_url, decode_responses=True)
+        from scanr.db.redis import get_redis
+        _r = get_redis()
         _throttle_key = f"scanr:apikey_touched:{api_key.id}"
-        if not _r.exists(_throttle_key):
+        if not await _r.exists(_throttle_key):
             api_key.last_used_at = now
             await db.flush()
             await db.commit()
-            _r.set(_throttle_key, "1", ex=60)
-        _r.close()
+            await _r.set(_throttle_key, "1", ex=60)
     except Exception:
         # Redis unavailable — fall back to always writing
         api_key.last_used_at = now

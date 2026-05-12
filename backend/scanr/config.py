@@ -44,6 +44,13 @@ class Settings(BaseSettings):
     max_concurrent_plugins: int = 20
     default_scan_timeout: int = 3600  # seconds
 
+    # Proxy — route HTTP scan traffic through Burp/SOCKS5 pivot
+    proxy_url: str = ""  # e.g. http://127.0.0.1:8080 or socks5://127.0.0.1:1080
+    proxy_type: str = ""  # auto-detected from URL scheme if empty; force "http" or "socks5"
+
+    # Webhook events
+    webhook_scan_completed: bool = True  # fire webhook when scan finishes
+
     # Reports output directory
     reports_dir: Path = Path("./reports")
 

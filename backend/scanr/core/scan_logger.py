@@ -41,9 +41,8 @@ class ScanLogger:
 
     async def _get_redis(self):
         if self._redis is None:
-            import redis.asyncio as aioredis
-            from scanr.config import get_settings
-            self._redis = aioredis.from_url(get_settings().redis_url, decode_responses=True)
+            from scanr.db.redis import get_redis
+            self._redis = get_redis()
         return self._redis
 
     async def emit(

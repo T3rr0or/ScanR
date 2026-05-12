@@ -185,6 +185,12 @@ async def seed_plugins(session: AsyncSession) -> None:
         dict(id="services.ntlmrelay_opportunity", name="NTLM Relay Chain Opportunity", category="services", default_severity="high", description="Detect when unsigned SMB + unauthenticated LDAP coexist — enabling NTLM relay attacks"),
         dict(id="services.k8s_rbac_enum", name="Kubernetes RBAC Enumeration", category="services", default_severity="high", description="Enumerate K8s RBAC for cluster-admin bindings, wildcard rules, secrets/get, pods/exec. Requires k8s_token credential.", requires_auth=True),
         dict(id="network.subdomain_takeover", name="Subdomain Takeover Detection", category="network", default_severity="high", description="Detect dangling CNAME pointers to deprovisioned cloud services (GitHub Pages, Heroku, Azure, Netlify, etc.)"),
+        # Pentest gap plugins (v0.9.3)
+        dict(id="services.ldap_signing", name="LDAP Signing / Channel Binding Check", category="services", default_severity="high", description="Check if domain controllers enforce LDAP signing and channel binding — primary defense against NTLM relay attacks"),
+        dict(id="services.snmp_walk", name="SNMP MIB Walk Enumeration", category="services", default_severity="medium", description="Walk SNMP MIB trees to enumerate system info, network interfaces, routing tables, and running software"),
+        dict(id="services.sip_scan", name="SIP / VoIP Service Discovery", category="services", default_severity="medium", description="Detect SIP VoIP services, enumerate methods, and check for unauthenticated extension registration"),
+        dict(id="network.ipv6_discovery", name="IPv6 Neighbor Discovery", category="network", default_severity="info", description="Discover IPv6 hosts via NDP, multicast listener discovery, and router advertisement parsing"),
+        dict(id="services.trust_enum", name="AD Domain / Forest Trust Enumeration", category="services", default_severity="medium", requires_auth=True, description="Enumerate Active Directory trust relationships between domains and forests to map cross-domain attack paths"),
     ]
 
     for p in BUILTIN_PLUGINS:

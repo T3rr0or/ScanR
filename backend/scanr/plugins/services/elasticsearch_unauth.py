@@ -34,7 +34,7 @@ class ElasticsearchUnauthPlugin(PluginBase):
 
     async def _probe(self, ip: str, port: int) -> FindingData | None:
         try:
-            async with httpx.AsyncClient(verify=False, timeout=5.0) as client:
+            async with httpx.AsyncClient(verify=False, timeout=5.0, **context.proxy_config()) as client:
                 resp = await client.get(f"http://{ip}:{port}/")
                 if resp.status_code != 200:
                     return None

@@ -91,12 +91,11 @@ async def scan_progress_ws(
             "hosts_up": scan.hosts_up,
         }))
 
-    import redis.asyncio as aioredis
-    settings = get_settings()
+    from scanr.db.redis import get_redis
     channel = f"scanr:events:{scan_id}"
     history_key = f"scanr:history:{scan_id}"
 
-    redis_client = aioredis.from_url(settings.redis_url, decode_responses=True)
+    redis_client = get_redis()
 
     # Fix M28: subscribe FIRST, buffer into queue, then fetch LRANGE.
     # Messages published between LRANGE and SUBSCRIBE are captured in the queue

@@ -76,6 +76,7 @@ class WafDetectPlugin(PluginBase):
             async with httpx.AsyncClient(
                 verify=False, timeout=8.0, follow_redirects=False,
                 headers={"User-Agent": "Mozilla/5.0 (compatible; ScanR/0.6)"},
+            **context.proxy_config(),
             ) as client:
                 probe_url = f"{base_url}{_WAF_PROBE}"
                 try:

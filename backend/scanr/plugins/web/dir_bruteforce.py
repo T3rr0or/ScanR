@@ -180,8 +180,9 @@ class DirBruteforcePlugin(PluginBase):
 
         async with httpx.AsyncClient(
             verify=False, timeout=4.0, follow_redirects=False,
-            limits=httpx.Limits(max_connections=30, max_keepalive_connections=20),
-        ) as client:
+            limits=httpx.Limits(max_connections=30, max_keepalive_connections=20),,
+                **context.proxy_config()
+            ) as client:
             baselines: list[tuple[int, int]] = []
             random_token = secrets.token_hex(8)
             baseline_paths = [

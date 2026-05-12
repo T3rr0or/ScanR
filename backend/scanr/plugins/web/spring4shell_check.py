@@ -47,8 +47,9 @@ class Spring4ShellCheckPlugin(PluginBase):
         findings: list[FindingData] = []
 
         async with httpx.AsyncClient(
-            verify=False, timeout=8.0, follow_redirects=True
-        ) as client:
+            verify=False, timeout=8.0, follow_redirects=True,
+                **context.proxy_config()
+            ) as client:
             # Check for actuator endpoints (independent of Spring4Shell)
             actuator_findings = await self._check_actuator(client, base_url, port)
             findings.extend(actuator_findings)

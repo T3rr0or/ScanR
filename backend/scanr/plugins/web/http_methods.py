@@ -62,7 +62,7 @@ class HttpMethodsPlugin(PluginBase):
 
     async def _probe_methods(self, url: str) -> list[str]:
         enabled = []
-        async with httpx.AsyncClient(verify=False, timeout=5.0) as client:
+        async with httpx.AsyncClient(verify=False, timeout=5.0, **context.proxy_config()) as client:
             for method in DANGEROUS_METHODS:
                 try:
                     resp = await client.request(method, url)

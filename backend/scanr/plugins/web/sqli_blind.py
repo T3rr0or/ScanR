@@ -76,6 +76,7 @@ class SqliBlindPlugin(PluginBase):
             async with httpx.AsyncClient(
                 verify=False, timeout=_SLEEP_SECS + 7.0, follow_redirects=True,
                 headers={"User-Agent": "Mozilla/5.0 (compatible; ScanR/0.6)"},
+            **context.proxy_config(),
             ) as client:
                 crawled = await crawl(base_url, client)
                 params = list(dict.fromkeys(crawled.get_params + _TEST_PARAMS))

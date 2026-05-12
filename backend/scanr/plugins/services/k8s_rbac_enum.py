@@ -61,7 +61,9 @@ class K8sRbacEnumPlugin(PluginBase):
             "Authorization": f"Bearer {token}",
             "Accept": "application/json",
         }
-        async with httpx.AsyncClient(verify=False, timeout=10.0, headers=headers) as client:
+        async with httpx.AsyncClient(verify=False, timeout=10.0, headers=headers,
+                **context.proxy_config()
+            ) as client:
             # 1. ClusterRoleBindings — find cluster-admin bindings
             try:
                 resp = await client.get(f"{base}/apis/rbac.authorization.k8s.io/v1/clusterrolebindings")

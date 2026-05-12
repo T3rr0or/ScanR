@@ -75,11 +75,12 @@ services:
       REDIS_URL: redis://redis:6379/0
       CELERY_BROKER_URL: redis://redis:6379/0
       CELERY_RESULT_BACKEND: redis://redis:6379/1
-      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY must be set in .env}
       VAULT_KEY: ${VAULT_KEY:-}
+      SECRET_KEY: "worker-dummy-key-at-least-32-chars-long"
       ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@scanr.local}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:?ADMIN_PASSWORD must be set in .env}
       WORDLIST_DIR: /app/wordlists
+      PROXY_URL: ${PROXY_URL:-}
     cap_add:
       - NET_RAW
     volumes:

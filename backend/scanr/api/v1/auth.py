@@ -27,25 +27,19 @@ _COOKIE_PATH = "/api/v1/auth"
 
 
 def _get_redis():
-    import redis.asyncio as aioredis
-    return aioredis.from_url(settings.redis_url, decode_responses=True)
+    from scanr.db.redis import get_redis
+    return get_redis()
 
 
 async def _revoke_jti(jti: str, exp: int) -> None:
     ttl = max(1, exp - int(datetime.now(timezone.utc).timestamp()))
     r = _get_redis()
-    try:
-        await r.set(f"{_REVOKE_PREFIX}{jti}", "1", ex=ttl)
-    finally:
-        await r.aclose()
+    await r.set(f"{_REVOKE_PREFIX}{jti}", "1", ex=ttl)
 
 
 async def _is_jti_revoked(jti: str) -> bool:
     r = _get_redis()
-    try:
-        return bool(await r.exists(f"{_REVOKE_PREFIX}{jti}"))
-    finally:
-        await r.aclose()
+    return bool(await r.exists(f"{_REVOKE_PREFIX}{jti}"))
 
 
 def _set_refresh_cookie(response: Response, refresh_token: str) -> None:

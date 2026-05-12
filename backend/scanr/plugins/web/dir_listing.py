@@ -75,7 +75,9 @@ class DirListingPlugin(PluginBase):
     async def _find_listings(self, base: str) -> list[str]:
         found = []
         try:
-            async with httpx.AsyncClient(verify=False, timeout=5.0, follow_redirects=False) as client:
+            async with httpx.AsyncClient(verify=False, timeout=5.0, follow_redirects=False,
+                **context.proxy_config()
+            ) as client:
                 for path in _CHECK_PATHS:
                     try:
                         resp = await client.get(base + path)

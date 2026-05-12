@@ -36,7 +36,7 @@ class DockerDaemonUnauthPlugin(PluginBase):
         scheme = "http" if port == 2375 else "https"
         url = f"{scheme}://{ip}:{port}/version"
         try:
-            async with httpx.AsyncClient(verify=False, timeout=5.0) as client:
+            async with httpx.AsyncClient(verify=False, timeout=5.0, **context.proxy_config()) as client:
                 resp = await client.get(url)
                 if resp.status_code != 200:
                     return None

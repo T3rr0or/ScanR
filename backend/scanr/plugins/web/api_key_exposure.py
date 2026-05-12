@@ -64,7 +64,8 @@ class ApiKeyExposurePlugin(PluginBase):
             timeout=8.0,
             follow_redirects=True,
             headers={"User-Agent": "Mozilla/5.0 (compatible; ScanR)"},
-        ) as client:
+        **context.proxy_config(),
+            ) as client:
             # Get main page
             try:
                 resp = await client.get(f"{base_url}/")

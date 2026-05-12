@@ -15,7 +15,7 @@ from scanr.core.plugin_manager import get_enabled_plugins
 from scanr.core.rate_limiter import RateLimiter
 from scanr.core.result_collector import ResultCollector
 from scanr.core.scan_logger import ScanLogger
-from scanr.models import Host, Plugin, Scan, Target
+from scanr.models import Credential, Host, Plugin, Scan, ScanCredential, Target
 from scanr.models.base import new_uuid
 from scanr.plugins.web._ports import is_web_port_data
 from scanr.utils.ip_utils import classify_target, is_valid_ip
@@ -256,8 +256,8 @@ class ScanEngine:
 
         if scan.credential_id:
             cred_result = await self.db.execute(
-                select(__import__("scanr.models", fromlist=["Credential"]).Credential)
-                .where(__import__("scanr.models", fromlist=["Credential"]).Credential.id == scan.credential_id)
+                select(Credential)
+                .where(Credential.id == scan.credential_id)
             )
             cred = cred_result.scalar_one_or_none()
             if cred:
@@ -269,8 +269,8 @@ class ScanEngine:
                 await scan_log.info(f"Credentials loaded: {cred.name}", phase="engine")
 
         scan_creds_result = await self.db.execute(
-            select(__import__("scanr.models", fromlist=["ScanCredential"]).ScanCredential)
-            .where(__import__("scanr.models", fromlist=["ScanCredential"]).ScanCredential.scan_id == self.scan_id)
+            select(ScanCredential)
+            .where(ScanCredential.scan_id == self.scan_id)
         )
         scan_creds = scan_creds_result.scalars().all()
         for scan_cred in scan_creds:
@@ -529,8 +529,8 @@ class ScanEngine:
             try:
                 from scanr.core.credential_chain import run_credential_chain
                 all_hosts_result = await self.db.execute(
-                    select(__import__("scanr.models", fromlist=["Host"]).Host)
-                    .where(__import__("scanr.models", fromlist=["Host"]).Host.scan_id == self.scan_id)
+                    select(Host)
+                    .where(Host.scan_id == self.scan_id)
                 )
                 all_hosts = all_hosts_result.scalars().all()
                 await run_credential_chain(context, all_hosts, collector)
@@ -544,6 +544,26 @@ class ScanEngine:
             f"Scan complete — {context.hosts_scanned} hosts scanned, "
             f"{context.findings_count} findings",
         )
+
+        # Fire scan.completed webhook
+        scan_result = await self.db.execute(select(Scan).where(Scan.id == self.scan_id))
+        scan = scan_result.scalar_one()
+        try:
+            from scanr.core.webhook_dispatcher import dispatch
+            await dispatch("scan.completed", {
+                "scan_id": self.scan_id,
+                "scan_name": scan.name,
+                "status": scan.status.value,
+                "hosts_scanned": context.hosts_scanned,
+                "hosts_up": scan.hosts_up,
+                "findings_total": context.findings_count,
+                "findings_critical": scan.findings_critical,
+                "findings_high": scan.findings_high,
+                "findings_medium": scan.findings_medium,
+                "findings_low": scan.findings_low,
+            }, scan.user_id, self.db)
+        except Exception as exc:
+            logger.error("scan.completed webhook dispatch failed: %s", exc)
 
     async def _scan_host(
         self,

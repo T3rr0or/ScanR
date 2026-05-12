@@ -27,4 +27,6 @@ class Credential(Base, TimestampMixin):
     type: Mapped[str] = mapped_column(String(30), nullable=False)
     username: Mapped[str | None] = mapped_column(String(255), nullable=True)
     encrypted_data: Mapped[str] = mapped_column(Text, nullable=False)  # Fernet-encrypted JSON
+    hash_type: Mapped[str | None] = mapped_column(String(20), nullable=True)  # ntlm, netntlm, sha1, etc.
+    engagement_id: Mapped[str | None] = mapped_column(String(100), nullable=True, index=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)

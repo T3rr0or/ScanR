@@ -146,7 +146,9 @@ class SensitiveFilesPlugin(PluginBase):
     async def _probe(self, ip: str, port: int, scheme: str) -> list[FindingData]:
         results = []
         try:
-            async with httpx.AsyncClient(verify=False, timeout=5.0, follow_redirects=False) as client:
+            async with httpx.AsyncClient(verify=False, timeout=5.0, follow_redirects=False,
+                **context.proxy_config()
+            ) as client:
                 baselines: list[tuple[int, int]] = []
                 for _ in range(2):
                     try:

@@ -27,7 +27,11 @@ def _get_fernet() -> Fernet:
 
 
 def encrypt(data: dict) -> str:
-    """Encrypt a dict and return URL-safe base64 ciphertext string."""
+    """Encrypt a dict and return URL-safe base64 ciphertext string.
+    
+    Supports hash_type field for NTLM hash credentials:
+      encrypt({"password": "...", "hash_type": "ntlm"})
+    """
     f = _get_fernet()
     plaintext = json.dumps(data).encode()
     return f.encrypt(plaintext).decode()

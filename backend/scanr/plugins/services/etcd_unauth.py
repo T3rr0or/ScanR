@@ -36,7 +36,7 @@ class EtcdUnauthPlugin(PluginBase):
         for scheme in ("https", "http"):
             base = f"{scheme}://{ip}:{port}"
             try:
-                async with httpx.AsyncClient(verify=False, timeout=6.0) as client:
+                async with httpx.AsyncClient(verify=False, timeout=6.0, **context.proxy_config()) as client:
                     evidence_parts = []
 
                     try:

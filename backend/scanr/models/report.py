@@ -13,6 +13,8 @@ class ReportFormat(str, Enum):
     pdf = "pdf"
     json = "json"
     csv = "csv"
+    sarif = "sarif"
+    bloodhound = "bloodhound"
 
 
 class Report(Base, TimestampMixin):

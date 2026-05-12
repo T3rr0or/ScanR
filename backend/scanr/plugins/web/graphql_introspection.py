@@ -42,7 +42,9 @@ class GraphQLIntrospectionPlugin(PluginBase):
 
     async def _probe(self, ip: str, port: int, scheme: str) -> FindingData | None:
         try:
-            async with httpx.AsyncClient(verify=False, timeout=5.0, follow_redirects=True) as client:
+            async with httpx.AsyncClient(verify=False, timeout=5.0, follow_redirects=True,
+                **context.proxy_config()
+            ) as client:
                 for path in GRAPHQL_PATHS:
                     url = f"{scheme}://{ip}:{port}{path}"
                     try:
