@@ -180,7 +180,7 @@ class DirBruteforcePlugin(PluginBase):
 
         async with httpx.AsyncClient(
             verify=False, timeout=4.0, follow_redirects=False,
-            limits=httpx.Limits(max_connections=30, max_keepalive_connections=20),,
+            limits=httpx.Limits(max_connections=30, max_keepalive_connections=20),
                 **context.proxy_config()
             ) as client:
             baselines: list[tuple[int, int]] = []

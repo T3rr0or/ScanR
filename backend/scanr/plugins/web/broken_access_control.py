@@ -92,7 +92,7 @@ class BrokenAccessControlPlugin(PluginBase):
             async with httpx.AsyncClient(
                 verify=False, timeout=6.0, follow_redirects=False,
                 headers={"User-Agent": "Mozilla/5.0 (compatible; ScanR/0.6)"},
-                cookies={},,
+                cookies={},
                 **context.proxy_config()
             ) as client:
                 for path in _PROTECTED_PATHS:
