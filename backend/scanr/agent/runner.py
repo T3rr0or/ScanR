@@ -22,6 +22,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import subprocess
 import sys
 import xml.etree.ElementTree as ET
@@ -33,6 +34,9 @@ logger = logging.getLogger("scanr.agent")
 
 POLL_INTERVAL = 30  # seconds
 AGENT_VERSION = "0.1.0"
+
+_VERIFY_SSL = os.environ.get("SCANR_INSECURE", "").lower() not in ("1", "true", "yes")
+_CA_BUNDLE = os.environ.get("SCANR_CA_BUNDLE", None)
 
 
 class AgentRunner:
@@ -46,7 +50,7 @@ class AgentRunner:
     async def run(self) -> None:
         logger.info("ScanR Agent starting — server: %s", self.server_url)
         # Register / heartbeat
-        async with httpx.AsyncClient(timeout=30, verify=False) as client:
+        async with httpx.AsyncClient(timeout=30, verify=_VERIFY_SSL) as client:
             try:
                 r = await client.post(
                     f"{self.server_url}/api/v1/agent/heartbeat",
@@ -69,7 +73,7 @@ class AgentRunner:
             await asyncio.sleep(POLL_INTERVAL)
 
     async def _poll_and_run(self) -> None:
-        async with httpx.AsyncClient(timeout=60, verify=False) as client:
+        async with httpx.AsyncClient(timeout=60, verify=_VERIFY_SSL) as client:
             r = await client.get(f"{self.server_url}/api/v1/agent/jobs", headers=self.headers)
             if r.status_code != 200:
                 logger.debug("No jobs (HTTP %s)", r.status_code)

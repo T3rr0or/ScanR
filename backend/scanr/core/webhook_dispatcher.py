@@ -17,6 +17,25 @@ from scanr.models.webhook import Webhook
 logger = logging.getLogger(__name__)
 
 
+def _validate_webhook_host(hostname: str) -> None:
+    """Re-validate webhook host at dispatch time to prevent TOCTOU SSRF.
+    
+    An attacker could register a domain resolving to a safe public IP,
+    then change DNS to an internal IP after creation. Re-resolving at
+    dispatch time closes this window.
+    """
+    import ipaddress
+    import socket
+    try:
+        infos = socket.getaddrinfo(hostname, None)
+        for info in infos:
+            addr = ipaddress.ip_address(info[4][0])
+            if addr.is_private or addr.is_loopback or addr.is_link_local or addr.is_reserved or addr.is_multicast:
+                raise ValueError(f"Webhook target {hostname} resolves to internal address {addr}")
+    except socket.gaierror:
+        pass  # unresolvable — allow, will fail naturally
+
+
 async def dispatch(event: str, payload: dict, user_id: str, db: AsyncSession) -> None:
     """Fire all enabled webhooks for the given user that match the event."""
     # Filter in SQL: only fetch webhooks that match the event or subscribe to '*'
@@ -34,6 +53,19 @@ async def dispatch(event: str, payload: dict, user_id: str, db: AsyncSession) ->
 
 
 async def _send(webhook: Webhook, event: str, payload: dict, db: AsyncSession) -> None:
+    # Re-validate DNS at dispatch time (TOCTOU protection)
+    from urllib.parse import urlparse
+    hostname = urlparse(webhook.url).hostname
+    if hostname:
+        try:
+            _validate_webhook_host(hostname)
+        except ValueError:
+            logger.warning("Webhook %s blocked: %s resolves to internal IP", webhook.id, hostname)
+            webhook.last_status = 403
+            webhook.last_triggered_at = datetime.now(timezone.utc)
+            await db.commit()
+            return
+
     delivery_id = secrets.token_hex(16)
     body = json.dumps({
         "event": event,

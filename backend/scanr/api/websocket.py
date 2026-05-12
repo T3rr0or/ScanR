@@ -12,7 +12,7 @@ import asyncio
 import json
 import logging
 
-from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from sqlalchemy import select
 
 from scanr.auth.jwt_handler import decode_token
@@ -26,27 +26,23 @@ router = APIRouter(tags=["websocket"])
 _HISTORY_LIMIT = 2000  # max events replayed on connect
 
 
-def _extract_token(websocket: WebSocket, query_token: str | None) -> str | None:
-    """Extract JWT from Sec-WebSocket-Protocol subprotocol header (preferred)
-    or fall back to ?token= query param (deprecated — logged in nginx access logs)."""
+def _extract_token(websocket: WebSocket) -> str | None:
+    """Extract JWT from Sec-WebSocket-Protocol subprotocol header.
+    Format: token.<jwt>"""
     subprotocol_header = websocket.headers.get("sec-websocket-protocol", "")
     for part in subprotocol_header.split(","):
         part = part.strip()
         if part.startswith("token."):
             return part[len("token."):]
-    if query_token:
-        logger.debug("WS auth via query param (deprecated — use Sec-WebSocket-Protocol)")
-    return query_token
+    return None
 
 
 @router.websocket("/ws/scans/{scan_id}/progress")
 async def scan_progress_ws(
     websocket: WebSocket,
     scan_id: str,
-    token: str | None = Query(None),
 ):
-    # Extract token before accepting so we can reject cleanly
-    raw_token = _extract_token(websocket, token)
+    raw_token = _extract_token(websocket)
 
     # Accept, echoing the subprotocol if the client sent one
     subprotocol_header = websocket.headers.get("sec-websocket-protocol", "")

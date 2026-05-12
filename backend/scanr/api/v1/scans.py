@@ -25,7 +25,7 @@ from scanr.utils.ip_utils import classify_target
 router = APIRouter(prefix="/scans", tags=["scans"])
 logger = logging.getLogger(__name__)
 
-_PORT_RANGE_RE = re.compile(r'^(top-\d{1,5}|all|\d{1,5}(-\d{1,5})?(,\d{1,5}(-\d{1,5})?)*)$')
+_PORT_RANGE_RE = re.compile(r'^(top-\d{1,5}|all|[1-9]\d{0,4}(-[1-9]\d{0,4})?(,[1-9]\d{0,4}(-[1-9]\d{0,4})?)*)$')
 
 
 class _BruteForceConfig(BaseModel):

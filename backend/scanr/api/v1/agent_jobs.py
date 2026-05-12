@@ -14,7 +14,7 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from fastapi.responses import FileResponse, PlainTextResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -116,6 +116,7 @@ async def get_agent_jobs(
 
 
 @router.post("/jobs/{scan_id}/start", status_code=200)
+@limiter.limit("20/minute")
 async def agent_start_job(
     scan_id: str,
     agent: ScanAgent = Depends(_get_agent),
@@ -144,10 +145,20 @@ class PortIn(BaseModel):
 
 
 class HostIn(BaseModel):
-    ip: str
+    ip: str = Field(..., max_length=253)
     hostname: str | None = None
     status: str = "up"
     ports: list[PortIn] = []
+
+    @field_validator("ip")
+    @classmethod
+    def _validate_ip(cls, v: str) -> str:
+        import ipaddress
+        try:
+            ipaddress.ip_address(v)
+        except ValueError:
+            raise ValueError(f"Invalid IP address: {v!r}")
+        return v
 
 
 class FindingIn(BaseModel):
@@ -269,6 +280,7 @@ class AgentFailBody(BaseModel):
 
 
 @router.post("/jobs/{scan_id}/fail", status_code=200)
+@limiter.limit("10/minute")
 async def agent_fail_job(
     scan_id: str,
     body: AgentFailBody,
