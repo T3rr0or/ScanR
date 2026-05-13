@@ -27,7 +27,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 HTTP_PORTS = [80, 443, 8080, 8443, 8000, 3000]
-_SLEEP_SECS = 3  # 5 dialects × 8 params × 5 paths × 3s = ~600s max with intrusive mode
+_SLEEP_SECS = 1.5  # 5 dialects × 3 params × 3 paths × ~5s = ~225s worst case, fits in 300s scans
 
 # (dialect_name, true_payload, false_payload, time_payload)
 _DIALECTS = [
@@ -92,8 +92,8 @@ class SqliBlindPlugin(PluginBase):
                 params = list(dict.fromkeys(crawled.get_params + _TEST_PARAMS))
                 paths = list(dict.fromkeys(crawled.paths + _KNOWN_ENDPOINTS)) or ["/"]
 
-                for path in paths[:5]:
-                    for param in params[:8]:
+                for path in paths[:3]:
+                    for param in params[:3]:
                         # Boolean diff first (fast, no delay)
                         result = await self._boolean_check(client, base_url, path, param, port, sem)
                         if result:
