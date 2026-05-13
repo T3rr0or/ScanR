@@ -50,7 +50,7 @@ class MasscanWrapper:
                 n = 1000
             return ["-p", "1-1024,8080,8443,8888,9090,9200,9300,27017,6379,5432,3306,1433,5900,5985,5986"] if n <= 1000 else ["-p", MasscanWrapper.FULL_RANGE_CAP]
         if port_range in ("-p-", "-p -"):
-            return ["-p", MasscanWrapper.FULL_RANGE_CAP]
+            return ["-p", "1-65535"]
         if port_range.startswith("-p "):
             return ["-p", port_range[3:].strip()]
         if port_range.startswith("-p"):
