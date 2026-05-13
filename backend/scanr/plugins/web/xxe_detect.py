@@ -77,12 +77,12 @@ class XxeDetectPlugin(PluginBase):
                 continue
             scheme = web_scheme(port)
             base_url = f"{scheme}://{host.ip}:{port.number}"
-            result = await self._probe(base_url, port.number, probe_file)
+            result = await self._probe(context, base_url, port.number, probe_file)
             if result:
                 findings.append(result)
         return findings
 
-    async def _probe(self, base_url: str, port: int, probe_file: str = "/etc/passwd") -> FindingData | None:
+    async def _probe(self, context, base_url: str, port: int, probe_file: str = "/etc/passwd") -> FindingData | None:
         xxe_payload = (
             '<?xml version="1.0" encoding="UTF-8"?>'
             f'<!DOCTYPE foo [<!ENTITY xxe SYSTEM "file://{probe_file}">]>'

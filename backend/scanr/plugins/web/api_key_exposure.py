@@ -50,12 +50,12 @@ class ApiKeyExposurePlugin(PluginBase):
                 continue
             scheme = web_scheme(port)
             base_url = f"{scheme}://{host.ip}:{port.number}"
-            result = await self._scan_for_keys(base_url, port.number)
+            result = await self._scan_for_keys(context, base_url, port.number)
             if result:
                 findings.append(result)
         return findings
 
-    async def _scan_for_keys(self, base_url: str, port: int) -> FindingData | None:
+    async def _scan_for_keys(self, context, base_url: str, port: int) -> FindingData | None:
         hits: list[dict] = []
         scanned_urls: set[str] = set()
 

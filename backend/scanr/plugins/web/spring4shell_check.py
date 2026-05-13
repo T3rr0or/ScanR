@@ -39,11 +39,11 @@ class Spring4ShellCheckPlugin(PluginBase):
                 continue
             scheme = web_scheme(port)
             base_url = f"{scheme}://{host.ip}:{port.number}"
-            results = await self._probe(base_url, port.number)
+            results = await self._probe(context, base_url, port.number)
             findings.extend(results)
         return findings
 
-    async def _probe(self, base_url: str, port: int) -> list[FindingData]:
+    async def _probe(self, context, base_url: str, port: int) -> list[FindingData]:
         findings: list[FindingData] = []
 
         async with httpx.AsyncClient(

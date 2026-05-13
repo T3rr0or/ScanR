@@ -70,12 +70,12 @@ class Log4ShellCheckPlugin(PluginBase):
                 continue
             scheme = web_scheme(port)
             base_url = f"{scheme}://{host.ip}:{port.number}"
-            result = await self._probe(base_url, port.number)
+            result = await self._probe(context, base_url, port.number)
             if result:
                 findings.append(result)
         return findings
 
-    async def _probe(self, base_url: str, port: int) -> FindingData | None:
+    async def _probe(self, context, base_url: str, port: int) -> FindingData | None:
         endpoints = ["/", "/login", "/api", "/search", "/api/v1/search"]
 
         async with httpx.AsyncClient(

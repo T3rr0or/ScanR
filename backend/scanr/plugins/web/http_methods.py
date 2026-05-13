@@ -33,7 +33,7 @@ class HttpMethodsPlugin(PluginBase):
             scheme = web_scheme(port)
             url = f"{scheme}://{host.ip}:{port.number}/"
 
-            enabled = await self._probe_methods(url)
+            enabled = await self._probe_methods(context, url)
             if "TRACE" in enabled:
                 findings.append(FindingData(
                     plugin_id=self.id,
@@ -60,7 +60,7 @@ class HttpMethodsPlugin(PluginBase):
                 ))
         return findings
 
-    async def _probe_methods(self, url: str) -> list[str]:
+    async def _probe_methods(self, context, url: str) -> list[str]:
         enabled = []
         async with httpx.AsyncClient(verify=False, timeout=5.0, **context.proxy_config()) as client:
             for method in DANGEROUS_METHODS:

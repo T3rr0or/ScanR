@@ -153,7 +153,7 @@ class DirBruteforcePlugin(PluginBase):
             if not is_web_port(port):
                 continue
             scheme = web_scheme(port)
-            port_findings = await self._scan(host.ip, port.number, scheme, wordlist)
+            port_findings = await self._scan(context, host.ip, port.number, scheme, wordlist)
             findings.extend(port_findings)
         return findings
 
@@ -173,7 +173,7 @@ class DirBruteforcePlugin(PluginBase):
         logger.debug("dir_bruteforce: SecLists not found, using embedded wordlist")
         return COMMON_PATHS
 
-    async def _scan(self, ip: str, port: int, scheme: str, wordlist: list[str]) -> list[FindingData]:
+    async def _scan(self, context, ip: str, port: int, scheme: str, wordlist: list[str]) -> list[FindingData]:
         base = f"{scheme}://{ip}:{port}/"
         found: list[tuple[str, int, int]] = []  # (path, status, size)
         sem = asyncio.Semaphore(20)
