@@ -118,6 +118,7 @@ async def get_agent_jobs(
 @router.post("/jobs/{scan_id}/start", status_code=200)
 @limiter.limit("20/minute")
 async def agent_start_job(
+    request: Request,
     scan_id: str,
     agent: ScanAgent = Depends(_get_agent),
     db: AsyncSession = Depends(get_db),
@@ -282,6 +283,7 @@ class AgentFailBody(BaseModel):
 @router.post("/jobs/{scan_id}/fail", status_code=200)
 @limiter.limit("10/minute")
 async def agent_fail_job(
+    request: Request,
     scan_id: str,
     body: AgentFailBody,
     agent: ScanAgent = Depends(_get_agent),

@@ -2,6 +2,11 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import html as _html
+
+
+def _esc(text: str | None) -> str:
+    return _html.escape(text or "")
 
 
 def generate_summary(scan, hosts: list, findings: list) -> str:
@@ -39,7 +44,7 @@ def generate_summary(scan, hosts: list, findings: list) -> str:
         else:
             duration_str = f" in {secs // 3600}h {(secs % 3600) // 60}m"
 
-    scan_name = getattr(scan, "name", "Unknown Scan")
+    scan_name = _esc(getattr(scan, "name", "Unknown Scan"))
 
     # Risk level
     if critical > 0:
@@ -63,7 +68,7 @@ def generate_summary(scan, hosts: list, findings: list) -> str:
     critical_findings = [f for f in findings if getattr(f, "severity", "") == "critical"]
     high_findings = [f for f in findings if getattr(f, "severity", "") == "high"]
     top_findings = (critical_findings + high_findings)[:3]
-    top_titles = [f"<li>{getattr(f, 'title', 'Unknown')}</li>" for f in top_findings]
+    top_titles = [f"<li>{_esc(getattr(f, 'title', 'Unknown'))}</li>" for f in top_findings]
     top_list = f"<ul>{''.join(top_titles)}</ul>" if top_titles else ""
 
     # Findings breakdown sentence
