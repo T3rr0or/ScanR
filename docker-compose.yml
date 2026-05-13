@@ -51,12 +51,14 @@ services:
       SELF_UPDATE_COMMAND: ${SELF_UPDATE_COMMAND:-docker-compose pull && docker-compose up -d}
       SELF_UPDATE_WORKDIR: ${SELF_UPDATE_WORKDIR:-/opt/scanr}
       WORDLIST_DIR: /app/wordlists
-    ports:
-      - "8000:8000"
     volumes:
       - reports_data:/app/reports
       - nvd_data:/app/nvd_cache
       - wordlists_data:/app/wordlists
+      # Self-update: mount Docker socket + project dir (set SELF_UPDATE_ENABLED=true in .env)
+      - /var/run/docker.sock:/var/run/docker.sock
+      - .:/opt/scanr
+    ports:
     command: uvicorn scanr.main:app --host 0.0.0.0 --port 8000
 
   worker:
