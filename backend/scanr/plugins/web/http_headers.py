@@ -71,11 +71,11 @@ class HttpHeadersPlugin(PluginBase):
             if not is_web_port(port):
                 continue
             scheme = web_scheme(port)
-            headers = await self._fetch_headers(host.ip, port.number, scheme)
+            headers = await self._fetch_headers(context, host.ip, port.number, scheme)
             if headers is None:
                 # Try the other scheme
                 scheme = "https" if scheme == "http" else "http"
-                headers = await self._fetch_headers(host.ip, port.number, scheme)
+                headers = await self._fetch_headers(context, host.ip, port.number, scheme)
             if not headers:
                 continue
 
@@ -112,7 +112,7 @@ class HttpHeadersPlugin(PluginBase):
                 ))
         return findings
 
-    async def _fetch_headers(self, ip: str, port: int, scheme: str) -> dict | None:
+    async def _fetch_headers(self, context, ip: str, port: int, scheme: str) -> dict | None:
         url = f"{scheme}://{ip}:{port}/"
         try:
             async with httpx.AsyncClient(verify=False, timeout=5.0, follow_redirects=True,

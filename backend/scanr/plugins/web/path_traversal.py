@@ -52,12 +52,12 @@ class PathTraversalPlugin(PluginBase):
             if not is_web_port(port):
                 continue
             scheme = web_scheme(port)
-            finding = await self._test(host.ip, port.number, scheme)
+            finding = await self._test(context, host.ip, port.number, scheme)
             if finding:
                 findings.append(finding)
         return findings
 
-    async def _test(self, ip: str, port: int, scheme: str) -> FindingData | None:
+    async def _test(self, context, ip: str, port: int, scheme: str) -> FindingData | None:
         base_url = f"{scheme}://{ip}:{port}"
         try:
             async with httpx.AsyncClient(verify=False, timeout=httpx.Timeout(3.0, connect=2.0), follow_redirects=True,

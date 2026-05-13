@@ -95,12 +95,12 @@ class SqliDetectPlugin(PluginBase):
                 continue
             scheme = web_scheme(port)
             base_url = f"{scheme}://{host.ip}:{port.number}"
-            result = await self._test_sqli(base_url, port.number, host.ip, intrusive=intrusive)
+            result = await self._test_sqli(context, base_url, port.number, host.ip, intrusive=intrusive)
             if result:
                 findings.append(result)
         return findings
 
-    async def _test_sqli(self, base_url: str, port: int, ip: str, *, intrusive: bool = False) -> FindingData | None:
+    async def _test_sqli(self, context, base_url: str, port: int, ip: str, *, intrusive: bool = False) -> FindingData | None:
         sem = asyncio.Semaphore(20)
         try:
             async with httpx.AsyncClient(

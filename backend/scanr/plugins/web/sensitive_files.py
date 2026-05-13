@@ -139,11 +139,11 @@ class SensitiveFilesPlugin(PluginBase):
             if not is_web_port(port):
                 continue
             scheme = web_scheme(port)
-            port_findings = await self._probe(host.ip, port.number, scheme)
+            port_findings = await self._probe(context, host.ip, port.number, scheme)
             findings.extend(port_findings)
         return findings
 
-    async def _probe(self, ip: str, port: int, scheme: str) -> list[FindingData]:
+    async def _probe(self, context, ip: str, port: int, scheme: str) -> list[FindingData]:
         results = []
         try:
             async with httpx.AsyncClient(verify=False, timeout=5.0, follow_redirects=False,

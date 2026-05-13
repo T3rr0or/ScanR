@@ -35,12 +35,12 @@ class GraphQLIntrospectionPlugin(PluginBase):
             if not is_web_port(port):
                 continue
             scheme = web_scheme(port)
-            finding = await self._probe(host.ip, port.number, scheme)
+            finding = await self._probe(context, host.ip, port.number, scheme)
             if finding:
                 findings.append(finding)
         return findings
 
-    async def _probe(self, ip: str, port: int, scheme: str) -> FindingData | None:
+    async def _probe(self, context, ip: str, port: int, scheme: str) -> FindingData | None:
         try:
             async with httpx.AsyncClient(verify=False, timeout=5.0, follow_redirects=True,
                 **context.proxy_config()

@@ -84,12 +84,12 @@ class SsrfDetectPlugin(PluginBase):
                 continue
             scheme = web_scheme(port)
             base_url = f"{scheme}://{host.ip}:{port.number}"
-            result = await self._test_ssrf(base_url, port.number)
+            result = await self._test_ssrf(context, base_url, port.number)
             if result:
                 findings.append(result)
         return findings
 
-    async def _test_ssrf(self, base_url: str, port: int) -> FindingData | None:
+    async def _test_ssrf(self, context, base_url: str, port: int) -> FindingData | None:
         sem = asyncio.Semaphore(10)
         try:
             async with httpx.AsyncClient(

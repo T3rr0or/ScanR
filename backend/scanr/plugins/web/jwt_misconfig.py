@@ -76,7 +76,7 @@ class JwtMisconfigPlugin(PluginBase):
 
             # Test alg:none
             none_token = _make_none_alg_token(header_b64, payload_b64)
-            if none_token and await self._test_token_accepted(base_url, none_token):
+            if none_token and await self._test_token_accepted(context, base_url, none_token):
                 findings.append(FindingData(
                     plugin_id=self.id,
                     severity=Severity.high,
@@ -157,7 +157,7 @@ class JwtMisconfigPlugin(PluginBase):
             pass
         return None
 
-    async def _test_token_accepted(self, base_url: str, token: str) -> bool:
+    async def _test_token_accepted(self, context, base_url: str, token: str) -> bool:
         try:
             async with httpx.AsyncClient(verify=False, timeout=5.0, **context.proxy_config()) as client:
                 resp = await client.get(base_url, headers={"Authorization": f"Bearer {token}"})

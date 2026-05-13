@@ -50,7 +50,7 @@ class DirListingPlugin(PluginBase):
             checked.add(port.number)
             scheme = web_scheme(port)
             base = f"{scheme}://{host.ip}:{port.number}"
-            listed_paths = await self._find_listings(base)
+            listed_paths = await self._find_listings(context, base)
             if listed_paths:
                 findings.append(FindingData(
                     plugin_id=self.id,
@@ -72,7 +72,7 @@ class DirListingPlugin(PluginBase):
                 ))
         return findings
 
-    async def _find_listings(self, base: str) -> list[str]:
+    async def _find_listings(self, context, base: str) -> list[str]:
         found = []
         try:
             async with httpx.AsyncClient(verify=False, timeout=5.0, follow_redirects=False,

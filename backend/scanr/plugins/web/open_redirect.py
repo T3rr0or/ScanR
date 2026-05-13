@@ -36,14 +36,14 @@ class OpenRedirectPlugin(PluginBase):
             if not is_web_port(port):
                 continue
             scheme = web_scheme(port)
-            finding = await self._test_redirects(host.ip, port.number, scheme)
+            finding = await self._test_redirects(context, host.ip, port.number, scheme)
             if not finding and scheme == "http":
-                finding = await self._test_redirects(host.ip, port.number, "https")
+                finding = await self._test_redirects(context, host.ip, port.number, "https")
             if finding:
                 findings.append(finding)
         return findings
 
-    async def _test_redirects(self, ip: str, port: int, scheme: str) -> FindingData | None:
+    async def _test_redirects(self, context, ip: str, port: int, scheme: str) -> FindingData | None:
         base = f"{scheme}://{ip}:{port}/"
         try:
             async with httpx.AsyncClient(verify=False, timeout=httpx.Timeout(3.0, connect=2.0), follow_redirects=False,

@@ -66,12 +66,12 @@ class WafDetectPlugin(PluginBase):
                 continue
             scheme = web_scheme(port)
             base_url = f"{scheme}://{host.ip}:{port.number}"
-            result = await self._detect_waf(base_url, port.number)
+            result = await self._detect_waf(context, base_url, port.number)
             if result:
                 findings.append(result)
         return findings
 
-    async def _detect_waf(self, base_url: str, port: int) -> FindingData | None:
+    async def _detect_waf(self, context, base_url: str, port: int) -> FindingData | None:
         try:
             async with httpx.AsyncClient(
                 verify=False, timeout=8.0, follow_redirects=False,

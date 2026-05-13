@@ -96,7 +96,7 @@ class AwsMetadataSsrfPlugin(PluginBase):
         for port in web_ports:
             scheme = web_scheme(port)
             base_url = f"{scheme}://{host.ip}:{port.number}"
-            result = await self._check_ssrf(base_url, port.number)
+            result = await self._check_ssrf(context, base_url, port.number)
             if result:
                 findings.append(result)
 
@@ -221,7 +221,7 @@ class AwsMetadataSsrfPlugin(PluginBase):
                 pass
         return None
 
-    async def _check_ssrf(self, base_url: str, port: int) -> FindingData | None:
+    async def _check_ssrf(self, context, base_url: str, port: int) -> FindingData | None:
         """Test web app for SSRF to cloud metadata endpoint (AWS, Azure, GCP)."""
         try:
             async with httpx.AsyncClient(

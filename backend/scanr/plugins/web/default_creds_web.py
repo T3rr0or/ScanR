@@ -84,7 +84,7 @@ class DefaultCredsWebPlugin(PluginBase):
                 continue
             scheme = web_scheme(port)
             delay_s = cfg.get("delay_ms", 500) / 1000.0
-            found = await self._try_default_creds(host.ip, port.number, scheme, creds_to_try, delay_s)
+            found = await self._try_default_creds(context, host.ip, port.number, scheme, creds_to_try, delay_s)
             for username, password, path in found:
                 # Store for credential chaining phase
                 context.store_credential(

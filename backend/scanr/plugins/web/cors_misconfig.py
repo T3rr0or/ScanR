@@ -31,7 +31,7 @@ class CorsMisconfigPlugin(PluginBase):
                 continue
             scheme = web_scheme(port)
             url = f"{scheme}://{host.ip}:{port.number}/"
-            result = await self._check_cors(url)
+            result = await self._check_cors(context, url)
             if result:
                 findings.append(FindingData(
                     plugin_id=self.id,
@@ -46,7 +46,7 @@ class CorsMisconfigPlugin(PluginBase):
                 ))
         return findings
 
-    async def _check_cors(self, url: str) -> dict | None:
+    async def _check_cors(self, context, url: str) -> dict | None:
         try:
             async with httpx.AsyncClient(verify=False, timeout=5.0, **context.proxy_config()) as client:
                 resp = await client.get(url, headers={"Origin": "https://evil.example.com"})

@@ -65,12 +65,12 @@ class SqliBlindPlugin(PluginBase):
                 continue
             scheme = web_scheme(port)
             base_url = f"{scheme}://{host.ip}:{port.number}"
-            result = await self._test_blind(base_url, port.number, host.ip)
+            result = await self._test_blind(context, base_url, port.number, host.ip)
             if result:
                 findings.append(result)
         return findings
 
-    async def _test_blind(self, base_url: str, port: int, ip: str) -> FindingData | None:
+    async def _test_blind(self, context, base_url: str, port: int, ip: str) -> FindingData | None:
         sem = asyncio.Semaphore(5)  # lower concurrency for timing accuracy
         try:
             async with httpx.AsyncClient(

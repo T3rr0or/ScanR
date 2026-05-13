@@ -81,11 +81,11 @@ class BrokenAccessControlPlugin(PluginBase):
                 continue
             scheme = web_scheme(port)
             base_url = f"{scheme}://{host.ip}:{port.number}"
-            port_findings = await self._test(base_url, port.number)
+            port_findings = await self._test(context, base_url, port.number)
             findings.extend(port_findings)
         return findings
 
-    async def _test(self, base_url: str, port: int) -> list[FindingData]:
+    async def _test(self, context, base_url: str, port: int) -> list[FindingData]:
         results = []
         try:
             # No cookies, no auth headers — pure unauthenticated request
