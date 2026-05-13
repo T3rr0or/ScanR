@@ -104,7 +104,10 @@ class ScreenshotPlugin(PluginBase):
             )
             page = await ctx.new_page()
 
-            resp = await page.goto(url, timeout=15_000, wait_until="domcontentloaded")
+            resp = await page.goto(url, timeout=20_000, wait_until="load")
+
+            # Extra wait for SPA rendering (JS frameworks, lazy images)
+            await asyncio.sleep(2.0)
 
             title = await page.title()
             status = resp.status if resp else None
