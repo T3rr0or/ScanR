@@ -27,14 +27,11 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 HTTP_PORTS = [80, 443, 8080, 8443, 8000, 3000]
-_SLEEP_SECS = 1.5  # 5 dialects × 3 params × 3 paths × ~5s = ~225s worst case, fits in 300s scans
+_SLEEP_SECS = 1.5  # 2 dialects × 2 params × 2 paths × ~5s = ~40s, fits in 120s scans
 
 # (dialect_name, true_payload, false_payload, time_payload)
 _DIALECTS = [
     ("MySQL",    "1' AND 1=1-- -",  "1' AND 1=2-- -",  f"1' AND SLEEP({_SLEEP_SECS})-- -"),
-    ("MSSQL",    "1' AND 1=1--",    "1' AND 1=2--",    f"1'; WAITFOR DELAY '0:0:{_SLEEP_SECS}'--"),
-    ("Postgres", "1' AND 1=1--",    "1' AND 1=2--",    f"1'; SELECT pg_sleep({_SLEEP_SECS})--"),
-    ("Oracle",   "1' AND 1=1--",    "1' AND 1=2--",    f"1' AND 1=DBMS_PIPE.RECEIVE_MESSAGE('x',{_SLEEP_SECS})--"),
     ("SQLite",   "1' AND 1=1--",    "1' AND 1=2--",    "1' AND typeof(randomblob(100000000))='blob'-- -"),
 ]
 
@@ -92,8 +89,8 @@ class SqliBlindPlugin(PluginBase):
                 params = list(dict.fromkeys(crawled.get_params + _TEST_PARAMS))
                 paths = list(dict.fromkeys(crawled.paths + _KNOWN_ENDPOINTS)) or ["/"]
 
-                for path in paths[:3]:
-                    for param in params[:3]:
+                for path in paths[:2]:
+                    for param in params[:2]:
                         # Boolean diff first (fast, no delay)
                         result = await self._boolean_check(client, base_url, path, param, port, sem)
                         if result:
