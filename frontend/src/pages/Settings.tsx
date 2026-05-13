@@ -1,19 +1,20 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { type LucideIcon, Key, Webhook, Copy, Check, Trash2, Plus, Send, Database, RefreshCw, Settings as SettingsIcon, User, Users } from 'lucide-react'
+import { type LucideIcon, Key, Webhook, Copy, Check, Trash2, Plus, Send, Database, RefreshCw, Settings as SettingsIcon, User, Users, Monitor, ExternalLink, Terminal } from 'lucide-react'
 import { apiKeysApi, type APIKeyCreated } from '@/api/apiKeys'
 import { webhooksApi } from '@/api/webhooks'
 import api from '@/api/client'
 import { relTime } from '@/components/ui'
 import { useAuthStore } from '@/store/auth'
 
-type Tab = 'profile' | 'api-keys' | 'webhooks' | 'cve' | 'users'
+type Tab = 'profile' | 'api-keys' | 'webhooks' | 'cve' | 'users' | 'system'
 
 const TABS: { id: Tab; label: string; Icon: LucideIcon; adminOnly?: boolean }[] = [
   { id: 'profile', label: 'Profile', Icon: User },
   { id: 'api-keys', label: 'API Keys', Icon: Key },
   { id: 'webhooks', label: 'Webhooks', Icon: Webhook },
   { id: 'cve', label: 'CVE Database', Icon: Database },
+  { id: 'system', label: 'System', Icon: Monitor, adminOnly: true },
   { id: 'users', label: 'Users', Icon: Users, adminOnly: true },
 ]
 
@@ -66,6 +67,7 @@ export default function Settings() {
           {activeTab === 'api-keys' && <ApiKeysSection />}
           {activeTab === 'webhooks' && <WebhooksSection />}
           {activeTab === 'cve' && <CveDatabaseSection />}
+          {activeTab === 'system' && role === 'admin' && <SystemSection />}
           {activeTab === 'users' && role === 'admin' && <UserManagementSection />}
         </div>
       </div>
@@ -129,6 +131,104 @@ function ProfileSection() {
         </div>
       </div>
     </div>
+  )
+}
+
+/* ── System ──────────────────────────────────────────────── */
+function SystemSection() {
+  const { data: ver } = useQuery({
+    queryKey: ['system-version'],
+    queryFn: () => api.get('/system/version').then(r => r.data),
+    refetchInterval: 300_000, // every 5 min
+  })
+
+  const updateAvailable = ver?.update_available
+  const latestVersion = ver?.latest
+  const currentVersion = ver?.current
+  const releaseUrl = ver?.release_url
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      {/* Version */}
+      <div className="panel" style={{ padding: 16 }}>
+        <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-0)', marginBottom: 12 }}>ScanR Version</div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 }}>
+          <span className="mono" style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-0)' }}>v{currentVersion || '...'}</span>
+          {updateAvailable && (
+            <span style={{
+              fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 12,
+              background: 'oklch(0.25 0.1 60 / 0.3)', color: 'var(--sev-medium)',
+            }}>
+              Update available: v{latestVersion}
+            </span>
+          )}
+          {!updateAvailable && ver && (
+            <span style={{ fontSize: 11, color: 'var(--ok)', fontWeight: 500 }}>Up to date</span>
+          )}
+        </div>
+
+        {updateAvailable && (
+          <>
+            <div style={{
+              background: 'var(--bg-1)', border: '1px solid var(--border)', borderRadius: 8,
+              padding: 14, marginTop: 8, marginBottom: 12,
+            }}>
+              <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-0)', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
+                <Terminal size={13} />
+                Update via Docker Compose
+              </div>
+              <div style={{
+                background: 'var(--bg-0)', border: '1px solid var(--border)', borderRadius: 6,
+                padding: '10px 14px',
+              }}>
+                <code style={{ fontSize: 12, color: 'var(--text-1)', whiteSpace: 'pre-wrap' }}>
+{`cd /opt/scanr
+docker compose pull
+docker compose up -d`}
+                </code>
+              </div>
+              <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+                <CopyButton text="cd /opt/scanr && docker compose pull && docker compose up -d" />
+                {releaseUrl && (
+                  <a
+                    href={releaseUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="btn btn-ghost btn-sm"
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 12, textDecoration: 'none' }}
+                  >
+                    <ExternalLink size={12} /> Release Notes
+                  </a>
+                )}
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+
+      {/* Info */}
+      <div className="panel" style={{ padding: 16 }}>
+        <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-0)', marginBottom: 8 }}>Deployment Info</div>
+        <div style={{ fontSize: 12, color: 'var(--text-2)', display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <div>• Images pulled from <code style={{ fontSize: 11 }}>ghcr.io/t3rr0or/scanr-*</code></div>
+          <div>• Database migrations run automatically on startup</div>
+          <div>• Restart with: <code style={{ fontSize: 11 }}>docker compose restart</code></div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false)
+  return (
+    <button
+      className="btn btn-primary btn-sm"
+      style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 12 }}
+      onClick={() => { navigator.clipboard.writeText(text); setCopied(true); setTimeout(() => setCopied(false), 2000) }}
+    >
+      {copied ? <><Check size={12} /> Copied</> : <><Copy size={12} /> Copy Command</>}
+    </button>
   )
 }
 
