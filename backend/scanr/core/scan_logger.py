@@ -41,8 +41,12 @@ class ScanLogger:
 
     async def _get_redis(self):
         if self._redis is None:
-            from scanr.db.redis import get_redis
-            self._redis = get_redis()
+            # Fork-safe: create a fresh connection per worker process.
+            # The shared pool (scanr.db.redis) is created in the API process
+            # and doesn't survive Celery's prefork worker model.
+            import redis.asyncio as aioredis
+            from scanr.config import get_settings
+            self._redis = aioredis.from_url(get_settings().redis_url, decode_responses=True)
         return self._redis
 
     async def emit(
