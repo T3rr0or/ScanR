@@ -19,7 +19,7 @@ from scanr.models.base import new_uuid
 router = APIRouter(prefix="/wordlists", tags=["wordlists"])
 
 WORDLIST_DIR = Path(os.getenv("WORDLIST_DIR", "/app/wordlists"))
-MAX_UPLOAD_MB = 50
+MAX_UPLOAD_MB = 250
 
 
 class WordlistRead(BaseModel):

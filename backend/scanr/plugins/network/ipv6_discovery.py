@@ -54,8 +54,8 @@ class Ipv6DiscoveryPlugin(PluginBase):
             # on other hosts on the network
             return []
 
-        neighbors = await self._discover_neighbors(host.ip)
-        router_info = await self._parse_router_advertisements(host.ip)
+        neighbors = await self._discover_neighbors(host.ip, context)
+        router_info = await self._parse_router_advertisements(host.ip, context)
 
         if not neighbors and not router_info:
             return []
@@ -136,7 +136,7 @@ class Ipv6DiscoveryPlugin(PluginBase):
         except Exception:
             return []
 
-    async def _discover_neighbors(self, ip: str) -> list[str]:
+    async def _discover_neighbors(self, ip: str, context: "ScanContext") -> list[str]:
         """Discover IPv6 neighbors using NDP neighbor solicitation.
         
         Uses the 'ip -6 neigh' command on Linux or 'netsh interface ipv6' on Windows.
@@ -149,11 +149,12 @@ class Ipv6DiscoveryPlugin(PluginBase):
         loop = asyncio.get_running_loop()
 
         try:
-            # Try Linux ip command
+            cmd = ["ip", "-6", "neigh", "show"]
+            await context.log.info(f"$ {' '.join(cmd)}", phase="plugin", host=ip)
             proc = await loop.run_in_executor(
                 None,
                 lambda: subprocess.run(
-                    ["ip", "-6", "neigh", "show"],
+                    cmd,
                     capture_output=True, text=True, timeout=10,
                 ),
             )
@@ -169,11 +170,11 @@ class Ipv6DiscoveryPlugin(PluginBase):
 
         # Try ping6 sweep of link-local addresses from common OUI prefixes
         if not neighbors:
-            neighbors = await self._ping6_sweep(ip)
+            neighbors = await self._ping6_sweep(ip, context)
 
         return neighbors
 
-    async def _ping6_sweep(self, base_ip: str) -> list[str]:
+    async def _ping6_sweep(self, base_ip: str, context: "ScanContext") -> list[str]:
         """Sweep common link-local IPv6 patterns for the local segment."""
         import subprocess
         loop = asyncio.get_running_loop()
@@ -189,6 +190,8 @@ class Ipv6DiscoveryPlugin(PluginBase):
         # Sweep a small range
         for suffix in range(1, 20):
             target = f"{prefix}{suffix:x}"
+            cmd = ["ping6", "-c", "1", "-W", "1", target]
+            await context.log.debug(f"$ {' '.join(cmd)}", phase="plugin", host=base_ip)
             try:
                 proc = await loop.run_in_executor(
                     None,
@@ -204,17 +207,18 @@ class Ipv6DiscoveryPlugin(PluginBase):
 
         return found
 
-    async def _parse_router_advertisements(self, ip: str) -> dict | None:
+    async def _parse_router_advertisements(self, ip: str, context: "ScanContext") -> dict | None:
         """Check for IPv6 router advertisements on the segment."""
         import subprocess
         loop = asyncio.get_running_loop()
 
         try:
-            # Check if we received any RAs recently (Linux)
+            cmd = ["ip", "-6", "route", "show"]
+            await context.log.info(f"$ {' '.join(cmd)}", phase="plugin", host=ip)
             proc = await loop.run_in_executor(
                 None,
                 lambda: subprocess.run(
-                    ["ip", "-6", "route", "show"],
+                    cmd,
                     capture_output=True, text=True, timeout=10,
                 ),
             )

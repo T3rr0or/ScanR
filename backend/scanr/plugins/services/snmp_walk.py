@@ -79,12 +79,12 @@ class SnmpWalkPlugin(PluginBase):
         for port in host.ports:
             if port.number not in (SNMP_PORTS if self.ports is None else self.ports):
                 continue
-            result = await self._walk_host(host.ip, port.number)
+            result = await self._walk_host(host.ip, port.number, context)
             if result:
                 findings.append(result)
         return findings
 
-    async def _walk_host(self, ip: str, port: int) -> FindingData | None:
+    async def _walk_host(self, ip: str, port: int, context: "ScanContext") -> FindingData | None:
         """Test community strings and walk MIBs."""
         working_communities: list[str] = []
         collected_data: dict[str, str] = {}
@@ -93,6 +93,7 @@ class SnmpWalkPlugin(PluginBase):
         rw_community = None
 
         for community in _COMMUNITIES:
+            await context.log.info(f"snmpwalk -v2c -c {community} {ip}:{port} {_MIBS['system']}", phase="plugin", host=ip)
             sys_info = await self._snmpwalk(ip, port, community, _MIBS["system"])
             if sys_info:
                 working_communities.append(community)
@@ -180,10 +181,7 @@ class SnmpWalkPlugin(PluginBase):
             proc = await loop.run_in_executor(
                 None,
                 lambda: subprocess.run(
-                    [
-                        "snmpwalk", "-v2c", "-c", community,
-                        f"{ip}:{port}", oid,
-                    ],
+                    ["snmpwalk", "-v2c", "-c", community, f"{ip}:{port}", oid],
                     capture_output=True,
                     text=True,
                     timeout=15,

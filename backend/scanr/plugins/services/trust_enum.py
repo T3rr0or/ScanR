@@ -65,7 +65,7 @@ class TrustEnumPlugin(PluginBase):
         trusts: list[dict] = []
 
         # Method 1: nltest (requires domain-joined or explicit DC)
-        trusts = await self._nltest_trusts(ip, cred)
+        trusts = await self._nltest_trusts(ip, cred, context)
 
         # Method 2: LDAP trustedDomain objects
         if not trusts and cred.get("domain"):
@@ -148,7 +148,7 @@ class TrustEnumPlugin(PluginBase):
             protocol="tcp",
         )
 
-    async def _nltest_trusts(self, dc_ip: str, cred: dict) -> list[dict]:
+    async def _nltest_trusts(self, dc_ip: str, cred: dict, context: "ScanContext") -> list[dict]:
         """Use nltest to enumerate trusts (requires domain creds)."""
         loop = asyncio.get_running_loop()
         domain = cred.get("domain", "")
@@ -160,11 +160,12 @@ class TrustEnumPlugin(PluginBase):
 
         trusts: list[dict] = []
         try:
-            # nltest /domain_trusts /server:<DC>
+            cmd = ["nltest", "/domain_trusts", f"/server:{dc_ip}"]
+            await context.log.info(f"$ {' '.join(cmd)}", phase="plugin", host=dc_ip)
             proc = await loop.run_in_executor(
                 None,
                 lambda: subprocess.run(
-                    ["nltest", "/domain_trusts", f"/server:{dc_ip}"],
+                    cmd,
                     capture_output=True, text=True, timeout=30,
                     env={**__import__("os").environ,
                          "USER": f"{domain}\\{username}",

@@ -90,10 +90,9 @@ class ScanLogger:
         await self.emit(msg, "error", phase, meta or None)
 
     async def debug(self, msg: str, phase: str = "engine", **meta) -> None:
-        # Always log locally; only emit over WS when scan profile has debug:true
+        # Always log locally; always emit over WS for command visibility
         logger.debug("[scan:%s] [%s] %s", self.scan_id[:8], phase, msg)
-        if self._debug:
-            await self.emit(msg, "debug", phase, meta or None)
+        await self.emit(msg, "debug", phase, meta or None)
 
     async def finding(self, title: str, severity: str, host: str, plugin: str, **meta) -> None:
         await self.emit(
