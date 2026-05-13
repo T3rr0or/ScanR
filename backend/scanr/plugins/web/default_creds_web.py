@@ -104,7 +104,7 @@ class DefaultCredsWebPlugin(PluginBase):
         return findings
 
     async def _try_default_creds(
-        self, ip: str, port: int, scheme: str, creds: list[tuple[str, str]], delay_s: float = 0.5
+        self, context, ip: str, port: int, scheme: str, creds: list[tuple[str, str]], delay_s: float = 0.5
     ) -> list[tuple]:
         found = []
         async with httpx.AsyncClient(verify=False, timeout=5.0, follow_redirects=True,

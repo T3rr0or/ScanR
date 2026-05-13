@@ -39,7 +39,7 @@ class KubernetesApiUnauthPlugin(PluginBase):
 
         # kubelet read-only port (10255)
         if port == 10255:
-            return await self._probe_kubelet_readonly(ip, port)
+            return await self._probe_kubelet_readonly(context, ip, port)
 
         try:
             async with httpx.AsyncClient(verify=False, timeout=5.0, **context.proxy_config()) as client:
@@ -88,7 +88,7 @@ class KubernetesApiUnauthPlugin(PluginBase):
             pass
         return None
 
-    async def _probe_kubelet_readonly(self, ip: str, port: int) -> FindingData | None:
+    async def _probe_kubelet_readonly(self, context, ip: str, port: int) -> FindingData | None:
         try:
             async with httpx.AsyncClient(verify=False, timeout=5.0, **context.proxy_config()) as client:
                 resp = await client.get(f"http://{ip}:{port}/pods")

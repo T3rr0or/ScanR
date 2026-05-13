@@ -139,7 +139,7 @@ class SubdomainEnumPlugin(PluginBase):
         sem = asyncio.Semaphore(10)
         loop = asyncio.get_running_loop()
 
-        async def check_one(fqdn: str) -> FindingData | None:
+        async def check_one(self, context, fqdn: str) -> FindingData | None:
             async with sem:
                 try:
                     # Resolve CNAME chain

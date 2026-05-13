@@ -50,12 +50,12 @@ class K8sRbacEnumPlugin(PluginBase):
         for port in k8s_ports:
             scheme = "https" if port in (6443, 8443) else "http"
             base = f"{scheme}://{host.ip}:{port}"
-            result = await self._enumerate(base, token, port)
+            result = await self._enumerate(context, base, token, port)
             if result:
                 findings.extend(result)
         return findings
 
-    async def _enumerate(self, base: str, token: str, port: int) -> list[FindingData]:
+    async def _enumerate(self, context, base: str, token: str, port: int) -> list[FindingData]:
         findings = []
         headers = {
             "Authorization": f"Bearer {token}",
