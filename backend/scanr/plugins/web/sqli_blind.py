@@ -38,7 +38,17 @@ _DIALECTS = [
     ("SQLite",   "1' AND 1=1--",    "1' AND 1=2--",    "1' AND typeof(randomblob(100000000))='blob'-- -"),
 ]
 
-_TEST_PARAMS = ["id", "q", "search", "query", "page", "cat", "user", "product", "item", "name", "pid", "uid"]
+_TEST_PARAMS = ["id", "q", "search", "query", "page", "cat", "user", "product", "item", "name", "pid", "uid", "email", "username", "password", "sortBy", "orderBy", "filter", "keyword"]
+
+# Known vulnerable endpoints to probe directly (bypasses crawler if it misses them)
+_KNOWN_ENDPOINTS = [
+    "/rest/products/search",    # Juice Shop
+    "/rest/user/login",          # Juice Shop
+    "/api/login",                # generic
+    "/api/search",               # generic
+    "/api/products",             # generic
+    "/search",                   # generic
+]
 
 
 class SqliBlindPlugin(PluginBase):
@@ -80,7 +90,7 @@ class SqliBlindPlugin(PluginBase):
             ) as client:
                 crawled = await crawl(base_url, client)
                 params = list(dict.fromkeys(crawled.get_params + _TEST_PARAMS))
-                paths = crawled.paths or ["/"]
+                paths = list(dict.fromkeys(crawled.paths + _KNOWN_ENDPOINTS)) or ["/"]
 
                 for path in paths[:5]:
                     for param in params[:8]:
