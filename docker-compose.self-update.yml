@@ -1,7 +1,7 @@
 services:
   api:
     environment:
-      SELF_UPDATE_ENABLED: "true"
+      SELF_UPDATE_ENABLED: ${SELF_UPDATE_ENABLED:-true}
       SELF_UPDATE_COMMAND: ${SELF_UPDATE_COMMAND:-docker-compose -f docker-compose.yml -f docker-compose.self-update.yml pull && docker-compose -f docker-compose.yml -f docker-compose.self-update.yml up -d}
       SELF_UPDATE_WORKDIR: /opt/scanr
     volumes:

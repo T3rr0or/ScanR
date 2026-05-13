@@ -42,15 +42,15 @@ WORKDIR /app
 # while the image build may install them under root's cache.
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
-# Install Python deps first (cached layer)
+# Install Python deps after copying package source. Editable installs need scanr/ present.
 COPY pyproject.toml .
+COPY scanr/ ./scanr/
 RUN pip install --no-cache-dir -e .
 
 # Install Playwright + Chromium (separate layer so code changes don't re-download browser)
 RUN playwright install --with-deps chromium
 
-# Copy source
-COPY scanr/ ./scanr/
+# Copy migration assets
 COPY alembic/ ./alembic/
 COPY alembic.ini .
 

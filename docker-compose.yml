@@ -55,9 +55,6 @@ services:
       - reports_data:/app/reports
       - nvd_data:/app/nvd_cache
       - wordlists_data:/app/wordlists
-      # Self-update: mount Docker socket + project dir (set SELF_UPDATE_ENABLED=true in .env)
-      - /var/run/docker.sock:/var/run/docker.sock
-      - .:/opt/scanr
     ports:
       - "8000:8000"
     command: uvicorn scanr.main:app --host 0.0.0.0 --port 8000

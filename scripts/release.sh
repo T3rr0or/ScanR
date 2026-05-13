@@ -39,9 +39,22 @@ OLD_VERSION="$(grep '^version = ' "$REPO_ROOT/backend/pyproject.toml" | head -1 
 sed -i "s/^version = \".*\"/version = \"$NEW_VERSION\"/" "$REPO_ROOT/backend/pyproject.toml"
 sed -i "s/app_version: str = \".*\"/app_version: str = \"$NEW_VERSION\"/" "$REPO_ROOT/backend/scanr/config.py"
 sed -i "s/\"version\": \".*\"/\"version\": \"$NEW_VERSION\"/" "$REPO_ROOT/frontend/package.json"
+python3 - "$NEW_VERSION" "$REPO_ROOT/frontend/package-lock.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+version = sys.argv[1]
+path = Path(sys.argv[2])
+data = json.loads(path.read_text())
+data["version"] = version
+if "packages" in data and "" in data["packages"]:
+    data["packages"][""]["version"] = version
+path.write_text(json.dumps(data, indent=2) + "\n")
+PY
 
 # ── Commit & tag ───────────────────────────────────────────────────────
-git add "$REPO_ROOT/backend/pyproject.toml" "$REPO_ROOT/backend/scanr/config.py" "$REPO_ROOT/frontend/package.json"
+git add "$REPO_ROOT/backend/pyproject.toml" "$REPO_ROOT/backend/scanr/config.py" "$REPO_ROOT/frontend/package.json" "$REPO_ROOT/frontend/package-lock.json"
 git commit -m "chore: release $NEW_VERSION"
 git tag "v$NEW_VERSION"
 

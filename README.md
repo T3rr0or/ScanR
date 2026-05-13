@@ -313,6 +313,9 @@ API docs are available at **http://localhost:8000/api/v1/docs**.
 | `CELERY_BROKER_URL` | compose-managed | Celery broker URL |
 | `CELERY_RESULT_BACKEND` | compose-managed | Celery result backend |
 | `WORDLIST_DIR` | `/app/wordlists` | Wordlist storage path |
+| `SELF_UPDATE_ENABLED` | `false` | Enables admin-only in-app update when using the self-update Compose override |
+| `SELF_UPDATE_COMMAND` | compose pull/up | Command run by the self-update action |
+| `SELF_UPDATE_WORKDIR` | `/opt/scanr` | Directory where the self-update command runs |
 
 ---
 
@@ -351,13 +354,13 @@ docker compose up -d
 
 Database migrations run automatically on API startup.
 
-Admins can optionally enable in-app updates by starting ScanR with the self-update override:
+Admins can optionally enable in-app updates by setting `SELF_UPDATE_ENABLED=true` in `.env` and starting ScanR with the self-update override:
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.self-update.yml up -d
 ```
 
-This enables the **Update now** button when a newer GitHub release is available. It mounts the host Docker socket into the API container, so only use it for trusted admin-only deployments.
+This enables the **Update now** button when a newer GitHub release is available. The override mounts the host Docker socket and project directory into the API container, so only use it for trusted admin-only deployments. The default `docker-compose.yml` does not mount the Docker socket.
 
 ---
 

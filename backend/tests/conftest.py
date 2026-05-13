@@ -12,9 +12,19 @@ os.environ.setdefault("ADMIN_PASSWORD", "testadminpass123")
 os.environ.setdefault("ADMIN_EMAIL", "admin@scanr.local")
 os.environ.setdefault("DATABASE_URL", "sqlite+aiosqlite:///./test_scanr.db")
 os.environ.setdefault("REDIS_URL", "redis://localhost:6379/0")
+os.environ.setdefault("SECURE_COOKIES", "false")
+if not os.environ.get("VAULT_KEY"):
+    from cryptography.fernet import Fernet
+    os.environ["VAULT_KEY"] = Fernet.generate_key().decode()
 
+from scanr.core.limiter import limiter  # noqa: E402
 from scanr.db.init_db import seed_admin, seed_plugins  # noqa: E402
 from scanr.main import create_app  # noqa: E402
+
+# Keep tests deterministic: endpoint-specific rate limits are covered by SlowAPI,
+# not by this app suite. Without this, repeated auth fixture logins can trip
+# /auth/login's 10/minute limit and make unrelated tests fail.
+limiter.enabled = False
 
 # Patch Redis with fakeredis so auth (jti revocation) tests work without a real Redis
 import fakeredis.aioredis as _fake_aioredis

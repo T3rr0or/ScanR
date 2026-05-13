@@ -61,3 +61,9 @@ def get_enabled_plugins(enabled_ids: set[str]) -> list[PluginBase]:
 def get_all_plugin_ids() -> list[str]:
     _discover_plugins()
     return list(_registry.keys())
+
+
+def get_all_plugin_classes() -> dict[str, type[PluginBase]]:
+    """Return discovered plugin classes keyed by plugin id."""
+    _discover_plugins()
+    return dict(_registry)

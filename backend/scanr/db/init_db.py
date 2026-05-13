@@ -193,6 +193,27 @@ async def seed_plugins(session: AsyncSession) -> None:
         dict(id="services.trust_enum", name="AD Domain / Forest Trust Enumeration", category="services", default_severity="medium", requires_auth=True, description="Enumerate Active Directory trust relationships between domains and forests to map cross-domain attack paths"),
     ]
 
+    # Keep metadata list backward-compatible, but auto-seed any discovered
+    # PluginBase subclasses not listed above so new built-in plugins are enabled
+    # without editing this long registry by hand.
+    try:
+        from scanr.core.plugin_manager import get_all_plugin_classes
+        known_ids = {p["id"] for p in BUILTIN_PLUGINS}
+        for pid, cls in sorted(get_all_plugin_classes().items()):
+            if pid in known_ids:
+                continue
+            BUILTIN_PLUGINS.append(dict(
+                id=pid,
+                name=getattr(cls, "name", pid),
+                category=getattr(getattr(cls, "category", None), "value", str(getattr(cls, "category", "services"))),
+                default_severity=getattr(getattr(cls, "severity", None), "value", str(getattr(cls, "severity", "medium"))),
+                cve_ids=getattr(cls, "cve_ids", None),
+                description=getattr(cls, "description", ""),
+                requires_auth=getattr(cls, "requires_auth", False),
+            ))
+    except Exception as exc:
+        logger.warning("Could not auto-discover plugin metadata: %s", exc)
+
     for p in BUILTIN_PLUGINS:
         cve_ids = _norm_cve(p.get("cve_ids"))
         result = await session.execute(select(Plugin).where(Plugin.id == p["id"]))
