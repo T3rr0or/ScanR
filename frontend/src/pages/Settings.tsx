@@ -136,16 +136,31 @@ function ProfileSection() {
 
 /* ── System ──────────────────────────────────────────────── */
 function SystemSection() {
+  const qc = useQueryClient()
+
   const { data: ver } = useQuery({
     queryKey: ['system-version'],
     queryFn: () => api.get('/system/version').then(r => r.data),
-    refetchInterval: 300_000, // every 5 min
+    refetchInterval: 300_000,
+  })
+
+  const { data: upStatus } = useQuery({
+    queryKey: ['update-status'],
+    queryFn: () => api.get('/system/update/status').then(r => r.data),
+    refetchInterval: (q) => q.state.data?.state === 'running' || q.state.data?.state === 'queued' ? 2000 : false,
+  })
+
+  const updateMut = useMutation({
+    mutationFn: () => api.post('/system/update'),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['update-status'] }),
   })
 
   const updateAvailable = ver?.update_available
   const latestVersion = ver?.latest
   const currentVersion = ver?.current
   const releaseUrl = ver?.release_url
+  const selfUpdateEnabled = ver?.self_update_enabled
+  const updateState = upStatus?.state
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -159,7 +174,7 @@ function SystemSection() {
               fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 12,
               background: 'oklch(0.25 0.1 60 / 0.3)', color: 'var(--sev-medium)',
             }}>
-              Update available: v{latestVersion}
+              v{latestVersion} available
             </span>
           )}
           {!updateAvailable && ver && (
@@ -169,39 +184,87 @@ function SystemSection() {
 
         {updateAvailable && (
           <>
-            <div style={{
-              background: 'var(--bg-1)', border: '1px solid var(--border)', borderRadius: 8,
-              padding: 14, marginTop: 8, marginBottom: 12,
-            }}>
-              <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-0)', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
-                <Terminal size={13} />
-                Update via Docker Compose
-              </div>
+            {/* Self-update button (when Docker socket mounted) */}
+            {selfUpdateEnabled ? (
               <div style={{
-                background: 'var(--bg-0)', border: '1px solid var(--border)', borderRadius: 6,
-                padding: '10px 14px',
+                background: 'var(--bg-1)', border: '1px solid var(--border)', borderRadius: 8,
+                padding: 14, marginTop: 8,
               }}>
-                <code style={{ fontSize: 12, color: 'var(--text-1)', whiteSpace: 'pre-wrap' }}>
+                {/* Progress display */}
+                {updateState === 'queued' && (
+                  <div style={{ fontSize: 12, color: 'var(--text-2)' }}>⏳ Update queued — starting soon…</div>
+                )}
+                {updateState === 'running' && (
+                  <div>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--accent)', marginBottom: 6 }}>🔄 Updating… ScanR may restart briefly.</div>
+                    <pre style={{
+                      fontSize: 10, color: 'var(--text-3)', background: 'var(--bg-0)',
+                      padding: 8, borderRadius: 4, maxHeight: 200, overflow: 'auto',
+                      whiteSpace: 'pre-wrap', wordBreak: 'break-all',
+                    }}>
+                      {upStatus?.log || 'Running update command…'}
+                    </pre>
+                  </div>
+                )}
+                {updateState === 'succeeded' && (
+                  <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--ok)' }}>
+                    ✅ Update complete. ScanR restarted with v{latestVersion}.
+                    <button onClick={() => qc.invalidateQueries({ queryKey: ['system-version'] })} className="btn btn-ghost btn-sm" style={{ marginLeft: 8, fontSize: 11 }}>Refresh</button>
+                  </div>
+                )}
+                {updateState === 'failed' && (
+                  <div>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--sev-high)', marginBottom: 4 }}>❌ Update failed</div>
+                    <pre style={{ fontSize: 10, color: 'var(--sev-high)', padding: '8px', background: 'var(--bg-0)', borderRadius: 4, maxHeight: 200, overflow: 'auto', whiteSpace: 'pre-wrap' }}>
+                      {upStatus?.message}
+                      {upStatus?.log}
+                    </pre>
+                  </div>
+                )}
+                {(updateState === 'idle' || !updateState) && (
+                  <button
+                    className="btn btn-primary"
+                    onClick={() => updateMut.mutate()}
+                    disabled={updateMut.isPending}
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                  >
+                    <RefreshCw size={14} style={{ animation: updateMut.isPending ? 'spin 1s linear infinite' : 'none' }} />
+                    {updateMut.isPending ? 'Starting…' : 'Update Now'}
+                  </button>
+                )}
+              </div>
+            ) : (
+              /* Fallback: copy-paste for manual Docker Compose update */
+              <div style={{
+                background: 'var(--bg-1)', border: '1px solid var(--border)', borderRadius: 8,
+                padding: 14, marginTop: 8,
+              }}>
+                <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-0)', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <Terminal size={13} />
+                  Update via terminal
+                </div>
+                <div style={{
+                  background: 'var(--bg-0)', border: '1px solid var(--border)', borderRadius: 6,
+                  padding: '10px 14px',
+                }}>
+                  <code style={{ fontSize: 12, color: 'var(--text-1)', whiteSpace: 'pre-wrap' }}>
 {`cd /opt/scanr
 docker compose pull
 docker compose up -d`}
-                </code>
+                  </code>
+                </div>
+                <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+                  <CopyButton text="cd /opt/scanr && docker compose pull && docker compose up -d" />
+                  {releaseUrl && (
+                    <a href={releaseUrl} target="_blank" rel="noopener noreferrer"
+                      className="btn btn-ghost btn-sm"
+                      style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 12, textDecoration: 'none' }}>
+                      <ExternalLink size={12} /> Release Notes
+                    </a>
+                  )}
+                </div>
               </div>
-              <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
-                <CopyButton text="cd /opt/scanr && docker compose pull && docker compose up -d" />
-                {releaseUrl && (
-                  <a
-                    href={releaseUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="btn btn-ghost btn-sm"
-                    style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 12, textDecoration: 'none' }}
-                  >
-                    <ExternalLink size={12} /> Release Notes
-                  </a>
-                )}
-              </div>
-            </div>
+            )}
           </>
         )}
       </div>
@@ -210,9 +273,9 @@ docker compose up -d`}
       <div className="panel" style={{ padding: 16 }}>
         <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-0)', marginBottom: 8 }}>Deployment Info</div>
         <div style={{ fontSize: 12, color: 'var(--text-2)', display: 'flex', flexDirection: 'column', gap: 4 }}>
-          <div>• Images pulled from <code style={{ fontSize: 11 }}>ghcr.io/t3rr0or/scanr-*</code></div>
-          <div>• Database migrations run automatically on startup</div>
-          <div>• Restart with: <code style={{ fontSize: 11 }}>docker compose restart</code></div>
+          <div>• Images: <code style={{ fontSize: 11 }}>ghcr.io/t3rr0or/scanr-*</code></div>
+          <div>• Migrations run automatically on startup</div>
+          <div>• Self-update: {selfUpdateEnabled ? <span style={{color:'var(--ok)'}}>enabled</span> : <span style={{color:'var(--text-3)'}}>disabled (mount Docker socket to enable)</span>}</div>
         </div>
       </div>
     </div>
