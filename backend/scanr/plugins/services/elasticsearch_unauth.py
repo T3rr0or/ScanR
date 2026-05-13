@@ -25,14 +25,14 @@ class ElasticsearchUnauthPlugin(PluginBase):
     async def check(self, context: "ScanContext", host: "Host") -> list[FindingData]:
         findings = []
         for port in host.ports:
-            if port.number not in (9200, 9300) or port.state != "open":
+            if port.number not in (9200, 9300):
                 continue
-            result = await self._probe(host.ip, port.number)
+            result = await self._probe(host.ip, port.number, context)
             if result:
                 findings.append(result)
         return findings
 
-    async def _probe(self, ip: str, port: int) -> FindingData | None:
+    async def _probe(self, ip: str, port: int, context: "ScanContext") -> FindingData | None:
         try:
             async with httpx.AsyncClient(verify=False, timeout=5.0, **context.proxy_config()) as client:
                 resp = await client.get(f"http://{ip}:{port}/")

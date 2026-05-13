@@ -27,12 +27,12 @@ class EtcdUnauthPlugin(PluginBase):
         for port in host.ports:
             if port.number not in (2379, 2380) or port.state != "open":
                 continue
-            result = await self._probe(host.ip, port.number)
+            result = await self._probe(context, host.ip, port.number)
             if result:
                 findings.append(result)
         return findings
 
-    async def _probe(self, ip: str, port: int) -> FindingData | None:
+    async def _probe(self, context, ip: str, port: int) -> FindingData | None:
         for scheme in ("https", "http"):
             base = f"{scheme}://{ip}:{port}"
             try:
