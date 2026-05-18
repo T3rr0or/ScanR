@@ -600,10 +600,38 @@ class ScanEngine:
             nmap = NmapWrapper()
             host_data = await nmap.scan_host(ip, context, known_ports=known_ports)
             if not host_data:
-                await context.log.warn(f"{ip} — no response from nmap", phase="portscan", host=ip)
-                return
+                if known_ports:
+                    # nmap got no response but masscan confirmed these ports — use masscan data
+                    await context.log.warn(
+                        f"{ip} — nmap unresponsive; using {len(known_ports)} masscan-confirmed port(s)",
+                        phase="portscan", host=ip,
+                    )
+                    host_data = {
+                        "address": ip,
+                        "ports": [
+                            {"number": p, "protocol": "tcp", "state": "open", "reason": "syn-ack"}
+                            for p in sorted(known_ports)
+                        ],
+                    }
+                else:
+                    await context.log.warn(f"{ip} — no response from nmap", phase="portscan", host=ip)
+                    return
 
             open_ports = [p for p in host_data.get("ports", []) if p["state"] == "open"]
+            # nmap returned 0 open ports but masscan confirmed some — merge masscan ports
+            if not open_ports and known_ports:
+                existing = {p["number"] for p in host_data.get("ports", [])}
+                for port_num in sorted(known_ports):
+                    if port_num not in existing:
+                        host_data.setdefault("ports", []).append(
+                            {"number": port_num, "protocol": "tcp", "state": "open", "reason": "syn-ack"}
+                        )
+                open_ports = [p for p in host_data["ports"] if p["state"] == "open"]
+                if open_ports:
+                    await context.log.warn(
+                        f"{ip} — nmap found 0 open ports; using {len(open_ports)} masscan-confirmed port(s)",
+                        phase="portscan", host=ip,
+                    )
             await context.log.info(
                 f"{ip} — {len(open_ports)} open port(s): "
                 + ", ".join(str(p["number"]) for p in open_ports[:20])

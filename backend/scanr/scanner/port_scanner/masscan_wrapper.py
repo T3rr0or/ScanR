@@ -182,12 +182,14 @@ class MasscanWrapper:
         return open_ports
 
     def _parse_json(self, path: str) -> dict[str, list[int]]:
-        result: dict[str, list[int]] = {}
+        # Use sets to deduplicate — masscan reports the same port multiple times
+        # when a host has multiple interfaces or when retry packets get ACK'd twice.
+        result: dict[str, set[int]] = {}
         try:
             with open(path) as f:
                 content = f.read().strip()
             if not content:
-                return result
+                return {}
             # masscan outputs JSONL (one object per line) or a JSON array with trailing comma
             # Try array parse first, then fall back to JSONL
             content = content.rstrip(",").strip()
@@ -209,10 +211,10 @@ class MasscanWrapper:
                     if port_info.get("status") == "open":
                         port_num = port_info.get("port")
                         if ip and port_num is not None:
-                            result.setdefault(ip, []).append(int(port_num))
+                            result.setdefault(ip, set()).add(int(port_num))
         except Exception as exc:
             logger.debug("masscan JSON parse error: %s", exc)
-        return result
+        return {ip: sorted(ports) for ip, ports in result.items()}
 
     def _rate_from_profile(self, context: "ScanContext") -> int:
         try:
