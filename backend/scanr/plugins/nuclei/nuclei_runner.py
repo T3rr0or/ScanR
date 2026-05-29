@@ -72,6 +72,11 @@ class NucleiRunnerPlugin(PluginBase):
             "-rate-limit", "50",
         ]
 
+        # Inject auth headers from scan credentials
+        auth_headers = context.web_auth_headers()
+        for name, value in auth_headers.items():
+            cmd.extend(["-H", f"{name}: {value}"])
+
         await context.log.info(f"$ {' '.join(cmd)}", phase="plugin")
         try:
             proc = await asyncio.create_subprocess_exec(
@@ -81,6 +86,11 @@ class NucleiRunnerPlugin(PluginBase):
             )
             stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=120.0)
         except asyncio.TimeoutError:
+            try:
+                proc.kill()
+                await proc.wait()
+            except Exception:
+                pass
             logger.warning("nuclei timed out for %s", url)
             return []
         except Exception as exc:

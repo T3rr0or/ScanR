@@ -37,26 +37,32 @@ class NmapWrapper:
         port_cfg = context.port_scanning_config()
         perf_cfg = context.performance_config()
         service_detection = context.profile_json().get("enumeration", {}).get("service_detection", True)
+        script_arg = ""
+        if service_detection:
+            # Run NSE vuln scripts on detected services (smb-vuln-*, http-*, ssl-*, etc.)
+            script_arg = "--script vuln"
         ping_arg = "-Pn" if port_cfg["firewall_strategy"] == "skip_ping" else ""
         discovery_cfg = context.discovery_config()
         if discovery_cfg.get("mode") == "skip" or discovery_cfg.get("assume_up"):
             ping_arg = "-Pn"
         host_timeout = int(perf_cfg.get("timeout") or 60)
+        timing = int(port_cfg.get("timing", 4))
         euid = os.geteuid()
 
-        scanners: list[str] = port_cfg.get("scanners", ["tcp_connect"])
+        scanners: list[str] = port_cfg.get("scanners") or ["tcp_connect"]
         merged: dict[str, Any] | None = None
 
         for scanner in scanners:
             args: str
             if scanner == "udp":
-                args = f"-sU -sV -T4 {ping_arg} {port_arg} --host-timeout {host_timeout}s".strip()
+                svc = "-sV" if service_detection else ""
+                args = f"-sU {svc} {script_arg} -T{timing} {ping_arg} {port_arg} --host-timeout {host_timeout}s".strip()
             elif scanner == "tcp_connect":
                 service = "-sV" if service_detection else ""
-                args = f"-sT {service} -T4 {ping_arg} {port_arg} --host-timeout {host_timeout}s".strip()
+                args = f"-sT {service} {script_arg} -T{timing} {ping_arg} {port_arg} --host-timeout {host_timeout}s".strip()
             else:
                 service = "-sV" if service_detection else ""
-                args = f"-sS {service} -O --osscan-guess -T4 {ping_arg} {port_arg} --host-timeout {host_timeout}s".strip()
+                args = f"-sS {service} {script_arg} -O --osscan-guess --traceroute -T{timing} {ping_arg} {port_arg} --host-timeout {host_timeout}s".strip()
 
             cmd = f"nmap {args} {ip}"
             await context.log.info(f"$ {cmd}", phase="portscan", host=ip)
@@ -67,7 +73,7 @@ class NmapWrapper:
                 if scanner == "syn":
                     # Fallback to TCP connect on SYN failure
                     service = "-sV" if service_detection else ""
-                    fallback_args = f"-sT {service} -T4 {ping_arg} {port_arg} --host-timeout {host_timeout}s".strip()
+                    fallback_args = f"-sT {service} -T{timing} {ping_arg} {port_arg} --host-timeout {host_timeout}s".strip()
                     await context.log.info(f"$ nmap {fallback_args} {ip} (TCP fallback)", phase="portscan", host=ip)
                     try:
                         result = await self._run_nmap(ip, fallback_args)
@@ -108,7 +114,7 @@ class NmapWrapper:
         return merged
 
     async def _run_nmap(self, ip: str, args: str) -> dict[str, Any] | None:
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         return await asyncio.wait_for(
             loop.run_in_executor(None, self._nmap_sync, ip, args),
             timeout=90.0,
@@ -142,13 +148,31 @@ class NmapWrapper:
             "ports": [],
         }
 
-        # OS fingerprinting
+        # OS fingerprinting — capture all matches, not just #1
         if "osmatch" in host and host["osmatch"]:
-            best = host["osmatch"][0]
-            result["os_name"] = best.get("name")
-            result["os_accuracy"] = int(best.get("accuracy", 0))
-            if best.get("osclass"):
-                result["os_family"] = best["osclass"][0].get("osfamily")
+            result["os_matches"] = [
+                {
+                    "name": m.get("name"),
+                    "accuracy": int(m.get("accuracy", 0)),
+                    "family": (m.get("osclass") or [{}])[0].get("osfamily") if m.get("osclass") else None,
+                }
+                for m in host["osmatch"]
+            ]
+            if result["os_matches"]:
+                result["os_name"] = result["os_matches"][0]["name"]
+                result["os_accuracy"] = result["os_matches"][0]["accuracy"]
+                result["os_family"] = result["os_matches"][0]["family"]
+
+        # Uptime guess
+        if host.get("uptime"):
+            result["uptime_seconds"] = int(host["uptime"].get("seconds", 0))
+
+        # Traceroute
+        if host.get("trace"):
+            result["traceroute"] = [
+                {"ttl": h.get("ttl"), "ip": h.get("ipaddr"), "rtt": h.get("srtt")}
+                for h in host["trace"].get("hops", [])
+            ]
 
         # Ports
         for proto in host.all_protocols():

@@ -28,6 +28,7 @@ export interface ScanCreate {
   description?: string; credential_id?: string
   profile_json?: string
   credentials?: ScanCredentialIn[]
+  exclusions?: string[]
 }
 
 export const scansApi = {

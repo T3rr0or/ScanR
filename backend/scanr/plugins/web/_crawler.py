@@ -4,9 +4,13 @@ from __future__ import annotations
 import re
 from collections import deque
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 from urllib.parse import urljoin, urlparse, parse_qs
 
 import httpx
+
+if TYPE_CHECKING:
+    from scanr.core.context import ScanContext
 
 _HREF_RE = re.compile(r'href=["\']([^"\'#>]+)["\']', re.I)
 _ACTION_RE = re.compile(r'action=["\']([^"\'#>]*)["\']', re.I)
@@ -15,6 +19,18 @@ _SELECT_RE = re.compile(r'<select[^>]+name=["\']([^"\']+)["\']', re.I)
 _TEXTAREA_RE = re.compile(r'<textarea[^>]+name=["\']([^"\']+)["\']', re.I)
 
 _MAX_CRAWL = 15
+
+
+def create_web_client(context: "ScanContext | None" = None, with_limits: bool = False) -> httpx.AsyncClient:
+    """Create an httpx client with auth headers from scan credentials."""
+    kwargs: dict = {"verify": False, "timeout": 10.0, "follow_redirects": False}
+    if with_limits:
+        kwargs["limits"] = httpx.Limits(max_connections=30, max_keepalive_connections=20)
+    if context:
+        auth_headers = context.web_auth_headers()
+        if auth_headers:
+            kwargs["headers"] = auth_headers
+    return httpx.AsyncClient(**kwargs)
 
 
 @dataclass

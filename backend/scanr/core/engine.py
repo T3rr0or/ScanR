@@ -206,6 +206,20 @@ class ScanEngine:
     async def _run(self, scan_log: ScanLogger) -> None:
         await scan_log.info("Scan engine started", phase="engine")
 
+        # Check tool availability and warn about missing binaries
+        import shutil as _shutil
+        if not _shutil.which("nuclei"):
+            await scan_log.warn(
+                "Nuclei binary not found — Nuclei template scanning will be skipped. "
+                "Install with: nuclei -update-templates",
+                phase="engine",
+            )
+        if not _shutil.which("masscan"):
+            await scan_log.warn(
+                "masscan binary not found — bulk port discovery will use nmap instead",
+                phase="engine",
+            )
+
         # Load scan + targets
         result = await self.db.execute(
             select(Scan).where(Scan.id == self.scan_id)

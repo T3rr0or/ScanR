@@ -7,7 +7,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   X, RefreshCw, Terminal, AlertTriangle, Camera, Server, Network, Shield,
   ChevronLeft, GitCompare, StopCircle, CheckSquare, Square,
-  ExternalLink, Copy, Link2, RotateCcw,
+  ExternalLink, Copy, Link2, RotateCcw, Plus,
 } from 'lucide-react'
 import { scansApi } from '@/api/scans'
 import { findingsApi, type Finding } from '@/api/findings'
@@ -259,6 +259,28 @@ function FindingsTab({ findings, scanId, onGoToHost }: { findings: Finding[]; sc
   const [detailFinding, setDetailFinding] = useState<Finding | null>(null)
   const [sevFilter, setSevFilter] = useState<string>('all')
   const [triageFilter, setTriageFilter] = useState<'all' | 'open' | 'false_positive' | 'accepted_risk'>('all')
+  const [search, setSearch] = useState('')
+  const [showManualForm, setShowManualForm] = useState(false)
+  const [manualTitle, setManualTitle] = useState('')
+  const [manualDesc, setManualDesc] = useState('')
+  const [manualSev, setManualSev] = useState('medium')
+  const [manualEvidence, setManualEvidence] = useState('')
+  const [manualRemediation, setManualRemediation] = useState('')
+
+  const manualMut = useMutation({
+    mutationFn: () => api.post(`/scans/${scanId}/findings/manual`, {
+      title: manualTitle,
+      description: manualDesc,
+      severity: manualSev,
+      evidence: manualEvidence || undefined,
+      remediation: manualRemediation || undefined,
+    }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['findings', scanId] })
+      setShowManualForm(false)
+      setManualTitle(''); setManualDesc(''); setManualEvidence(''); setManualRemediation('')
+    },
+  })
 
   const updateMut = useMutation({
     mutationFn: ({ id, data }: { id: string; data: Parameters<typeof findingsApi.update>[1] }) => findingsApi.update(id, data),
@@ -279,6 +301,11 @@ function FindingsTab({ findings, scanId, onGoToHost }: { findings: Finding[]; sc
     if (triageFilter === 'open') return !f.false_positive && f.remediation_status === 'open'
     if (triageFilter === 'false_positive') return f.false_positive
     if (triageFilter === 'accepted_risk') return f.remediation_status === 'accepted_risk'
+    if (search.trim()) {
+      const q = search.toLowerCase()
+      const haystack = [f.title, f.description, f.plugin_id, f.host_ip, f.evidence, ...(f.cve_ids || [])].join(' ').toLowerCase()
+      if (!haystack.includes(q)) return false
+    }
     return true
   })
 
@@ -298,6 +325,20 @@ function FindingsTab({ findings, scanId, onGoToHost }: { findings: Finding[]; sc
       <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
         {/* Filters */}
         <div style={{ display: 'flex', gap: 6, padding: '10px 16px', borderBottom: '1px solid var(--border)', flexShrink: 0, flexWrap: 'wrap', alignItems: 'center', background: 'var(--bg-1)' }}>
+          <input
+            className="input"
+            placeholder="Search title, CVE, host IP, evidence…"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            style={{ padding: '5px 10px', fontSize: 11, width: 260, flexShrink: 0 }}
+          />
+          <button
+            className="btn btn-sm"
+            onClick={() => setShowManualForm(f => !f)}
+            style={{ marginLeft: 'auto' }}
+          >
+            <Plus size={11} /> Add Finding
+          </button>
           {['all', 'critical', 'high', 'medium', 'low', 'info'].map(s => {
             const n = sevCounts[s] ?? 0
             return (
@@ -335,6 +376,31 @@ function FindingsTab({ findings, scanId, onGoToHost }: { findings: Finding[]; sc
             </div>
           )}
         </div>
+
+        {/* Manual finding form */}
+        {showManualForm && (
+          <div style={{ padding: '10px 16px', borderBottom: '1px solid var(--border)', background: 'var(--bg-0)', display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+              <input className="input" placeholder="Title" value={manualTitle} onChange={e => setManualTitle(e.target.value)} style={{ flex: 1, minWidth: 200 }} />
+              <select value={manualSev} onChange={e => setManualSev(e.target.value)} className="select-field" style={{ width: 110 }}>
+                <option value="critical">Critical</option>
+                <option value="high">High</option>
+                <option value="medium">Medium</option>
+                <option value="low">Low</option>
+                <option value="info">Info</option>
+              </select>
+            </div>
+            <textarea className="textarea" rows={2} placeholder="Description" value={manualDesc} onChange={e => setManualDesc(e.target.value)} />
+            <textarea className="textarea" rows={2} placeholder="Evidence (HTTP request/response, screenshots description, etc.)" value={manualEvidence} onChange={e => setManualEvidence(e.target.value)} />
+            <textarea className="textarea" rows={2} placeholder="Remediation guidance (optional)" value={manualRemediation} onChange={e => setManualRemediation(e.target.value)} />
+            <div style={{ display: 'flex', gap: 6 }}>
+              <button className="btn btn-primary btn-sm" disabled={!manualTitle || !manualDesc || manualMut.isPending} onClick={() => manualMut.mutate()}>
+                {manualMut.isPending ? 'Saving…' : 'Save Finding'}
+              </button>
+              <button className="btn btn-ghost btn-sm" onClick={() => setShowManualForm(false)}>Cancel</button>
+            </div>
+          </div>
+        )}
 
         {/* Table */}
         <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
@@ -510,6 +576,19 @@ function FindingDrawer({ finding, onClose, onUpdate }: { finding: Finding; onClo
           </DrawerSection>
         )}
 
+        {(finding.first_seen_scan_id || finding.last_seen_scan_id) && (
+          <DrawerSection title="History">
+            <div style={{ fontSize: 11, lineHeight: 1.8, color: 'var(--text-2)' }}>
+              <div>Created: <strong>{new Date(finding.created_at).toLocaleDateString()}</strong></div>
+              {finding.first_seen_scan_id && finding.first_seen_scan_id !== finding.last_seen_scan_id && (
+                <div style={{ color: 'var(--accent)', marginTop: 4 }}>
+                  This finding has appeared in multiple scans
+                </div>
+              )}
+            </div>
+          </DrawerSection>
+        )}
+
         <div style={{ display: 'flex', gap: 6, paddingTop: 10, borderTop: '1px solid var(--border)' }}>
           <button
             className="btn btn-sm"
@@ -536,6 +615,31 @@ function FindingDrawer({ finding, onClose, onUpdate }: { finding: Finding; onClo
 function EvidenceBlock({ evidence }: { evidence: string }) {
   const hasHttp = evidence.includes('=== REQUEST ===')
   const copy = () => navigator.clipboard.writeText(evidence)
+  const copyAsCurl = (requestText: string) => {
+    const lines = requestText.split('\n')
+    const firstLine = lines[0]?.trim() || 'GET / HTTP/1.1'
+    const [method, path] = firstLine.split(' ')
+    const curlHeaders: string[] = []
+    let host = 'localhost'
+    let body = ''
+    let inBody = false
+    for (let i = 1; i < lines.length; i++) {
+      const line = lines[i]
+      if (inBody) { body += (body ? '\n' : '') + line; continue }
+      if (!line.trim()) { inBody = true; continue }
+      const colon = line.indexOf(':')
+      if (colon > 0) {
+        curlHeaders.push(`-H '${line.trim()}'`)
+        if (line.toLowerCase().startsWith('host:')) {
+          host = line.substring(colon + 1).trim()
+        }
+      }
+    }
+    const curlMethod = method !== 'GET' ? ` -X ${method}` : ''
+    const curlBody = body ? ` -d '${body.replace(/'/g, "'\\''")}'` : ''
+    const url = `https://${host}${path || '/'}`
+    navigator.clipboard.writeText(`curl${curlMethod}${curlHeaders.length ? ' ' + curlHeaders.join(' ') : ''}${curlBody} '${url}'`)
+  }
   const preStyle: React.CSSProperties = {
     margin: 0, fontSize: 10.5, background: 'oklch(0.12 0.008 255)', color: 'var(--text-1)',
     padding: 10, borderRadius: 6, border: '1px solid var(--border)',
@@ -550,7 +654,8 @@ function EvidenceBlock({ evidence }: { evidence: string }) {
           <span style={{ fontSize: 10, fontWeight: 600, color: 'var(--accent)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Request</span>
           <span style={{ fontSize: 10, color: 'var(--text-3)' }}>→</span>
           <span style={{ fontSize: 10, fontWeight: 600, color: 'var(--ok)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Response</span>
-          <button onClick={copy} className="btn btn-ghost btn-sm" style={{ marginLeft: 'auto', fontSize: 10 }}>Copy</button>
+          <button onClick={() => copyAsCurl(reqText)} className="btn btn-ghost btn-sm" style={{ marginLeft: 'auto', fontSize: 10 }}>Copy as curl</button>
+          <button onClick={copy} className="btn btn-ghost btn-sm" style={{ fontSize: 10 }}>Copy raw</button>
         </div>
         <pre style={preStyle}>{reqText}</pre>
         {resPart && <pre style={{ ...preStyle, marginTop: 6 }}>{resPart}</pre>}

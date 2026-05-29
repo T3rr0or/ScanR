@@ -26,6 +26,7 @@ class ScanCreate(BaseModel):
     profile_json: str | None = None
     credential_id: str | None = None          # keep for backward compat
     credentials: list[ScanCredentialIn] = []  # new: inline credentials
+    exclusions: list[str] = []                # IPs/CIDRs/hosts to skip
 
 
 class ScanCredentialRead(BaseModel):

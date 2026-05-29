@@ -1,13 +1,13 @@
 import { Check } from 'lucide-react'
 
 export const ALL_CATEGORIES = [
-  { id: 'network',  label: 'Network',  desc: 'Port inventory, ICMP' },
-  { id: 'web',      label: 'Web',      desc: 'Headers, CORS, redirects, sensitive files, dir brute-force' },
-  { id: 'ssl_tls',  label: 'SSL/TLS',  desc: 'Certs, ciphers, protocols, Heartbleed, POODLE' },
-  { id: 'services', label: 'Services', desc: 'FTP, SMTP, RDP, Redis, MongoDB, Docker, Kubernetes' },
-  { id: 'ssh',      label: 'SSH',      desc: 'Algorithms, version check, default credentials' },
-  { id: 'cve',      label: 'CVE',      desc: 'Match service versions against NVD CVE database' },
-  { id: 'nuclei',   label: 'Nuclei',   desc: 'Template-based CVE & misconfiguration scanner' },
+  { id: 'network',  label: 'Network',  desc: 'Discovers live hosts, open ports, and runs ICMP ping sweeps' },
+  { id: 'web',      label: 'Web',      desc: 'Checks HTTP headers, CORS, redirects, exposed files, and web vulns' },
+  { id: 'ssl_tls',  label: 'SSL/TLS',  desc: 'Audits TLS certificates, cipher strength, and protocol versions' },
+  { id: 'services', label: 'Services', desc: 'Probes FTP, SMTP, RDP, Redis, MongoDB, Docker, Kubernetes' },
+  { id: 'ssh',      label: 'SSH',      desc: 'Checks SSH server version, algorithms, and weak keys' },
+  { id: 'cve',      label: 'CVE',      desc: 'Matches detected service versions against the public CVE database' },
+  { id: 'nuclei',   label: 'Nuclei',   desc: 'Runs pre-built vulnerability templates from the Nuclei project' },
 ]
 
 export const PORT_RANGES = [
@@ -45,6 +45,7 @@ export interface ProfileConfig {
   port_scanning: {
     scanners: ('tcp_connect' | 'syn' | 'udp')[]
     firewall_strategy: 'default' | 'skip_ping'
+    timing: number
   }
   enumeration: {
     service_detection: boolean
@@ -75,7 +76,7 @@ const DEFAULT_PROFILE: ProfileConfig = {
   depth_level: 'balanced',
   performance_profile: 'normal',
   port_range: 'top-1000',
-  categories: ALL_CATEGORIES.map(x => x.id),
+  categories: ['network', 'web', 'ssl_tls'],
   discovery: {
     icmp: true,
     tcp: true,
@@ -89,6 +90,7 @@ const DEFAULT_PROFILE: ProfileConfig = {
   port_scanning: {
     scanners: ['tcp_connect' as const],
     firewall_strategy: 'default' as const,
+    timing: 4,
   },
   enumeration: {
     service_detection: true,
@@ -364,14 +366,27 @@ export function ProfileEditor({
               ))}
             </div>
           </Field>
+          <Field label="Nmap timing">
+            <select
+              className="select-field"
+              value={config.port_scanning.timing}
+              onChange={e => onChange({ ...config, port_scanning: { ...config.port_scanning, timing: Number(e.target.value) } })}
+            >
+              <option value={1}>T1 — Paranoid (IDS evasion)</option>
+              <option value={2}>T2 — Sneaky</option>
+              <option value={3}>T3 — Polite</option>
+              <option value={4}>T4 — Normal (default)</option>
+              <option value={5}>T5 — Insane (fast LAN)</option>
+            </select>
+          </Field>
         </EditorGroup>
       )}
 
       <EditorGroup title="Discovery">
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-          <Toggle label="ICMP" checked={config.discovery.icmp} onChange={icmp => onChange({ ...config, discovery: { ...config.discovery, icmp } })} />
-          <Toggle label="TCP probes" checked={config.discovery.tcp} onChange={tcp => onChange({ ...config, discovery: { ...config.discovery, tcp } })} />
-          <Toggle label="ARP (limited/local)" checked={config.discovery.arp} onChange={arp => onChange({ ...config, discovery: { ...config.discovery, arp } })} />
+          <Toggle label="ICMP ping — checks if host responds (like 'ping' command)" checked={config.discovery.icmp} onChange={icmp => onChange({ ...config, discovery: { ...config.discovery, icmp } })} />
+          <Toggle label="TCP probes — connects to common ports to see if host is up" checked={config.discovery.tcp} onChange={tcp => onChange({ ...config, discovery: { ...config.discovery, tcp } })} />
+          <Toggle label="ARP (local network — limited support)" checked={config.discovery.arp} onChange={arp => onChange({ ...config, discovery: { ...config.discovery, arp } })} />
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
           <Field label="Discovery mode">

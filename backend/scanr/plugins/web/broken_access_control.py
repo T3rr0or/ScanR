@@ -81,23 +81,24 @@ class BrokenAccessControlPlugin(PluginBase):
                 continue
             scheme = web_scheme(port)
             base_url = f"{scheme}://{host.ip}:{port.number}"
-            port_findings = await self._test(context, base_url, port.number)
+            port_findings = await self._test(base_url, port.number, context)
             findings.extend(port_findings)
         return findings
 
-    async def _test(self, context, base_url: str, port: int) -> list[FindingData]:
+    async def _test(self, base_url: str, port: int, context: "ScanContext") -> list[FindingData]:
         results = []
         try:
-            # No cookies, no auth headers — pure unauthenticated request
+            from scanr.plugins.web._crawler import create_web_client as _cwc
+            # First check unauthenticated (detect broken access control)
+            import httpx
             async with httpx.AsyncClient(
                 verify=False, timeout=6.0, follow_redirects=False,
-                headers={"User-Agent": "Mozilla/5.0 (compatible; ScanR/0.6)"},
-                cookies={},
-                **context.proxy_config()
-            ) as client:
+                headers={"User-Agent": "Mozilla/5.0 (compatible; ScanR/0.9)"},
+            ) as unauth_client, _cwc(context) as auth_client:
                 for path in _PROTECTED_PATHS:
                     try:
-                        resp = await client.get(f"{base_url}{path}")
+                        # Check unauthenticated first — if accessible without auth, it's broken
+                        resp = await unauth_client.get(f"{base_url}{path}")
                         if resp.status_code != 200:
                             continue
                         body = resp.text
@@ -107,13 +108,19 @@ class BrokenAccessControlPlugin(PluginBase):
                         # If response looks like a login page, skip — it's not broken access control
                         if any(li.search(body) for li in _LOGIN_INDICATORS):
                             continue
-                        # Must match admin content signature — avoids false positives on
-                        # generic 200 pages that happen to share a path name
+                        # Must match admin content signature
                         matched = [s for s in _ADMIN_CONTENT_SIGNATURES if s.search(body)]
-                        # Require 2+ signatures to reduce false positives (e.g. pages
-                        # with a logout link in nav but no actual admin content)
                         if len(matched) < 2:
                             continue
+                        # Confirm via auth that this is actually admin content (auth client can verify)
+                        try:
+                            auth_resp = await auth_client.get(f"{base_url}{path}")
+                            auth_body = auth_resp.text if auth_resp.status_code == 200 else ""
+                            auth_matched = [s for s in _ADMIN_CONTENT_SIGNATURES if s.search(auth_body)] if auth_body else matched
+                            if not auth_matched:
+                                continue  # Auth client confirms this isn't admin content
+                        except Exception:
+                            pass  # Can't verify with auth, proceed with unauthenticated detection
                         results.append(FindingData(
                             plugin_id=self.id,
                             severity=Severity.high,

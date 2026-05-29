@@ -100,14 +100,11 @@ class SqliDetectPlugin(PluginBase):
                 findings.append(result)
         return findings
 
-    async def _test_sqli(self, context, base_url: str, port: int, ip: str, *, intrusive: bool = False) -> FindingData | None:
+    async def _test_sqli(self, context: "ScanContext", base_url: str, port: int, ip: str, *, intrusive: bool = False) -> FindingData | None:
         sem = asyncio.Semaphore(20)
         try:
-            async with httpx.AsyncClient(
-                verify=False, timeout=8.0, follow_redirects=True,
-                headers={"User-Agent": "Mozilla/5.0 (compatible; ScanR/0.6)"},
-                **context.proxy_config(),
-            ) as client:
+            from scanr.plugins.web._crawler import create_web_client as _cwc
+            async with _cwc(context) as client:
                 crawled = await crawl(base_url, client)
 
                 # GET param testing — crawled params + fallback, with concurrency limit

@@ -13,7 +13,7 @@ from sqlalchemy.orm import selectinload
 
 from scanr.db import get_db
 from scanr.deps import require_scope
-from scanr.models import Host, Scan, ScanStatus, Target
+from scanr.models import Host, Scan, ScanStatus, Target, Finding
 from scanr.models.base import new_uuid
 from scanr.models.user import User
 from scanr.schemas import ScanCreate, ScanRead, ScanSummary
@@ -54,6 +54,7 @@ class _PortScanningConfig(BaseModel):
     scanner: Literal["tcp_connect", "syn", "udp"] | None = None
     scanners: list[Literal["tcp_connect", "syn", "udp"]] = Field(default_factory=lambda: ["tcp_connect"])
     firewall_strategy: Literal["default", "skip_ping"] = "default"
+    timing: int = Field(default=4, ge=1, le=5)
 
     @field_validator("scanners", mode="before")
     @classmethod
@@ -257,6 +258,20 @@ async def create_scan(
                 scan_cred.vault_credential_id = vault_cred.id
 
             db.add(scan_cred)
+
+    # Create exclusions
+    if body.exclusions:
+        from scanr.models.exclusion import Exclusion
+        for exc in body.exclusions:
+            val = exc.strip()
+            if not val:
+                continue
+            exc_type = "host"
+            if "/" in val:
+                exc_type = "cidr"
+            elif val.replace(".", "").replace(":", "").isalnum() and not val.isalpha():
+                exc_type = "ip"
+            db.add(Exclusion(scan_id=scan.id, type=exc_type, value=val))
 
     scan_id = scan.id
     try:
@@ -522,23 +537,32 @@ async def rerun_scan(
     for raw in target_values:
         db.add(Target(id=new_uuid(), scan_id=clone_id, value=raw, type=classify_target(raw)))
 
+    # Copy scan-scoped credentials
+    from scanr.models.scan_credential import ScanCredential
+    from scanr.models.credential import Credential
+    cred_result = await db.execute(
+        select(ScanCredential).where(ScanCredential.scan_id == scan_id)
+    )
+    for sc in cred_result.scalars().all():
+        db.add(ScanCredential(
+            scan_id=clone_id,
+            role=sc.role,
+            type=sc.type,
+            username=sc.username,
+            domain=sc.domain,
+            encrypted_data=sc.encrypted_data,
+            vault_credential_id=sc.vault_credential_id,
+        ))
+
     try:
         await db.commit()
     except Exception:
         await db.rollback()
         raise HTTPException(status_code=500, detail="Failed to create rerun scan")
 
-    try:
-        from scanr.tasks.scan_tasks import run_scan_task
-        task = run_scan_task.delay(clone_id)
-    except Exception:
-        await db.execute(
-            text("UPDATE scans SET status = :status, error_message = :msg WHERE id = :id"),
-            {"status": ScanStatus.failed.value, "msg": "Failed to dispatch scan task", "id": clone_id},
-        )
-        await db.commit()
-        raise HTTPException(status_code=500, detail="Failed to dispatch scan task")
-
+    # Set status atomically before dispatching Celery task
+    from scanr.tasks.scan_tasks import run_scan_task
+    task = run_scan_task.delay(clone_id)
     await db.execute(
         text("UPDATE scans SET status = :status, celery_task_id = :tid WHERE id = :id"),
         {"status": ScanStatus.running.value, "tid": task.id, "id": clone_id},
@@ -586,6 +610,17 @@ async def clone_scan(
     for raw in target_values:
         db.add(Target(id=new_uuid(), scan_id=clone.id, value=raw, type=classify_target(raw)))
 
+    # Copy scan-scoped credentials
+    from scanr.models.scan_credential import ScanCredential as _SC
+    creds = await db.execute(select(_SC).where(_SC.scan_id == scan_id))
+    for sc in creds.scalars().all():
+        db.add(_SC(
+            scan_id=clone.id, role=sc.role, type=sc.type,
+            username=sc.username, domain=sc.domain,
+            encrypted_data=sc.encrypted_data,
+            vault_credential_id=sc.vault_credential_id,
+        ))
+
     clone_id = clone.id
     try:
         await db.commit()
@@ -597,6 +632,131 @@ async def clone_scan(
         select(Scan).where(Scan.id == clone_id).options(selectinload(Scan.targets))
     )
     return result.scalar_one()
+
+
+@router.post("/{scan_id}/import", status_code=status.HTTP_201_CREATED)
+async def import_findings(
+    scan_id: str,
+    body: _ImportBody,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_scope("scans:write")),
+):
+    """Import findings from Burp Suite XML or ZAP JSON report."""
+    scan = await _get_own_scan(scan_id, current_user.id, db)
+    if scan.status not in (ScanStatus.completed, ScanStatus.failed, ScanStatus.pending):
+        raise HTTPException(status_code=409, detail=f"Cannot import to scan in status '{scan.status.value}'")
+
+    import xml.etree.ElementTree as ET
+    imported = 0
+    try:
+        root = ET.fromstring(body.report)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid XML report")
+
+    # Burp Suite XML format
+    for item in root.findall(".//item"):
+        title = (item.findtext("type") or item.findtext("issue") or "Imported Finding").strip()
+        sev_str = (item.find(".//severity").text if item.find(".//severity") is not None else "Medium").capitalize()
+        sev_map = {"High": "high", "Medium": "medium", "Low": "low", "Information": "info", "Certain": "critical"}
+        severity = sev_map.get(sev_str, "medium")
+        description = item.findtext("issueDetail") or item.findtext("issueBackground") or title
+
+        # Extract request/response evidence
+        evidence_parts = []
+        for req_el in item.findall(".//request"):
+            if req_el.text:
+                evidence_parts.append(f"=== REQUEST ===\n{req_el.text.strip()}")
+        for resp_el in item.findall(".//response"):
+            if resp_el.text:
+                evidence_parts.append(f"\n\n=== RESPONSE ===\n{resp_el.text.strip()}")
+        evidence = "\n".join(evidence_parts) if evidence_parts else None
+
+        # Extract host from request
+        host_ip = item.findtext("host") or ""
+        port = None
+        try:
+            port_str = item.findtext("port") or ""
+            port = int(port_str) if port_str else None
+        except ValueError:
+            pass
+
+        finding = Finding(
+            id=new_uuid(),
+            scan_id=scan_id,
+            plugin_id=f"import.burp",
+            severity=severity,
+            title=title[:512],
+            description=description,
+            evidence=evidence,
+        )
+        db.add(finding)
+        imported += 1
+
+        # Increment counter
+        sev_col = f"findings_{severity}"
+        if hasattr(scan, sev_col):
+            setattr(scan, sev_col, (getattr(scan, sev_col) or 0) + 1)
+
+    if imported == 0:
+        raise HTTPException(status_code=400, detail="No findings found in report")
+
+    try:
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        raise HTTPException(status_code=500, detail="Failed to import findings")
+    return {"imported": imported}
+
+
+class _ImportBody(BaseModel):
+    report: str  # XML/JSON report body
+
+
+@router.post("/{scan_id}/findings/manual", status_code=status.HTTP_201_CREATED)
+async def add_manual_finding(
+    scan_id: str,
+    body: _ManualFindingCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_scope("scans:write")),
+):
+    """Add a manually verified finding to a scan."""
+    scan = await _get_own_scan(scan_id, current_user.id, db)
+    if scan.status not in (ScanStatus.completed, ScanStatus.failed, ScanStatus.pending):
+        raise HTTPException(status_code=409, detail=f"Cannot add findings to scan in status '{scan.status.value}'")
+
+    finding = Finding(
+        id=new_uuid(),
+        scan_id=scan_id,
+        plugin_id="manual",
+        severity=body.severity,
+        title=body.title,
+        description=body.description,
+        evidence=body.evidence,
+        remediation=body.remediation,
+        cve_ids=json.dumps(body.cve_ids) if body.cve_ids else None,
+    )
+    db.add(finding)
+
+    # Increment scan counters
+    sev_col = f"findings_{body.severity}"
+    if hasattr(scan, sev_col):
+        setattr(scan, sev_col, (getattr(scan, sev_col) or 0) + 1)
+
+    try:
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        raise HTTPException(status_code=500, detail="Failed to create finding")
+    return {"id": finding.id}
+
+
+class _ManualFindingCreate(BaseModel):
+    title: str = Field(min_length=1, max_length=512)
+    description: str = Field(min_length=1)
+    severity: Literal["critical", "high", "medium", "low", "info"] = "medium"
+    evidence: str | None = None
+    remediation: str | None = None
+    cve_ids: list[str] | None = None
 
 
 @router.delete("/{scan_id}", status_code=status.HTTP_204_NO_CONTENT)

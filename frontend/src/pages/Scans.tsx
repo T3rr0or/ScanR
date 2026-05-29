@@ -41,12 +41,28 @@ const ROLE_LABELS: Record<InlineCredential['role'], string> = {
   generic: 'Generic',
 }
 
+const ROLE_HELP: Record<InlineCredential['role'], string> = {
+  primary_domain: 'Domain user/computer account for Active Directory authentication',
+  local_admin: 'Local administrator on a specific machine (not domain-wide)',
+  ssh: 'SSH key or password for remote login to Linux/Unix/macOS',
+  snmp: 'SNMP community string for network device info queries',
+  generic: 'Any credential type — used as fallback when other roles do not match',
+}
+
 const TYPE_LABELS: Record<InlineCredential['type'], string> = {
   smb: 'Windows/SMB',
   wmi: 'WMI',
   ssh: 'SSH',
   snmp: 'SNMP',
   http_basic: 'HTTP Basic',
+}
+
+const TYPE_HELP: Record<InlineCredential['type'], string> = {
+  smb: 'Windows file shares & Active Directory authentication',
+  wmi: 'Remote admin on Windows servers',
+  ssh: 'Secure remote login to Linux/Unix servers',
+  snmp: 'Reads device info from routers, switches, printers',
+  http_basic: 'Login for websites with browser-based password prompts',
 }
 
 function parseProfileJson(raw?: string | null): Record<string, unknown> | null {
@@ -246,6 +262,21 @@ export default function Scans({ onOpenScan }: Props) {
     onError: _onErr,
   })
 
+  const createAndLaunchMut = useMutation({
+    mutationFn: async (body: ScanCreate) => {
+      const scan = await scansApi.create(body)
+      try {
+        await scansApi.launch(scan.id)
+      } catch (e) {
+        await scansApi.delete(scan.id).catch(() => {})
+        throw e
+      }
+      return scan
+    },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['scans'] }); setShowForm(false) },
+    onError: _onErr,
+  })
+
   const updateMut = useMutation({
     mutationFn: ({ id, body }: { id: string; body: ScanCreate }) =>
       scansApi.update(id, body),
@@ -325,7 +356,8 @@ export default function Scans({ onOpenScan }: Props) {
         <NewScanModal
           onClose={() => setShowForm(false)}
           onSaveAsDraft={body => createMut.mutate(body)}
-          loading={createMut.isPending}
+          onCreateAndLaunch={body => createAndLaunchMut.mutate(body)}
+          loading={createMut.isPending || createAndLaunchMut.isPending}
         />
       )}
 
@@ -650,23 +682,27 @@ export default function Scans({ onOpenScan }: Props) {
 function NewScanModal({
   onClose,
   onSaveAsDraft,
+  onCreateAndLaunch,
   loading,
   editMode = false,
   initialScan,
 }: {
   onClose: () => void
   onSaveAsDraft: (body: ScanCreate) => void
+  onCreateAndLaunch?: (body: ScanCreate) => void
+  onCreated?: (scanId: string, exclusions: string[]) => void
   loading: boolean
   editMode?: boolean
   initialScan?: { id: string; name: string; targets?: string[]; profile_json?: string | null }
 }) {
   const [step, setStep] = useState(1)
-  const [selectedDesignTemplate, setSelectedDesignTemplate] = useState('advanced-scan')
+  const [selectedDesignTemplate, setSelectedDesignTemplate] = useState('external-vulnerability-scan')
   const [selectedApiTemplate, setSelectedApiTemplate]       = useState<ScanTemplate | null>(null)
   const [baseProfileJson, setBaseProfileJson]               = useState<Record<string, unknown>>({})
   const [name, setName]       = useState(initialScan?.name ?? '')
   const [targets, setTargets] = useState((initialScan?.targets ?? []).join('\n'))
   const [credentials, setCredentials] = useState<InlineCredential[]>([])
+  const [exclusions, setExclusions] = useState('')
   const [showAdvanced, setShowAdvanced] = useState(false)
 
   const [profileConfig, setProfileConfig] = useState<ProfileConfig>(
@@ -734,12 +770,18 @@ function NewScanModal({
   }
 
   function toggleCategory(id: string) {
-    setProfileConfig(p => ({
-      ...p,
-      categories: p.categories.includes(id)
+    setProfileConfig(p => {
+      const next = p.categories.includes(id)
         ? p.categories.filter(cat => cat !== id)
-        : [...p.categories, id],
-    }))
+        : [...p.categories, id]
+      return {
+        ...p,
+        categories: next,
+        enumeration: id === 'nuclei'
+          ? { ...p.enumeration, nuclei: !p.categories.includes(id) }
+          : p.enumeration,
+      }
+    })
   }
 
   function setTargetType(target_type: ProfileConfig['target_type']) {
@@ -848,6 +890,7 @@ function NewScanModal({
       profile: 'custom',
       profile_json: JSON.stringify(pj),
       credentials: credPayload.length > 0 ? credPayload : undefined,
+      exclusions: exclusions.split('\n').map(t => t.trim()).filter(Boolean),
     }
   }
 
@@ -899,7 +942,17 @@ function NewScanModal({
           {step === 1 && (
             <div>
               <div className="label">Start from template</div>
+              <p className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)', marginBottom: 10 }}>
+                {systemTemplates.length > 0
+                  ? 'Templates defined by your team — pick one to pre-fill safe defaults.'
+                  : 'Built-in quick-start templates — pick one that matches your goal.'}
+              </p>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 8 }}>
+                {systemTemplates.length > 0 && (
+                  <div style={{ gridColumn: '1 / -1', fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-3)', marginBottom: -4, display: 'flex', alignItems: 'center', gap: 6 }}>
+                    Server Templates
+                  </div>
+                )}
                 {(systemTemplates.length > 0 ? systemTemplates : DESIGN_TEMPLATES).map(t => {
                   const isApi = 'profile_json' in t
                   const active = isApi
@@ -992,6 +1045,10 @@ function NewScanModal({
                 <label className="label">Targets <span style={{ color: 'var(--text-3)', fontWeight: 400, textTransform: 'none', letterSpacing: 0 }}>- one per line</span></label>
                 <textarea className="textarea" rows={4} value={targets} onChange={e => setTargets(e.target.value)} placeholder={'10.42.0.0/20\nexample.com'} />
               </div>
+              <div style={{ marginTop: 8 }}>
+                <label className="label" style={{ fontSize: 12 }}>Exclusions <span style={{ color: 'var(--text-3)', fontWeight: 400, textTransform: 'none', letterSpacing: 0 }}>- IPs, CIDRs, or hostnames to skip (one per line)</span></label>
+                <textarea className="textarea" rows={2} value={exclusions} onChange={e => setExclusions(e.target.value)} style={{ marginTop: 4 }} placeholder={'10.0.0.1\n*.dev.example.com'} />
+              </div>
               <TargetPreviewPanel preview={targetPreview} />
               <div>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
@@ -1013,9 +1070,9 @@ function NewScanModal({
           {step === 4 && (
             <>
               <CapabilityGroup title="Host Discovery">
-                <Toggle label="ICMP" checked={profileConfig.discovery.icmp} onChange={icmp => setProfileConfig(p => ({ ...p, discovery: { ...p.discovery, icmp } }))} />
-                <Toggle label="TCP probes" checked={profileConfig.discovery.tcp} onChange={tcp => setProfileConfig(p => ({ ...p, discovery: { ...p.discovery, tcp } }))} />
-                <Toggle label="ARP (local L2 only / limited support)" checked={profileConfig.discovery.arp} onChange={arp => setProfileConfig(p => ({ ...p, discovery: { ...p.discovery, arp } }))} />
+                <Toggle label="ICMP ping — checks if host responds (like 'ping' command)" checked={profileConfig.discovery.icmp} onChange={icmp => setProfileConfig(p => ({ ...p, discovery: { ...p.discovery, icmp } }))} />
+                <Toggle label="TCP probes — connects to common ports to see if host is up" checked={profileConfig.discovery.tcp} onChange={tcp => setProfileConfig(p => ({ ...p, discovery: { ...p.discovery, tcp } }))} />
+                <Toggle label="ARP (local network — limited support)" checked={profileConfig.discovery.arp} onChange={arp => setProfileConfig(p => ({ ...p, discovery: { ...p.discovery, arp } }))} />
                 <div style={{ marginTop: 4 }}>
                   <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)', marginBottom: 4, display: 'block' }}>Discovery mode:</span>
                   <select
@@ -1056,7 +1113,7 @@ function NewScanModal({
                   {(['tcp_connect', 'syn', 'udp'] as const).map(scanner => (
                     <Toggle
                       key={scanner}
-                      label={scanner === 'tcp_connect' ? 'TCP connect' : scanner === 'syn' ? 'SYN / masscan' : 'UDP'}
+                      label={scanner === 'tcp_connect' ? 'TCP connect (works without root, slower)' : scanner === 'syn' ? 'SYN / masscan (needs root, faster)' : 'UDP (SNMP, DNS, DHCP discovery)'}
                       checked={profileConfig.port_scanning.scanners.includes(scanner)}
                       onChange={checked => setProfileConfig(p => ({
                         ...p,
@@ -1070,6 +1127,20 @@ function NewScanModal({
                     />
                   ))}
                 </div>
+                <div style={{ marginTop: 8 }}>
+                  <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)', marginBottom: 4, display: 'block' }}>Nmap timing:</span>
+                  <select
+                    className="select-field"
+                    value={profileConfig.port_scanning.timing}
+                    onChange={e => setProfileConfig(p => ({ ...p, port_scanning: { ...p.port_scanning, timing: Number(e.target.value) } }))}
+                  >
+                    <option value={1}>T1 — Paranoid (IDS evasion)</option>
+                    <option value={2}>T2 — Sneaky</option>
+                    <option value={3}>T3 — Polite</option>
+                    <option value={4}>T4 — Normal (default)</option>
+                    <option value={5}>T5 — Insane (fast LAN)</option>
+                  </select>
+                </div>
               </CapabilityGroup>
 
               <CapabilityGroup title="Enumeration">
@@ -1078,7 +1149,8 @@ function NewScanModal({
                   {ALL_CATEGORIES.map(cat => {
                     const on = profileConfig.categories.includes(cat.id)
                     return (
-                      <button key={cat.id} type="button" onClick={() => toggleCategory(cat.id)}
+                       <button key={cat.id} type="button" onClick={() => toggleCategory(cat.id)}
+                        title={cat.desc}
                         style={{ padding: '6px 10px', borderRadius: 6, fontSize: 11.5, cursor: 'pointer', background: on ? 'var(--accent-soft)' : 'var(--bg-0)', border: '1px solid ' + (on ? 'var(--accent)' : 'var(--border)'), color: on ? 'var(--accent)' : 'var(--text-1)', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
                         {on && <Check size={11} />}{cat.label}
                       </button>
@@ -1087,17 +1159,25 @@ function NewScanModal({
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 8 }}>
                   {[
-                    ['service_detection', 'Service detection'],
-                    ['http_probing', 'HTTP probing'],
-                    ['tls_checks', 'TLS checks'],
-                    ['security_headers', 'Security headers'],
-                    ['screenshots', 'Screenshots'],
-                    ['nuclei', 'Nuclei'],
-                    ['directory_enum', 'Directory/file enum'],
-                    ['subdomain_enum', 'Subdomain enum'],
-                    ['dns_recon', 'DNS recon'],
+                    ['service_detection', 'Service detection (identifies software type + version on open ports)'],
+                    ['http_probing', 'HTTP probing (checks if web services respond on any port)'],
+                    ['tls_checks', 'TLS checks (audits certificates, ciphers, protocol versions)'],
+                    ['security_headers', 'Security headers (CSP, HSTS, X-Frame-Options, etc.)'],
+                    ['screenshots', 'Screenshots (captures visual snapshot of each web page)'],
+                    ['nuclei', 'Nuclei (runs vulnerability templates against each web service)'],
+                    ['directory_enum', 'Directory enum (brute-forces common paths like /admin, /.git)'],
+                    ['subdomain_enum', 'Subdomain enum (finds subdomains of target domain via DNS)'],
+                    ['dns_recon', 'DNS recon (collects A, AAAA, MX, NS, TXT records for targets)'],
                   ].map(([key, label]) => (
-                    <Toggle key={key} label={label} checked={Boolean(profileConfig.enumeration[key as keyof ProfileConfig['enumeration']])} onChange={value => setProfileConfig(p => ({ ...p, enumeration: { ...p.enumeration, [key]: value } }))} />
+                    <Toggle key={key} label={label} checked={Boolean(profileConfig.enumeration[key as keyof ProfileConfig['enumeration']])} onChange={value => setProfileConfig(p => {
+                      const next = { ...p, enumeration: { ...p.enumeration, [key]: value } }
+                      if (key === 'nuclei') {
+                        next.categories = value
+                          ? Array.from(new Set([...p.categories, 'nuclei']))
+                          : p.categories.filter(c => c !== 'nuclei')
+                      }
+                      return next
+                    })} />
                   ))}
                 </div>
               </CapabilityGroup>
@@ -1179,13 +1259,25 @@ function NewScanModal({
             <button className="btn btn-primary" onClick={() => setStep(s => Math.min(5, s + 1))}>Next</button>
           )}
           {step === 5 && (
-            <button
-              className="btn btn-primary"
-              onClick={() => canSubmit && onSaveAsDraft(buildPayload())}
-              disabled={!canSubmit}
-            >
-              <FileText size={12} /> {editMode ? 'Save changes' : 'Create pending scan'}
-            </button>
+            <>
+              {onCreateAndLaunch && (
+                <button
+                  className="btn btn-primary"
+                  style={{ background: 'var(--ok)', borderColor: 'var(--ok)' }}
+                  onClick={() => canSubmit && onCreateAndLaunch(buildPayload())}
+                  disabled={!canSubmit}
+                >
+                  <Play size={12} /> Create &amp; Launch
+                </button>
+              )}
+              <button
+                className="btn btn-primary"
+                onClick={() => canSubmit && onSaveAsDraft(buildPayload())}
+                disabled={!canSubmit}
+              >
+                <FileText size={12} /> {editMode ? 'Save changes' : 'Create pending scan'}
+              </button>
+            </>
           )}
         </div>
       </div>
@@ -1297,6 +1389,31 @@ function ReviewStep({
         <ReviewRow label="Safety / depth" value={`${profileConfig.safety_level} / ${profileConfig.depth_level}`} />
         <ReviewRow label="Performance" value={profileConfig.performance_profile} />
         <ReviewRow label="Credentials" value={`${credentialCount} known credential set${credentialCount === 1 ? '' : 's'} · brute force ${bruteForce.enabled ? 'enabled' : 'disabled'}`} />
+      </CapabilityGroup>
+
+      <CapabilityGroup title="What this scan will do">
+        <div style={{ fontSize: 12, lineHeight: 1.8, color: 'var(--text-1)' }}>
+          <div>• Scan <strong>{targetPreview.totalKnownHosts > 0 ? targetPreview.totalKnownHosts.toLocaleString() : '?'}</strong> host(s)</div>
+          <div>• Check <strong>{profileConfig.port_range}</strong> ports per host</div>
+          <div>• Run {profileConfig.categories.length} plugin categor{profileConfig.categories.length === 1 ? 'y' : 'ies'}: {profileConfig.categories.join(', ')}</div>
+          <div>• Safety level: <strong style={{ color: profileConfig.safety_level === 'safe' ? 'var(--ok)' : profileConfig.safety_level === 'balanced' ? 'var(--accent)' : 'var(--sev-high)' }}>{profileConfig.safety_level}</strong></div>
+          <div>• Discovery mode: <strong>{profileConfig.discovery.mode}</strong></div>
+          <div>• Scan protocols: <strong>{profileConfig.port_scanning.scanners.map(s => s === 'tcp_connect' ? 'TCP' : s === 'syn' ? 'SYN' : 'UDP').join(' + ')}</strong></div>
+          <div className="mono" style={{ marginTop: 8, fontSize: 10.5, color: 'var(--text-3)', background: 'var(--bg-0)', padding: '8px 10px', borderRadius: 6, wordBreak: 'break-all' }}>
+            {(() => {
+              const scanners = profileConfig.port_scanning.scanners
+              const timing = profileConfig.port_scanning.timing
+              const pn = (profileConfig.discovery.mode === 'skip' || profileConfig.discovery.assume_up) ? '-Pn ' : ''
+              const port = profileConfig.port_range
+              const portArg = port.startsWith('top-') ? `--top-ports ${port.slice(4)}` : `-p ${port}`
+              const scannerFlags = scanners.map(s => s === 'tcp_connect' ? '-sT' : s === 'syn' ? '-sS' : '-sU').join(' ')
+              if (scanners.length > 1) {
+                return `$ nmap ${scannerFlags} -sV -T${timing} ${pn}${portArg} &lt;target&gt;`
+              }
+              return `$ nmap ${scannerFlags} -sV -T${timing} ${pn}${portArg} &lt;target&gt;`
+            })()}
+          </div>
+        </div>
       </CapabilityGroup>
 
       <TargetPreviewPanel preview={targetPreview} />
@@ -1545,7 +1662,7 @@ function CredentialCard({
           style={selectStyle}
         >
           {(Object.entries(ROLE_LABELS) as [InlineCredential['role'], string][]).map(([k, v]) => (
-            <option key={k} value={k}>{v}</option>
+            <option key={k} value={k} title={ROLE_HELP[k]}>{v}</option>
           ))}
         </select>
         <span style={labelStyle}>Type:</span>
@@ -1558,6 +1675,9 @@ function CredentialCard({
             <option key={k} value={k}>{v}</option>
           ))}
         </select>
+        {TYPE_HELP[cred.type] && (
+          <span className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)' }}>{TYPE_HELP[cred.type]}</span>
+        )}
       </div>
 
       {/* Row 2: Domain */}

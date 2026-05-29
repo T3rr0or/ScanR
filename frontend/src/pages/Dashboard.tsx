@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { RefreshCw, Plus, Activity, Server, AlertTriangle, Clock } from 'lucide-react'
+import { RefreshCw, Plus, Activity, Server, AlertTriangle, Clock, Radar } from 'lucide-react'
 import api from '@/api/client'
 import { scansApi } from '@/api/scans'
 import { analyticsApi } from '@/api/analytics'
@@ -105,6 +105,39 @@ export default function Dashboard({ onOpenScan, onNavigate }: {
           spark={[2,3,3,4,4,5,5,6,7,stats?.scans_total ?? 0]}
         />
       </div>
+
+      {/* First-scan onboarding — shown only when zero scans exist */}
+      {stats?.scans_total === 0 && (
+        <div style={{
+          padding: 24, borderRadius: 10,
+          border: '1px solid var(--accent-soft)',
+          background: 'linear-gradient(135deg, var(--accent-soft) 0%, var(--bg-1) 100%)',
+          display: 'flex', alignItems: 'center', gap: 20,
+        }}>
+          <div style={{
+            width: 48, height: 48, borderRadius: 12,
+            background: 'var(--accent)', color: '#fff',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            flexShrink: 0,
+          }}>
+            <Radar size={24} />
+          </div>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 4 }}>Welcome to ScanR</div>
+            <div style={{ fontSize: 12, color: 'var(--text-2)', lineHeight: 1.6, maxWidth: 520 }}>
+              ScanR discovers hosts, open ports, and vulnerabilities on your network.
+              Start with an <strong>External Vulnerability Scan</strong> — it is safe, fast, and works against any target you own.
+            </div>
+          </div>
+          <button
+            className="btn btn-primary"
+            style={{ flexShrink: 0, fontSize: 13, padding: '10px 20px' }}
+            onClick={() => onNavigate?.('scans')}
+          >
+            <Plus size={14} /> Run Your First Scan
+          </button>
+        </div>
+      )}
 
       {/* Main grid */}
       <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 12 }}>
@@ -331,7 +364,7 @@ function LiveScanCard({ scan, onOpen }: { scan: any; onOpen: () => void }) {
           <Meter value={scan.progress ?? 0} color="var(--accent-2)" />
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginTop: 14 }}>
             <MiniStat k="Hosts up" v={`${scan.hosts_up}`} sub={`of ${scan.hosts_total}`} />
-            <MiniStat k="Findings" v={String(scan.findings_critical + scan.findings_high + scan.findings_medium)} />
+            <MiniStat k="Findings" v={String((scan.findings_critical ?? 0) + (scan.findings_high ?? 0) + (scan.findings_medium ?? 0))} />
           </div>
           <div style={{ display: 'flex', gap: 16, marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--border-subtle)' }}>
             {([
@@ -383,7 +416,7 @@ function TimelineChart({ data }: { data: any[] }) {
   const allVals = data.flatMap(d => sevs.map(s => d[s] ?? 0))
   const max = Math.max(...allVals, 1) * 1.15
   const n = data.length
-  const px = (i: number) => PAD_L + (i / (n - 1)) * (W - PAD_L - PAD_R)
+  const px = (i: number) => n <= 1 ? PAD_L + (W - PAD_L - PAD_R) / 2 : PAD_L + (i / (n - 1)) * (W - PAD_L - PAD_R)
   const py = (v: number) => H - PAD_B - (v / max) * (H - PAD_T - PAD_B)
   const path = (arr: number[]) => arr.map((v, i) => `${i === 0 ? 'M' : 'L'}${px(i).toFixed(1)},${py(v).toFixed(1)}`).join(' ')
   const area = (arr: number[]) => `${path(arr)} L${px(n - 1)},${H - PAD_B} L${px(0)},${H - PAD_B} Z`

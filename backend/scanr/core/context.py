@@ -88,6 +88,47 @@ class ScanContext:
             return self.credentials[0]
         return self.credential_data
 
+    def web_auth_headers(self) -> dict[str, str]:
+        """Return auth headers (Cookie, Authorization) from scan credentials.
+
+        Scans all credentials for web-relevant types:
+          - http_basic: Authorization: Basic ...
+          - bearer_token: Authorization: Bearer ...
+          - Cookie from extra['cookies']
+        """
+        headers: dict[str, str] = {}
+        for cred_data in self.credentials:
+            cred_type = cred_data.get("type", "").lower()
+            username = cred_data.get("username", "")
+            password = cred_data.get("secret", "") or cred_data.get("password", "")
+            extra = cred_data.get("extra", {}) or {}
+
+            if cred_type in ("http_basic",):
+                import base64
+                token = base64.b64encode(f"{username}:{password}".encode()).decode()
+                headers["Authorization"] = f"Basic {token}"
+            elif cred_type in ("bearer_token",) and password:
+                headers["Authorization"] = f"Bearer {password}"
+
+            cookies = extra.get("cookies") or extra.get("cookie") or extra.get("session_cookie")
+            if cookies:
+                existing = headers.get("Cookie", "")
+                headers["Cookie"] = f"{existing}; {cookies}".strip("; ")
+
+        # Also check the legacy primary credential data
+        cd = self.credential_data
+        if cd:
+            ct = cd.get("type", "").lower()
+            if ct in ("http_basic",) and cd.get("username"):
+                import base64
+                token = base64.b64encode(f"{cd['username']}:{cd.get('password', '')}".encode()).decode()
+                if "Authorization" not in headers:
+                    headers["Authorization"] = f"Basic {token}"
+            if ct in ("bearer_token",) and cd.get("password") and "Authorization" not in headers:
+                headers["Authorization"] = f"Bearer {cd['password']}"
+
+        return headers
+
     def get_brute_config(self) -> dict:
         """Return brute_force config from profile_json, with safe defaults."""
         defaults = {
@@ -151,6 +192,7 @@ class ScanContext:
         return {
             "scanners": scanners,
             "firewall_strategy": cfg.get("firewall_strategy", "default"),
+            "timing": int(cfg.get("timing", 4)),
         }
 
     def proxy_config(self) -> dict:
