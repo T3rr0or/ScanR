@@ -6,12 +6,11 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.types import ASGIApp
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 
-from scanr.api.router import api_router, ws_router_outer
+from scanr.api.router import api_router
 from scanr.api.websocket import router as ws_router
 from scanr.config import get_settings
 from scanr.db.init_db import run_migrations, seed_admin, seed_plugins, seed_templates, _seed_builtin_wordlists
@@ -73,12 +72,11 @@ def create_app() -> FastAPI:
     )
 
     cors_origins = settings.cors_origins
-    if "*" in cors_origins and True:  # allow_credentials=True is always set
-        logger.warning(
+    if "*" in cors_origins:
+        raise ValueError(
             "ALLOWED_ORIGINS contains '*' with allow_credentials=True — "
             "wildcard origin is rejected by browsers; set explicit origins instead"
         )
-        cors_origins = [o for o in cors_origins if o != "*"]
 
     app.state.limiter = limiter
     app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
