@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import uuid
 from typing import TYPE_CHECKING
 
 import httpx
@@ -62,11 +63,36 @@ class HttpMethodsPlugin(PluginBase):
 
     async def _probe_methods(self, context, url: str) -> list[str]:
         enabled = []
-        async with httpx.AsyncClient(verify=False, timeout=5.0, **context.proxy_config()) as client:
+        async with httpx.AsyncClient(verify=False, timeout=5.0, follow_redirects=True, **context.proxy_config()) as client:
+            # Prefer Allow header from OPTIONS — most reliable, no false positives from SPAs.
+            allow_header: set[str] = set()
+            try:
+                opts = await client.options(url)
+                raw_allow = opts.headers.get("allow", "")
+                allow_header = {m.strip().upper() for m in raw_allow.split(",") if m.strip()}
+            except Exception:
+                pass
+
+            if allow_header:
+                # Allow header present — use it as the definitive source.
+                return [m for m in DANGEROUS_METHODS if m in allow_header]
+
+            # No Allow header — probe each method but guard against SPA catch-alls.
+            # A SPA returns 200 for any GET path including random ones; if that's the case,
+            # a 200 on PUT/DELETE is meaningless.
+            random_path = f"/{uuid.uuid4().hex}"
+            try:
+                spa_check = await client.get(url.rstrip("/") + random_path)
+                is_spa = spa_check.status_code == 200
+            except Exception:
+                is_spa = False
+
             for method in DANGEROUS_METHODS:
+                if method in ("PUT", "DELETE") and is_spa:
+                    continue
                 try:
                     resp = await client.request(method, url)
-                    if 200 <= resp.status_code < 400:
+                    if 200 <= resp.status_code < 300:
                         enabled.append(method)
                 except Exception:
                     pass

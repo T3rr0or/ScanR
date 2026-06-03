@@ -10,6 +10,57 @@ from scanr.core.rate_limiter import RateLimiter
 from scanr.models import Scan
 
 
+_BUILTIN_PROFILES: dict[str, dict] = {
+    "quick": {
+        "scan_context": "internal",
+        "port_range": "top-1000",
+        "plugins": ["network.*", "services.*", "ssh.*", "ssl_tls.*"],
+        "discovery": {"icmp": True, "tcp": True, "arp": False, "assume_up": False},
+        "port_scanning": {"scanner": "syn", "firewall_strategy": "default"},
+        "enumeration": {"service_detection": True, "http_probing": False, "tls_checks": False, "nuclei": False},
+        "performance": {"max_concurrent_hosts": 20, "max_concurrent_plugins": 20, "timeout": 30, "masscan_rate": 10000},
+    },
+    "standard": {
+        "scan_context": "internal",
+        "port_range": "top-10000",
+        "plugins": ["network.*", "services.*", "ssh.*", "ssl_tls.*", "web.*", "cve.*"],
+        "discovery": {"icmp": True, "tcp": True, "arp": False, "assume_up": False},
+        "port_scanning": {"scanner": "syn", "firewall_strategy": "default"},
+        "enumeration": {"service_detection": True, "http_probing": True, "tls_checks": True, "nuclei": False},
+        "performance": {"max_concurrent_hosts": 20, "max_concurrent_plugins": 20, "timeout": 60, "masscan_rate": 10000},
+    },
+    "pentest": {
+        "scan_context": "internal",
+        "port_range": "top-10000",
+        "plugins": ["network.*", "services.*", "ssh.*", "ssl_tls.*", "web.*", "cve.*"],
+        "discovery": {"icmp": True, "tcp": True, "arp": True, "assume_up": False},
+        "port_scanning": {"scanner": "syn", "firewall_strategy": "skip_ping"},
+        "enumeration": {"service_detection": True, "http_probing": True, "tls_checks": True, "nuclei": False},
+        "performance": {"max_concurrent_hosts": 10, "max_concurrent_plugins": 10, "timeout": 90, "masscan_rate": 5000},
+        "intrusive": True,
+    },
+    "full": {
+        "scan_context": "internal",
+        "port_range": "all",
+        "plugins": ["network.*", "services.*", "ssh.*", "ssl_tls.*", "web.*", "cve.*", "nuclei.*"],
+        "discovery": {"icmp": True, "tcp": True, "arp": True, "assume_up": False},
+        "port_scanning": {"scanner": "syn", "firewall_strategy": "skip_ping"},
+        "enumeration": {"service_detection": True, "http_probing": True, "tls_checks": True, "nuclei": True},
+        "performance": {"max_concurrent_hosts": 5, "max_concurrent_plugins": 10, "timeout": 120, "masscan_rate": 5000},
+        "intrusive": True,
+    },
+    "stealth": {
+        "scan_context": "internal",
+        "port_range": "top-1000",
+        "plugins": ["network.*", "services.*", "ssh.*", "ssl_tls.*"],
+        "discovery": {"icmp": False, "tcp": True, "arp": False, "assume_up": False},
+        "port_scanning": {"scanner": "tcp_connect", "firewall_strategy": "default"},
+        "enumeration": {"service_detection": True, "http_probing": False, "tls_checks": False, "nuclei": False},
+        "performance": {"max_concurrent_hosts": 3, "max_concurrent_plugins": 5, "timeout": 120, "masscan_rate": 1000},
+    },
+}
+
+
 @dataclass
 class ScanContext:
     """Shared state for a single scan run — passed to every plugin."""
@@ -144,14 +195,19 @@ class ScanContext:
         return {**defaults, **cfg}
 
     def profile_json(self) -> dict:
-        """Return parsed scan profile_json, or an empty object on invalid input."""
+        """Return parsed scan profile_json.
+
+        Falls back to a built-in default keyed on scan.profile when profile_json is
+        null — prevents all config values collapsing to empty-dict defaults when the
+        caller passes only a profile name string (e.g. "pentest").
+        """
         import json as _json
-        if not self.scan.profile_json:
-            return {}
-        try:
-            return _json.loads(self.scan.profile_json) if isinstance(self.scan.profile_json, str) else self.scan.profile_json
-        except Exception:
-            return {}
+        if self.scan.profile_json:
+            try:
+                return _json.loads(self.scan.profile_json) if isinstance(self.scan.profile_json, str) else self.scan.profile_json
+            except Exception:
+                pass
+        return _BUILTIN_PROFILES.get(self.scan.profile or "standard", {})
 
     def performance_config(self) -> dict:
         pj = self.profile_json()

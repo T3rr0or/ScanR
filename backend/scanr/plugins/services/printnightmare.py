@@ -31,10 +31,13 @@ class PrintNightmarePlugin(PluginBase):
     async def check(self, context: "ScanContext", host: "Host") -> list[FindingData]:
         if not any(p.number == 445 and p.state == "open" for p in host.ports):
             return []
-        # Only Windows hosts are vulnerable to PrintNightmare
+        # Only Windows hosts are vulnerable to PrintNightmare.
+        # Skip if either os_family or os_name is positively identified as non-Windows.
+        # When both are empty (OS unknown) we still probe — better a FP than a FN on a real Windows host.
         os_family = (host.os_family or "").lower()
         os_name = (host.os_name or "").lower()
-        if os_family and "windows" not in os_family and "windows" not in os_name:
+        known_os = os_family or os_name
+        if known_os and "windows" not in known_os:
             return []
         loop = asyncio.get_running_loop()
         result = await loop.run_in_executor(None, self._probe, host.ip)
@@ -43,7 +46,6 @@ class PrintNightmarePlugin(PluginBase):
     def _probe(self, ip: str) -> FindingData | None:
         try:
             from impacket.dcerpc.v5 import transport, rprn
-            from impacket.dcerpc.v5.dtypes import NULL
         except ImportError:
             logger.debug("impacket not available — printnightmare plugin skipped")
             return None

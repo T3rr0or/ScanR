@@ -141,12 +141,20 @@ class ApiKeyExposurePlugin(PluginBase):
         "your_secret", "your_api_key", "insert_key_here", "replace_me",
     })
 
+    # Matches dotted/snake_case identifiers like "mealie.access_token", "auth_token_key"
+    # — these are variable/config names, not actual secret values.
+    _IDENTIFIER_RE = re.compile(r'^[a-z][a-z0-9._\-]*$')
+
     def _has_entropy(self, val: str) -> bool:
         """Reject low-entropy / placeholder values for the Generic Secret pattern."""
         lower = val.lower().strip("'\"")
         if lower in self._PLACEHOLDERS:
             return False
         if len(set(lower)) < 6:  # "aaaaaaaa" style
+            return False
+        # Reject values that look like identifier/variable names (all lowercase + dots/underscores/dashes).
+        # Real secrets contain uppercase letters, digits, or are significantly longer.
+        if self._IDENTIFIER_RE.match(lower) and not any(c.isdigit() for c in lower):
             return False
         return True
 

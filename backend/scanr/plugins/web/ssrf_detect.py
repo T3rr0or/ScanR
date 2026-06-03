@@ -144,11 +144,15 @@ class SsrfDetectPlugin(PluginBase):
                             hit = self._check_signatures(r_ssrf)
                             if hit:
                                 return self._finding(base_url, port, str(r_ssrf.url), hit, r_ssrf)
-                            # Length delta: only flag if both responses are non-trivial
-                            # and differ by >20% — avoids firing on dynamic pages
+                            # Length delta: only flag if BOTH responses are 200 and non-trivial
+                            # and differ by >40%. Requiring 200 on both sides prevents firing
+                            # when the server returns a 403/404 error page for the unknown param
+                            # (error pages are smaller than normal pages, causing spurious deltas).
                             b_len = len(r_benign.text)
                             s_len = len(r_ssrf.text)
-                            if b_len > 50 and s_len > 50 and abs(s_len - b_len) / max(b_len, 1) > 0.2:
+                            if (r_benign.status_code == 200 and r_ssrf.status_code == 200
+                                    and b_len > 200 and s_len > 200
+                                    and abs(s_len - b_len) / max(b_len, 1) > 0.4):
                                 hit = "Response length changed significantly when internal target supplied — server likely fetched URL"
                                 return self._finding(base_url, port, str(r_ssrf.url), hit, r_ssrf)
                         except Exception:

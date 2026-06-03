@@ -60,9 +60,16 @@ class ResultCollector:
         self._lock = db_lock or asyncio.Lock()
         self._cached_scan: "Scan | None" = None
         self._host_ip_cache: dict[str, str | None] = {}
+        # Dedup within a single scan run: (host_id, plugin_id, title, port_number)
+        self._seen_findings: set[tuple] = set()
 
     async def add_finding(self, host_id: str | None, data: FindingData) -> None:
+        dedup_key = (host_id, data.plugin_id, data.title, data.port_number)
         async with self._lock:
+            if dedup_key in self._seen_findings:
+                logger.debug("Duplicate finding skipped: %s on host %s port %s", data.title, host_id, data.port_number)
+                return
+            self._seen_findings.add(dedup_key)
             compliance_tags = tags_for_plugin(data.plugin_id)
             mitre_tags = mitre_tags_for_plugin(data.plugin_id)
             evidence = await self._evidence_with_peer_review_command(host_id, data)

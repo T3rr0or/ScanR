@@ -27,16 +27,18 @@ logger = logging.getLogger(__name__)
 HTTP_PORTS = [80, 443, 8080, 8443, 8000, 3000]
 
 # (engine_name, payload, expected_output)
+# Use larger numbers for expected outputs to avoid false matches on common page content.
+# "49" and especially "7" appear legitimately in almost any HTML page.
 _PAYLOADS = [
-    ("Jinja2/Twig",   "{{7*7}}",                 "49"),
-    ("Jinja2",        "{{7*'7'}}",                "7777777"),   # distinguishes from Twig
-    ("FreeMarker",    "${7*7}",                   "49"),
-    ("Mako",          "${7*7}",                   "49"),
-    ("Velocity",      "#set($x=7*7)${x}",         "49"),
-    ("Smarty",        "{7*7}",                    "49"),
-    ("ERB",           "<%= 7 * 7 %>",             "49"),
-    ("Pebble",        "{{7*7}}",                  "49"),
-    ("Handlebars",    "{{#with 7 as |n|}}{{n}}{{/with}}", "7"),
+    ("Jinja2/Twig",   "{{8*8}}",                          "64"),
+    ("Jinja2",        "{{8*'z'}}",                        "zzzzzzzz"),   # distinguishes from Twig
+    ("FreeMarker",    "${8*8}",                            "64"),
+    ("Mako",          "${8*8}",                            "64"),
+    ("Velocity",      "#set($x=8*8)${x}",                 "64"),
+    ("Smarty",        "{8*8}",                            "64"),
+    ("ERB",           "<%= 8 * 8 %>",                     "64"),
+    ("Pebble",        "{{8*8}}",                          "64"),
+    ("Handlebars",    "{{#with 54321 as |n|}}{{n}}{{/with}}", "54321"),
 ]
 
 _TEST_PARAMS = ["q", "search", "name", "template", "msg", "message", "text", "content", "subject", "title", "query"]
@@ -89,6 +91,8 @@ class SstiDetectPlugin(PluginBase):
                             async with sem:
                                 try:
                                     resp = await client.get(f"{base_url}{path}?{param}={payload}")
+                                    if resp.status_code >= 400:
+                                        continue
                                     if expected in resp.text and expected not in baseline_text:
                                         return FindingData(
                                             plugin_id=self.id,
@@ -131,6 +135,8 @@ class SstiDetectPlugin(PluginBase):
                                     continue
                                 # Then request with payload
                                 resp = await client.get(f"{base_url}/", headers={header: payload})
+                                if resp.status_code >= 400:
+                                    continue
                                 if expected in resp.text and expected not in base_resp.text:
                                     return FindingData(
                                         plugin_id=self.id,
