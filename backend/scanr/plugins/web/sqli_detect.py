@@ -11,7 +11,6 @@ import logging
 import re
 from typing import TYPE_CHECKING
 
-import httpx
 
 from scanr.core.plugin_base import FindingData, PluginBase, PluginCategory, Severity
 from scanr.plugins.web._ports import is_web_port, web_scheme
