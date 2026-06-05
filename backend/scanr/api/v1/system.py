@@ -48,6 +48,17 @@ async def _get_update_status() -> dict:
         if raw:
             data = json.loads(raw)
             data["enabled"] = settings.self_update_enabled
+            # Stale "running" guard: if running for >15 min the process died
+            if data.get("state") in ("running", "queued") and data.get("started_at"):
+                from datetime import datetime, timezone, timedelta
+                try:
+                    started = datetime.fromisoformat(data["started_at"])
+                    if datetime.now(timezone.utc) - started > timedelta(minutes=15):
+                        data["state"] = "failed"
+                        data["message"] = "Update timed out (process likely died during container restart)."
+                        await _set_update_status(data)
+                except Exception:
+                    pass
             return data
     except Exception:
         logger.debug("Could not read update status", exc_info=True)
@@ -255,6 +266,13 @@ async def version_check():
 @router.get("/update/status")
 async def update_status(current_user: User = Depends(require_admin)):
     return await _get_update_status()
+
+
+@router.delete("/update/status")
+async def reset_update_status(current_user: User = Depends(require_admin)):
+    """Clear stale update status back to idle."""
+    await _set_update_status(_default_update_status())
+    return {"state": "idle"}
 
 
 @router.post("/update")

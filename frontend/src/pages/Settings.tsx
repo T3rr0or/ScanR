@@ -169,6 +169,10 @@ function SystemSection() {
       setUpdateErr(msg)
     },
   })
+  const clearStatusMut = useMutation({
+    mutationFn: () => api.delete('/system/update/status'),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['update-status'] }),
+  })
 
   const updateAvailable = ver?.update_available
   const latestVersion = ver?.latest
@@ -280,7 +284,10 @@ function SystemSection() {
                 )}
                 {updateState === 'running' && (
                   <div>
-                    <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--accent)', marginBottom: 6 }}>Pulling images for v{latestVersion}…</div>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+                      <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--accent)' }}>Pulling images for v{latestVersion}…</div>
+                      <button onClick={() => clearStatusMut.mutate()} className="btn btn-ghost btn-sm" style={{ fontSize: 11 }} title="Clear stuck state">Dismiss</button>
+                    </div>
                     <pre style={{
                       fontSize: 10, color: 'var(--text-3)', background: 'var(--bg-0)',
                       padding: 8, borderRadius: 4, maxHeight: 180, overflow: 'auto',
@@ -302,9 +309,12 @@ function SystemSection() {
                     <pre style={{ fontSize: 10, color: 'var(--sev-high)', padding: '8px', background: 'var(--bg-0)', borderRadius: 4, maxHeight: 200, overflow: 'auto', whiteSpace: 'pre-wrap', margin: 0 }}>
                       {upStatus?.message}{'\n'}{upStatus?.log}
                     </pre>
-                    <button onClick={() => updateMut.mutate()} className="btn btn-primary btn-sm" style={{ marginTop: 8, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                      <RefreshCw size={13} /> Retry
-                    </button>
+                    <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                      <button onClick={() => updateMut.mutate()} className="btn btn-primary btn-sm" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                        <RefreshCw size={13} /> Retry
+                      </button>
+                      <button onClick={() => clearStatusMut.mutate()} className="btn btn-ghost btn-sm">Dismiss</button>
+                    </div>
                   </div>
                 )}
                 {(updateState === 'idle' || !updateState) && (
