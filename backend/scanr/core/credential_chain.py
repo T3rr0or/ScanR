@@ -16,7 +16,6 @@ logger = logging.getLogger(__name__)
 
 async def run_credential_chain(context, hosts: list, collector) -> None:
     """Test discovered credentials against other hosts in the scan."""
-    from scanr.core.context import ScanContext
 
     creds = getattr(context, "discovered_credentials", [])
     if not creds:
@@ -74,7 +73,6 @@ async def _test_ssh(context, host, username: str, password: str | None, key_mate
         import asyncssh
         auth_kwargs: dict = {}
         if key_material:
-            import io
             key = asyncssh.import_private_key(key_material)
             auth_kwargs["client_keys"] = [key]
             auth_kwargs["known_hosts"] = None

@@ -13,7 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from scanr.models import Finding, Host, Port
+from scanr.models import Finding, Host
 
 
 def _finding_key(f: Finding, host_ip_map: dict[str, str]) -> str:

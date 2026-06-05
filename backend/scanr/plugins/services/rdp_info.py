@@ -9,7 +9,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import socket
-import struct
 from typing import TYPE_CHECKING
 
 from scanr.core.plugin_base import FindingData, PluginBase, PluginCategory, Severity
@@ -80,7 +79,7 @@ class RdpInfoPlugin(PluginBase):
         try:
             sock = socket.create_connection((ip, port), timeout=8)
             sock.sendall(rdp_neg_req)
-            resp = sock.recv(1024)
+            sock.recv(1024)
             sock.close()
         except Exception:
             return None
@@ -91,12 +90,6 @@ class RdpInfoPlugin(PluginBase):
 
     def _parse_via_impacket(self, ip: str, port: int) -> dict | None:
         """Use impacket's RDP scanner to extract domain/hostname metadata."""
-        try:
-            from impacket.examples.rdp_check import RDPClient
-            return None  # Not the right API
-        except ImportError:
-            pass
-
         # Fallback: connect and scrape the certificate SAN/CN
         try:
             import ssl

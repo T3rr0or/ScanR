@@ -1,10 +1,25 @@
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { ShieldAlert, Search, X, Users } from 'lucide-react'
 import { vulnerabilitiesApi, type VulnerabilityItem } from '@/api/vulnerabilities'
+import { findingsApi } from '@/api/findings'
 import { SevTag, relTime } from '@/components/ui'
+import FindingDetailPanel from '@/components/FindingDetailPanel'
 
 const SEVERITIES = ['', 'critical', 'high', 'medium', 'low', 'info']
+const SEV_RANK: Record<string, number> = { critical: 5, high: 4, medium: 3, low: 2, info: 1 }
+
+type VulnSortKey = 'severity' | 'title' | 'hosts' | 'open' | 'vpr' | 'cvss' | 'first_seen' | 'last_seen'
+
+
+function VTh({ label, sortKey, active, dir, onSort, style }: { label: string; sortKey: VulnSortKey; active: VulnSortKey; dir: 'asc' | 'desc'; onSort: (k: VulnSortKey) => void; style?: React.CSSProperties }) {
+  const isActive = active === sortKey
+  return (
+    <th onClick={() => onSort(sortKey)} style={{ cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap', color: isActive ? 'var(--accent)' : undefined, ...style }}>
+      {label}<span style={{ marginLeft: 4, opacity: isActive ? 1 : 0.25, fontSize: 9 }}>{isActive ? (dir === 'asc' ? '▲' : '▼') : '⇅'}</span>
+    </th>
+  )
+}
 
 function VprBadge({ score }: { score: number | null }) {
   if (score == null) return <span className="dimmer" style={{ fontSize: 11 }}>—</span>
@@ -22,11 +37,46 @@ export default function Vulnerabilities() {
   const [search, setSearch] = useState('')
   const [severity, setSeverity] = useState('')
   const [selected, setSelected] = useState<VulnerabilityItem | null>(null)
+  const [detailFindingId, setDetailFindingId] = useState<string | null>(null)
+  const [vKey, setVKey] = useState<VulnSortKey>('open')
+  const [vDir, setVDir] = useState<'asc' | 'desc'>('desc')
 
-  const { data: vulns = [], isLoading } = useQuery({
+  function vToggle(k: VulnSortKey) {
+    if (vKey === k) {
+      setVDir(d => d === 'asc' ? 'desc' : 'asc')
+    } else {
+      setVKey(k)
+      setVDir(k === 'title' ? 'asc' : 'desc')
+    }
+  }
+
+  const { data: detailFinding = null } = useQuery({
+    queryKey: ['finding', detailFindingId],
+    queryFn: () => findingsApi.get(detailFindingId!),
+    enabled: !!detailFindingId,
+  })
+
+  const { data: rawVulns = [], isLoading } = useQuery({
     queryKey: ['vulnerabilities', search, severity],
     queryFn: () => vulnerabilitiesApi.list({ search: search || undefined, severity: severity || undefined, limit: 300 }),
   })
+
+  const vulns = useMemo(() => {
+    const m = vDir === 'asc' ? 1 : -1
+    return [...rawVulns].sort((a, b) => {
+      switch (vKey) {
+        case 'severity':   return m * ((SEV_RANK[a.severity] ?? 99) - (SEV_RANK[b.severity] ?? 99))
+        case 'title':      return m * a.title.localeCompare(b.title)
+        case 'hosts':      return m * (a.host_count - b.host_count)
+        case 'open':       return m * (a.open_count - b.open_count)
+        case 'vpr':        return m * ((a.max_vpr ?? -1) - (b.max_vpr ?? -1))
+        case 'cvss':       return m * ((a.max_cvss ?? -1) - (b.max_cvss ?? -1))
+        case 'first_seen': return m * ((a.first_seen_at ?? '').localeCompare(b.first_seen_at ?? ''))
+        case 'last_seen':  return m * ((a.last_seen_at ?? '').localeCompare(b.last_seen_at ?? ''))
+        default: return 0
+      }
+    })
+  }, [rawVulns, vKey, vDir])
 
   const { data: hosts = [] } = useQuery({
     queryKey: ['vuln-hosts', selected?.plugin_id],
@@ -35,6 +85,7 @@ export default function Vulnerabilities() {
   })
 
   return (
+    <>
     <div className="page-pad" style={{ maxWidth: 1480, margin: '0 auto' }}>
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, flexWrap: 'wrap', gap: 12 }}>
@@ -70,14 +121,14 @@ export default function Vulnerabilities() {
             <table className="tbl">
               <thead>
                 <tr>
-                  <th>Severity</th>
-                  <th>Vulnerability</th>
-                  <th style={{ textAlign: 'center' }}>Hosts</th>
-                  <th style={{ textAlign: 'center' }}>Open</th>
-                  <th>Max VPR</th>
-                  <th>Max CVSS</th>
-                  <th>First seen</th>
-                  <th>Last seen</th>
+                  <VTh label="Severity" sortKey="severity" active={vKey} dir={vDir} onSort={vToggle} />
+                  <VTh label="Vulnerability" sortKey="title" active={vKey} dir={vDir} onSort={vToggle} />
+                  <VTh label="Hosts" sortKey="hosts" active={vKey} dir={vDir} onSort={vToggle} style={{ textAlign: 'center' }} />
+                  <VTh label="Open" sortKey="open" active={vKey} dir={vDir} onSort={vToggle} style={{ textAlign: 'center' }} />
+                  <VTh label="Max VPR" sortKey="vpr" active={vKey} dir={vDir} onSort={vToggle} />
+                  <VTh label="Max CVSS" sortKey="cvss" active={vKey} dir={vDir} onSort={vToggle} />
+                  <VTh label="First seen" sortKey="first_seen" active={vKey} dir={vDir} onSort={vToggle} />
+                  <VTh label="Last seen" sortKey="last_seen" active={vKey} dir={vDir} onSort={vToggle} />
                 </tr>
               </thead>
               <tbody>
@@ -128,7 +179,7 @@ export default function Vulnerabilities() {
                 <thead><tr><th>IP</th><th>Port</th><th>Scan</th><th>Status</th></tr></thead>
                 <tbody>
                   {hosts.map(h => (
-                    <tr key={h.finding_id}>
+                    <tr key={h.finding_id} onClick={() => setDetailFindingId(h.finding_id)} style={{ cursor: 'pointer' }} title="Click to view finding details">
                       <td className="mono" style={{ fontSize: 12, color: 'var(--accent)' }}>{h.ip}</td>
                       <td className="mono dimmer" style={{ fontSize: 11 }}>{h.port_number ?? '—'}</td>
                       <td style={{ fontSize: 11, color: 'var(--text-2)', maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{h.scan_name}</td>
@@ -146,5 +197,8 @@ export default function Vulnerabilities() {
         )}
       </div>
     </div>
+
+    <FindingDetailPanel finding={detailFinding} onClose={() => setDetailFindingId(null)} />
+    </>
   )
 }

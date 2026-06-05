@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from typing import TYPE_CHECKING
 
 from scanr.core.plugin_base import FindingData, PluginBase, PluginCategory, Severity

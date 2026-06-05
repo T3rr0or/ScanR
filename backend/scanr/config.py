@@ -2,9 +2,8 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
-from typing import Annotated
 
-from pydantic import field_validator, model_validator
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -13,7 +12,7 @@ class Settings(BaseSettings):
 
     # Application
     app_name: str = "ScanR"
-    app_version: str = "0.10.1"
+    app_version: str = "0.10.3"
     debug: bool = False
     base_dir: Path = Path(__file__).parent.parent
 
@@ -74,21 +73,24 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def _check_required_secrets(self) -> "Settings":
         if not self.secret_key:
-            raise ValueError("SECRET_KEY must be set in the environment (generate with: python3 -c \"import secrets; print(secrets.token_urlsafe(32))\")")
+            raise ValueError(
+                'SECRET_KEY must be set in the environment (generate with: python3 -c "import secrets; print(secrets.token_urlsafe(32))")'
+            )
         if len(self.secret_key) < 32:
             raise ValueError("SECRET_KEY must be at least 32 characters")
         if self.vault_key:
             try:
                 from cryptography.fernet import Fernet
+
                 Fernet(self.vault_key.encode())
             except Exception:
                 raise ValueError(
                     "VAULT_KEY is not a valid Fernet key. "
-                    "Generate one with: python3 -c \"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())\""
+                    'Generate one with: python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"'
                 )
         return self
 
 
 @lru_cache
 def get_settings() -> Settings:
-    return Settings()
+    return Settings()  # type: ignore[call-arg]  # populated from environment by pydantic-settings

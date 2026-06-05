@@ -91,7 +91,6 @@ class SipScanPlugin(PluginBase):
 
     async def _probe_sip(self, ip: str, port: int) -> list[FindingData]:
         findings: list[FindingData] = []
-        loop = asyncio.get_running_loop()
 
         # SIP OPTIONS
         resp = await self._udp_send(ip, port, _sip_options(ip, port))

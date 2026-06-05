@@ -61,7 +61,7 @@ class ProtocolCheckPlugin(PluginBase):
             ctx.check_hostname = False
             ctx.verify_mode = ssl.CERT_NONE
             with socket.create_connection((ip, port), timeout=5) as sock:
-                with ctx.wrap_socket(sock) as ssock:
+                with ctx.wrap_socket(sock):
                     return True
         except Exception:
             return False

@@ -40,7 +40,6 @@ async def _revoke_jti(jti: str, exp: int, db: AsyncSession | None = None) -> Non
         # Redis unavailable — fall back to DB-based revocation
         logger.warning("Redis unavailable for JTI revocation, using DB fallback")
         if db is not None:
-            from scanr.models.base import Base
             # Store revocation in a simple approach: flag on user row (not ideal but works)
             # Better: just fail open — token expires naturally within ttl anyway
             pass

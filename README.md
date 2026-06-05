@@ -293,7 +293,7 @@ curl -X POST http://localhost:8000/api/v1/scans \
   }'
 ```
 
-API docs are available at **http://localhost:8000/api/v1/docs**.
+API docs are available at **http://localhost:8000/docs**.
 
 ---
 

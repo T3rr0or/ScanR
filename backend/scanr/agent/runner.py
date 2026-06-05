@@ -20,13 +20,11 @@ The agent:
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import os
 import subprocess
 import sys
 import xml.etree.ElementTree as ET
-from datetime import datetime, timezone
 
 import httpx
 
@@ -119,8 +117,6 @@ class AgentRunner:
 
     def _run_nmap(self, targets: list[str], port_range: str) -> dict:
         """Run nmap synchronously and parse XML output."""
-        target_str = " ".join(targets)
-
         # Map port_range to nmap flags
         if port_range == "top-1000":
             port_flags = ["--top-ports", "1000"]

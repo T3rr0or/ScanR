@@ -32,13 +32,13 @@ lint:
 	cd backend && ruff check scanr/ && mypy scanr/
 
 docker-up:
-	docker-compose up -d --build
+	docker compose up -d --build
 
 docker-logs:
-	docker-compose logs -f
+	docker compose logs -f
 
 docker-down:
-	docker-compose down
+	docker compose down
 
 nvd-update:
 	cd backend && python -m scanr.cli.main update-nvd

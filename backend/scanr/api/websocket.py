@@ -16,7 +16,6 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from sqlalchemy import select
 
 from scanr.auth.jwt_handler import decode_token
-from scanr.config import get_settings
 from scanr.db.session import AsyncSessionLocal
 from scanr.models import Scan
 

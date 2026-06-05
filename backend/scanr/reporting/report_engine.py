@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from scanr.config import get_settings
-from scanr.models import Finding, Host, Report, Scan, Screenshot, Target
+from scanr.models import Finding, Host, Report, Scan, Screenshot
 
 logger = logging.getLogger(__name__)
 settings = get_settings()

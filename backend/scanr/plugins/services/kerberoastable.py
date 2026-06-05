@@ -4,7 +4,8 @@ Requests TGS tickets for accounts with Service Principal Names set.
 These tickets can be cracked offline to recover service account passwords.
 """
 from __future__ import annotations
-import asyncio, logging
+import asyncio
+import logging
 from typing import TYPE_CHECKING
 from scanr.core.plugin_base import FindingData, PluginBase, PluginCategory, Severity
 
@@ -44,9 +45,6 @@ class KerberoastablePlugin(PluginBase):
 
     def _find_spns(self, dc_ip: str, username: str, password: str, domain: str) -> list[FindingData]:
         try:
-            from impacket.krb5.kerberosv5 import getKerberosTGT, getKerberosTGS
-            from impacket.krb5 import constants
-            from impacket.krb5.types import Principal
             import ldap3
         except ImportError:
             logger.warning("impacket/ldap3 not available — skipping kerberoasting check")

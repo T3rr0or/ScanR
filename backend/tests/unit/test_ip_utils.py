@@ -1,4 +1,3 @@
-import pytest
 from scanr.utils.ip_utils import classify_target, expand_targets, is_private, is_valid_ip
 
 

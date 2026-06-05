@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import re
 import socket
 from typing import TYPE_CHECKING
 
@@ -68,7 +67,7 @@ class Ipv6DiscoveryPlugin(PluginBase):
                 evidence_parts.append(f"  {n}")
 
         if router_info:
-            evidence_parts.append(f"\nRouter Advertisements:")
+            evidence_parts.append("\nRouter Advertisements:")
             for k, v in router_info.items():
                 evidence_parts.append(f"  {k}: {v}")
 
@@ -223,11 +222,11 @@ class Ipv6DiscoveryPlugin(PluginBase):
                 ),
             )
             if proc.returncode == 0 and "default via" in proc.stdout:
-                ra_lines = [l.strip() for l in proc.stdout.splitlines() if "default" in l]
+                ra_lines = [line.strip() for line in proc.stdout.splitlines() if "default" in line]
                 return {
                     "default_routes": len(ra_lines),
                     "routes": ra_lines[:5],
-                    "slaac_active": any("ra" in l.lower() for l in ra_lines),
+                    "slaac_active": any("ra" in line.lower() for line in ra_lines),
                 }
         except (subprocess.TimeoutExpired, FileNotFoundError):
             pass

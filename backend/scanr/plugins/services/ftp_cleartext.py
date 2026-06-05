@@ -10,7 +10,6 @@ from __future__ import annotations
 import asyncio
 import ftplib
 import logging
-import socket
 from typing import TYPE_CHECKING
 
 from scanr.core.plugin_base import FindingData, PluginBase, PluginCategory, Severity

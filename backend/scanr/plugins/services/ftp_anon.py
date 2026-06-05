@@ -42,7 +42,6 @@ class FtpAnonPlugin(PluginBase):
         return findings
 
     async def _try_anon_ftp(self, ip: str, port: int) -> bool:
-        import ftplib
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, self._ftp_sync, ip, port)
 

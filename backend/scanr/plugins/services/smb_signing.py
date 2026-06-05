@@ -8,7 +8,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import socket
-import struct
 from typing import TYPE_CHECKING
 
 from scanr.core.plugin_base import FindingData, PluginBase, PluginCategory, Severity

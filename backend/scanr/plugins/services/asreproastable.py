@@ -4,7 +4,8 @@ These accounts' AS-REP responses can be captured and cracked offline
 without any credentials.
 """
 from __future__ import annotations
-import asyncio, logging
+import asyncio
+import logging
 from typing import TYPE_CHECKING
 from scanr.core.plugin_base import FindingData, PluginBase, PluginCategory, Severity
 

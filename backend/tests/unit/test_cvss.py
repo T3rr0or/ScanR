@@ -1,4 +1,3 @@
-import pytest
 from scanr.utils.cvss import calculate_cvss3, severity_from_score
 
 

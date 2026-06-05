@@ -18,7 +18,7 @@ import time
 from typing import TYPE_CHECKING
 
 from scanr.core.plugin_base import FindingData, PluginBase, PluginCategory, Severity
-from scanr.plugins.web._ports import is_web_port, web_scheme
+from scanr.plugins.web._ports import is_web_port
 
 if TYPE_CHECKING:
     from scanr.core.context import ScanContext

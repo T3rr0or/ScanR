@@ -3,7 +3,7 @@ from __future__ import annotations
 from sqlalchemy import Boolean, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
-from .base import Base, TimestampMixin, new_uuid
+from .base import Base, TimestampMixin
 
 
 class Plugin(Base, TimestampMixin):

@@ -398,7 +398,6 @@ def _parse_gmsa(evidence: str, domain: str, finding: "Finding") -> list[dict]:
 
 def _parse_ldap_users(evidence: str, domain: str) -> list[dict]:
     """Parse LDAP/NetBIOS enumeration into User nodes."""
-    import re
     users: list[dict] = []
     for line in (evidence or "").splitlines():
         line = line.strip()

@@ -25,7 +25,6 @@ import logging
 import os
 import sys
 import tempfile
-from datetime import datetime, timezone
 
 import httpx
 
@@ -125,7 +124,7 @@ class FullAgentRunner:
 
         from scanr.core.engine import ScanEngine
         from scanr.db.init_db import seed_plugins
-        from scanr.models import Host, Port, Service
+        from scanr.models import Host, Port
         from scanr.models import Finding as FindingModel
         from scanr.models import Scan, Target
         from scanr.models.base import Base, new_uuid

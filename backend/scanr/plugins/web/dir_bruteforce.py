@@ -28,7 +28,7 @@ _WORDLIST_LARGE  = _SECLISTS_BASE / "directory-list-2.3-medium.txt"  # ~220k ent
 def _load_wordlist(path: Path) -> list[str]:
     try:
         lines = path.read_text(errors="ignore").splitlines()
-        return [l.strip().lstrip("/") for l in lines if l.strip() and not l.startswith("#")]
+        return [line.strip().lstrip("/") for line in lines if line.strip() and not line.startswith("#")]
     except Exception:
         return []
 

@@ -3,6 +3,11 @@ from __future__ import annotations
 from enum import Enum
 
 from datetime import datetime
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .host import Host
+    from .scan import Scan
 
 from sqlalchemy import Boolean, DateTime, Float, ForeignKey, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship

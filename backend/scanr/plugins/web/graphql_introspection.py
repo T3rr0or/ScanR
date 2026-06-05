@@ -55,7 +55,6 @@ class GraphQLIntrospectionPlugin(PluginBase):
                         )
                         if resp.status_code == 200 and "__schema" in resp.text:
                             # Count exposed types
-                            import json
                             try:
                                 data = resp.json()
                                 types = data.get("data", {}).get("__schema", {}).get("types", [])

@@ -9,7 +9,6 @@ from pydantic import BaseModel
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from scanr.config import get_settings
 from scanr.db import get_db
 from scanr.deps import get_current_user
 from scanr.models.user import User
@@ -69,7 +68,7 @@ async def upload_wordlist(
     except Exception:
         raise HTTPException(status_code=400, detail="File must be UTF-8 text")
 
-    lines = [l.strip() for l in text.splitlines() if l.strip() and not l.startswith("#")]
+    lines = [line.strip() for line in text.splitlines() if line.strip() and not line.startswith("#")]
     entry_count = len(lines)
 
     if entry_count == 0:

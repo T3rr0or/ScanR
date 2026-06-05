@@ -52,8 +52,6 @@ class LdapSigningPlugin(PluginBase):
 
     async def _check_ldap(self, ip: str, port: int) -> FindingData | None:
         """Probe LDAP server via raw TCP to detect signing requirements."""
-        import socket
-        import ssl
 
         try:
             # Build a minimal LDAP search request (no bind — anonymous probe)
@@ -123,7 +121,6 @@ class LdapSigningPlugin(PluginBase):
     async def _test_simple_bind(self, ip: str, port: int) -> bool | None:
         """Attempt unsigned simple bind. Returns True if signing is required (bind rejected)."""
         try:
-            import socket
             reader, writer = await asyncio.open_connection(ip, port)
             try:
                 # LDAP simple bind with null DN (anonymous fails if signing required)

@@ -4,7 +4,8 @@ Windows Remote Management (WinRM) on port 5985/5986 allows remote
 command execution. Finding that domain credentials work here is HIGH severity.
 """
 from __future__ import annotations
-import asyncio, logging
+import asyncio
+import logging
 from typing import TYPE_CHECKING
 from scanr.core.plugin_base import FindingData, PluginBase, PluginCategory, Severity
 

@@ -6,7 +6,6 @@ More targeted than the generic http_headers check.
 from __future__ import annotations
 
 import logging
-import re
 from typing import TYPE_CHECKING
 
 import httpx

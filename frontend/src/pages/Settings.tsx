@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { type LucideIcon, Key, Webhook, Copy, Check, Trash2, Plus, Send, Database, RefreshCw, Settings as SettingsIcon, User, Users, Monitor, ExternalLink, Terminal } from 'lucide-react'
 import { apiKeysApi, type APIKeyCreated } from '@/api/apiKeys'
@@ -147,8 +147,18 @@ function SystemSection() {
   const { data: upStatus } = useQuery({
     queryKey: ['update-status'],
     queryFn: () => api.get('/system/update/status').then(r => r.data),
-    refetchInterval: (q) => q.state.data?.state === 'running' || q.state.data?.state === 'queued' ? 2000 : false,
+    refetchInterval: (q) => {
+      const s = q.state.data?.state
+      return (s === 'running' || s === 'queued') ? 2000 : s === 'succeeded' ? 4000 : false
+    },
   })
+
+  // Auto-reload 8 s after restart fires so new containers have time to come up
+  useEffect(() => {
+    if (upStatus?.state !== 'succeeded') return
+    const t = setTimeout(() => window.location.reload(), 8000)
+    return () => clearTimeout(t)
+  }, [upStatus?.state])
 
   const updateMut = useMutation({
     mutationFn: () => api.post('/system/update'),
@@ -190,35 +200,106 @@ function SystemSection() {
                 background: 'var(--bg-1)', border: '1px solid var(--border)', borderRadius: 8,
                 padding: 14, marginTop: 8,
               }}>
-                {/* Progress display */}
+                <style>{`
+                  @keyframes scanr-shimmer {
+                    0%   { background-position: 200% center; }
+                    100% { background-position: -200% center; }
+                  }
+                  @keyframes scanr-pulse { 0%,100% { opacity:1 } 50% { opacity:.45 } }
+                `}</style>
+
+                {/* Step indicator */}
+                {(updateState === 'queued' || updateState === 'running' || updateState === 'succeeded') && (() => {
+                  const steps = ['Queued', 'Pulling images', 'Restarting']
+                  const activeStep = updateState === 'queued' ? 0 : updateState === 'running' ? 1 : 2
+                  return (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 0, marginBottom: 14 }}>
+                      {steps.map((label, idx) => {
+                        const done = idx < activeStep
+                        const active = idx === activeStep
+                        return (
+                          <div key={label} style={{ display: 'flex', alignItems: 'center', flex: idx < steps.length - 1 ? 1 : undefined }}>
+                            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
+                              <div style={{
+                                width: 22, height: 22, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                fontSize: 10, fontWeight: 700, flexShrink: 0,
+                                background: done ? 'var(--ok)' : active ? 'var(--accent)' : 'var(--bg-3)',
+                                color: done || active ? '#fff' : 'var(--text-3)',
+                                animation: active ? 'scanr-pulse 1.4s ease-in-out infinite' : 'none',
+                                border: active ? '2px solid color-mix(in oklch, var(--accent) 60%, transparent)' : '2px solid transparent',
+                                boxSizing: 'border-box',
+                              }}>
+                                {done ? '✓' : idx + 1}
+                              </div>
+                              <span style={{ fontSize: 10, color: done ? 'var(--ok)' : active ? 'var(--accent)' : 'var(--text-3)', whiteSpace: 'nowrap', fontWeight: active ? 600 : 400 }}>
+                                {label}
+                              </span>
+                            </div>
+                            {idx < steps.length - 1 && (
+                              <div style={{
+                                flex: 1, height: 2, margin: '0 4px', marginBottom: 14,
+                                background: done ? 'var(--ok)' : 'var(--border)',
+                                transition: 'background 0.4s',
+                              }} />
+                            )}
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )
+                })()}
+
+                {/* Progress bar */}
+                {(updateState === 'queued' || updateState === 'running' || updateState === 'succeeded') && (
+                  <div style={{ height: 6, borderRadius: 3, background: 'var(--bg-3)', overflow: 'hidden', marginBottom: 12 }}>
+                    {updateState === 'queued' && (
+                      <div style={{ width: '15%', height: '100%', borderRadius: 3, background: 'var(--accent)', animation: 'scanr-pulse 1.4s ease-in-out infinite' }} />
+                    )}
+                    {updateState === 'running' && (
+                      <div style={{
+                        width: '100%', height: '100%', borderRadius: 3,
+                        background: 'linear-gradient(90deg, transparent 0%, var(--accent) 40%, color-mix(in oklch, var(--accent) 80%, white) 50%, var(--accent) 60%, transparent 100%)',
+                        backgroundSize: '200% 100%',
+                        animation: 'scanr-shimmer 1.6s linear infinite',
+                      }} />
+                    )}
+                    {updateState === 'succeeded' && (
+                      <div style={{ width: '100%', height: '100%', borderRadius: 3, background: 'var(--ok)', transition: 'width 0.4s ease' }} />
+                    )}
+                  </div>
+                )}
+
+                {/* State messages */}
                 {updateState === 'queued' && (
-                  <div style={{ fontSize: 12, color: 'var(--text-2)' }}>⏳ Update queued — starting soon…</div>
+                  <div style={{ fontSize: 12, color: 'var(--text-2)' }}>Queued — starting soon…</div>
                 )}
                 {updateState === 'running' && (
                   <div>
-                    <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--accent)', marginBottom: 6 }}>🔄 Updating… ScanR may restart briefly.</div>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--accent)', marginBottom: 6 }}>Pulling images for v{latestVersion}…</div>
                     <pre style={{
                       fontSize: 10, color: 'var(--text-3)', background: 'var(--bg-0)',
-                      padding: 8, borderRadius: 4, maxHeight: 200, overflow: 'auto',
-                      whiteSpace: 'pre-wrap', wordBreak: 'break-all',
+                      padding: 8, borderRadius: 4, maxHeight: 180, overflow: 'auto',
+                      whiteSpace: 'pre-wrap', wordBreak: 'break-all', margin: 0,
                     }}>
-                      {upStatus?.log || 'Running update command…'}
+                      {upStatus?.log || 'Connecting to registry…'}
                     </pre>
                   </div>
                 )}
                 {updateState === 'succeeded' && (
-                  <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--ok)' }}>
-                    ✅ Update complete. ScanR restarted with v{latestVersion}.
-                    <button onClick={() => qc.invalidateQueries({ queryKey: ['system-version'] })} className="btn btn-ghost btn-sm" style={{ marginLeft: 8, fontSize: 11 }}>Refresh</button>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--ok)', display: 'flex', alignItems: 'center', gap: 8 }}>
+                    ScanR is restarting with v{latestVersion} — page will reload shortly.
+                    <button onClick={() => window.location.reload()} className="btn btn-ghost btn-sm" style={{ fontSize: 11 }}>Reload now</button>
                   </div>
                 )}
                 {updateState === 'failed' && (
                   <div>
-                    <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--sev-high)', marginBottom: 4 }}>❌ Update failed</div>
-                    <pre style={{ fontSize: 10, color: 'var(--sev-high)', padding: '8px', background: 'var(--bg-0)', borderRadius: 4, maxHeight: 200, overflow: 'auto', whiteSpace: 'pre-wrap' }}>
-                      {upStatus?.message}
-                      {upStatus?.log}
+                    <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--sev-high)', marginBottom: 4 }}>Update failed</div>
+                    <pre style={{ fontSize: 10, color: 'var(--sev-high)', padding: '8px', background: 'var(--bg-0)', borderRadius: 4, maxHeight: 200, overflow: 'auto', whiteSpace: 'pre-wrap', margin: 0 }}>
+                      {upStatus?.message}{'\n'}{upStatus?.log}
                     </pre>
+                    <button onClick={() => updateMut.mutate()} className="btn btn-primary btn-sm" style={{ marginTop: 8, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                      <RefreshCw size={13} /> Retry
+                    </button>
                   </div>
                 )}
                 {(updateState === 'idle' || !updateState) && (

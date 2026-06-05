@@ -3,8 +3,10 @@
 Uses domain credentials to enumerate active SMB sessions and local
 administrator group membership on each host.
 """
+
 from __future__ import annotations
-import asyncio, logging
+import asyncio
+import logging
 from typing import TYPE_CHECKING
 from scanr.core.plugin_base import FindingData, PluginBase, PluginCategory, Severity
 
@@ -48,10 +50,8 @@ class SmbAuthenticatedEnumPlugin(PluginBase):
             smb = SMBConnection(ip, ip, timeout=15)
             smb.login(username, password, domain=domain)
 
-            sessions = []
             try:
-                resp = smb.listOpenFiles()
-                sessions = resp if resp else []
+                smb.listOpenFiles()
             except Exception:
                 pass
 
@@ -65,20 +65,22 @@ class SmbAuthenticatedEnumPlugin(PluginBase):
             smb.logoff()
 
             if users_loggedon:
-                findings.append(FindingData(
-                    plugin_id=self.id,
-                    severity=Severity.info,
-                    title=f"Active SMB Sessions — {len(users_loggedon)} User(s) Logged On",
-                    description=(
-                        f"Authenticated SMB enumeration found {len(users_loggedon)} active user session(s) on {ip}. "
-                        "This reveals which users are currently active on the host."
-                    ),
-                    evidence="Logged-on users:\n" + "\n".join(f"  {u}" for u in users_loggedon[:20]),
-                    port_number=445,
-                    protocol="tcp",
-                    remediation="Restrict NetSessionEnum to Domain Admins via Group Policy "
-                                "(Network access: Restrict clients allowed to make remote calls to SAM).",
-                ))
+                findings.append(
+                    FindingData(
+                        plugin_id=self.id,
+                        severity=Severity.info,
+                        title=f"Active SMB Sessions — {len(users_loggedon)} User(s) Logged On",
+                        description=(
+                            f"Authenticated SMB enumeration found {len(users_loggedon)} active user session(s) on {ip}. "
+                            "This reveals which users are currently active on the host."
+                        ),
+                        evidence="Logged-on users:\n" + "\n".join(f"  {u}" for u in users_loggedon[:20]),
+                        port_number=445,
+                        protocol="tcp",
+                        remediation="Restrict NetSessionEnum to Domain Admins via Group Policy "
+                        "(Network access: Restrict clients allowed to make remote calls to SAM).",
+                    )
+                )
 
         except Exception as exc:
             logger.debug("SMB authenticated enum failed on %s: %s", ip, exc)

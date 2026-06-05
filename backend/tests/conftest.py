@@ -15,6 +15,7 @@ os.environ.setdefault("REDIS_URL", "redis://localhost:6379/0")
 os.environ.setdefault("SECURE_COOKIES", "false")
 if not os.environ.get("VAULT_KEY"):
     from cryptography.fernet import Fernet
+
     os.environ["VAULT_KEY"] = Fernet.generate_key().decode()
 
 from scanr.core.limiter import limiter  # noqa: E402
@@ -27,8 +28,8 @@ from scanr.main import create_app  # noqa: E402
 limiter.enabled = False
 
 # Patch Redis with fakeredis so auth (jti revocation) tests work without a real Redis
-import fakeredis.aioredis as _fake_aioredis
-import scanr.api.v1.auth as _auth_module
+import fakeredis.aioredis as _fake_aioredis  # noqa: E402
+import scanr.api.v1.auth as _auth_module  # noqa: E402
 
 _FAKE_REDIS_SERVER = _fake_aioredis.FakeServer()
 
@@ -61,13 +62,13 @@ async def test_app(db_engine):
     import scanr.db.session as session_module
 
     session_module.engine = db_engine
-    session_module.AsyncSessionLocal = async_sessionmaker(
-        bind=db_engine, class_=AsyncSession, expire_on_commit=False
-    )
+    session_module.AsyncSessionLocal = async_sessionmaker(bind=db_engine, class_=AsyncSession, expire_on_commit=False)
 
     import scanr.models  # noqa: F401 — registers all ORM classes with Base
     from scanr.models.base import Base
+
     async with db_engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)
 
     async with session_module.AsyncSessionLocal() as db:

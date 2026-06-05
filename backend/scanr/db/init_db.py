@@ -493,7 +493,7 @@ async def _seed_builtin_wordlists(db: AsyncSession) -> None:
 
         # Count lines
         with open(dst, encoding="utf-8") as f:
-            count = sum(1 for l in f if l.strip() and not l.startswith("#"))
+            count = sum(1 for line in f if line.strip() and not line.startswith("#"))
 
         # Upsert by file path
         existing = await db.execute(

@@ -75,6 +75,10 @@ def _split_update_command(command: str) -> list[list[str]]:
     return parts
 
 
+def _is_restart_cmd(argv: list[str]) -> bool:
+    return any(a in ('up', 'restart') for a in argv)
+
+
 async def _run_self_update() -> None:
     status = {
         "enabled": settings.self_update_enabled,
@@ -95,8 +99,30 @@ async def _run_self_update() -> None:
             raise RuntimeError(f"Update directory does not exist: {workdir}")
 
         env = os.environ.copy()
-        for argv in _split_update_command(settings.self_update_command):
+        commands = _split_update_command(settings.self_update_command)
+
+        for i, argv in enumerate(commands):
+            is_last = i == len(commands) - 1
             logs.append(f"$ {' '.join(shlex.quote(x) for x in argv)}")
+
+            if is_last and _is_restart_cmd(argv):
+                # Persist "succeeded" before firing the restart — the restart
+                # will kill this container so we cannot write status after it.
+                status.update({
+                    "state": "succeeded",
+                    "finished_at": _utc_now(),
+                    "exit_code": 0,
+                    "message": "Images pulled. Restarting services — ScanR will be back in a few seconds.",
+                    "log": "\n".join(logs)[-12000:],
+                })
+                await _set_update_status(status)
+                subprocess.Popen(
+                    argv, cwd=workdir, env=env,
+                    start_new_session=True,
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                )
+                return
+
             proc = subprocess.run(
                 argv,
                 cwd=workdir,
@@ -117,7 +143,7 @@ async def _run_self_update() -> None:
             "state": "succeeded",
             "finished_at": _utc_now(),
             "exit_code": exit_code,
-            "message": "Update completed. ScanR may restart briefly.",
+            "message": "Update completed.",
             "log": "\n".join(logs)[-12000:],
         })
     except Exception as exc:

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import logging
 import re
 from urllib.parse import quote
@@ -289,7 +288,7 @@ class AwsMetadataSsrfPlugin(PluginBase):
                                         "parameter is set to the metadata URL."
                                     ),
                                     evidence=f"Request: GET {base_url}/?{param}={probe_url}\nResponse {resp.status_code}: {resp.text[:300]}",
-                                    remediation=f"Validate and whitelist allowed URL destinations. Block access to 169.254.169.254 from application servers.",
+                                    remediation="Validate and whitelist allowed URL destinations. Block access to 169.254.169.254 from application servers.",
                                     references=["https://owasp.org/www-community/attacks/Server_Side_Request_Forgery"],
                                     port_number=port,
                                     protocol="tcp",

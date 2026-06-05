@@ -13,7 +13,7 @@ class Wordlist(Base, TimestampMixin):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     type: Mapped[str] = mapped_column(String(20), nullable=False)
-    # type: "usernames" | "passwords" | "credentials" | "paths"
+    # values: "usernames" | "passwords" | "credentials" | "paths"
     source: Mapped[str] = mapped_column(String(20), default="custom", nullable=False)
     # source: "builtin" | "custom" | "seclists"
     file_path: Mapped[str] = mapped_column(String(500), nullable=False)

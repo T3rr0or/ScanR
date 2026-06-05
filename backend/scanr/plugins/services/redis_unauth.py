@@ -55,7 +55,7 @@ class RedisUnauthPlugin(PluginBase):
                     await writer2.drain()
                     info = await asyncio.wait_for(reader2.read(512), timeout=3.0)
                     writer2.close()
-                    version_line = next((l for l in info.decode(errors="ignore").splitlines() if "redis_version" in l), "")
+                    version_line = next((line for line in info.decode(errors="ignore").splitlines() if "redis_version" in line), "")
                     version = version_line.split(":")[1].strip() if ":" in version_line else "unknown"
                 except Exception:
                     version = "unknown"

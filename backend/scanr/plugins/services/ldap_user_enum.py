@@ -4,7 +4,8 @@ Requires primary_domain credentials. Enumerates domain users, groups,
 and computers. Flags privileged group membership and stale accounts.
 """
 from __future__ import annotations
-import asyncio, logging
+import asyncio
+import logging
 from typing import TYPE_CHECKING
 from scanr.core.plugin_base import FindingData, PluginBase, PluginCategory, Severity
 

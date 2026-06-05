@@ -149,7 +149,7 @@ class SqliBlindPlugin(PluginBase):
             async with sem:
                 try:
                     t0 = time.monotonic()
-                    resp = await client.get(f"{base_url}{path}?{param}={time_p}")
+                    await client.get(f"{base_url}{path}?{param}={time_p}")
                     elapsed_ms = (time.monotonic() - t0) * 1000
                     # Triggered if response took ≥ sleep_secs - 0.5s longer than baseline
                     if elapsed_ms >= ((_SLEEP_SECS - 0.5) * 1000) and elapsed_ms > baseline_ms + 3000:

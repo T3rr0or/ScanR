@@ -3,6 +3,8 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { findingsApi, type Finding } from '@/api/findings'
 import { scansApi } from '@/api/scans'
 import { SevTag, relTime, EmptyState } from '@/components/ui'
+import SortableTh from '@/components/SortableTh'
+import { useSortableFindings } from '@/hooks/useSortableFindings'
 
 const SEVERITIES = ['', 'critical', 'high', 'medium', 'low', 'info']
 
@@ -465,7 +467,7 @@ export default function Findings() {
   })
 
   // Client-side filters: triage status + search
-  const findings = rawFindings.filter(f => {
+  const filteredFindings = rawFindings.filter(f => {
     // Triage filter
     if (triageStatus === 'open' && !(f.remediation_status === 'open' && !f.false_positive)) return false
     if (triageStatus === 'false_positive' && !f.false_positive) return false
@@ -482,6 +484,8 @@ export default function Findings() {
     }
     return true
   })
+
+  const { sorted: findings, sortKey, sortDir, toggleSort } = useSortableFindings(filteredFindings)
 
   // Bulk mutations
   const [bulkErr, setBulkErr] = useState<string | null>(null)
@@ -700,13 +704,13 @@ export default function Findings() {
                     style={{ cursor: 'pointer', accentColor: 'var(--accent)' }}
                   />
                 </th>
-                <th>Severity</th>
-                <th>Title</th>
+                <SortableTh label="Severity" sortKey="severity" active={sortKey} dir={sortDir} onSort={toggleSort} />
+                <SortableTh label="Title" sortKey="title" active={sortKey} dir={sortDir} onSort={toggleSort} />
                 <th>Host</th>
-                <th>Port</th>
-                <th title="Vulnerability Priority Rating = CVSS × KEV multiplier">VPR</th>
-                <th>CVSS</th>
-                <th>Status</th>
+                <SortableTh label="Port" sortKey="port" active={sortKey} dir={sortDir} onSort={toggleSort} />
+                <SortableTh label="VPR" sortKey="vpr" active={sortKey} dir={sortDir} onSort={toggleSort} />
+                <SortableTh label="CVSS" sortKey="cvss" active={sortKey} dir={sortDir} onSort={toggleSort} />
+                <SortableTh label="Status" sortKey="status" active={sortKey} dir={sortDir} onSort={toggleSort} />
                 <th>Tags</th>
               </tr>
             </thead>

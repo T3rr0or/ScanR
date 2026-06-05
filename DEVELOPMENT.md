@@ -24,6 +24,26 @@ gh release create v0.7.0 --title "ScanR v0.7.0" --generate-notes
 
 ## Local dev loop
 
+### Python environment
+
+Use a local virtual environment; system Python may reject direct `pip install` on PEP 668-managed distributions.
+
+```bash
+cd backend
+python3 -m venv .venv
+. .venv/bin/activate
+pip install -e ".[dev]"
+```
+
+### Frontend environment
+
+```bash
+cd frontend
+npm ci
+```
+
+### Common commands
+
 ```bash
 # Start all services
 docker compose up -d --build
@@ -39,6 +59,18 @@ docker compose restart api worker
 
 # Full rebuild after dependency changes
 docker compose up -d --build
+
+# Backend checks
+cd backend
+ruff check scanr/
+mypy scanr/
+pytest -q
+
+# Frontend checks
+cd frontend
+npm run lint
+npm audit --audit-level=moderate
+npm run build
 ```
 
 ---

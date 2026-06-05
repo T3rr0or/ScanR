@@ -32,7 +32,7 @@ services:
       dockerfile: Dockerfile
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/system/health')"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -53,7 +53,7 @@ services:
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:?ADMIN_PASSWORD must be set in .env}
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost}
       SECURE_COOKIES: ${SECURE_COOKIES:-true}
-      SELF_UPDATE_ENABLED: ${SELF_UPDATE_ENABLED:-false}
+      SELF_UPDATE_ENABLED: ${SELF_UPDATE_ENABLED:-true}
       SELF_UPDATE_COMMAND: ${SELF_UPDATE_COMMAND:-docker-compose pull && docker-compose up -d}
       SELF_UPDATE_WORKDIR: ${SELF_UPDATE_WORKDIR:-/opt/scanr}
       WORDLIST_DIR: /app/wordlists
@@ -61,6 +61,8 @@ services:
       - reports_data:/app/reports
       - nvd_data:/app/nvd_cache
       - wordlists_data:/app/wordlists
+      - /var/run/docker.sock:/var/run/docker.sock
+      - .:/opt/scanr:ro
     ports:
       - "8000:8000"
     command: uvicorn scanr.main:app --host 0.0.0.0 --port 8000

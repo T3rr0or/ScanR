@@ -1,7 +1,6 @@
 """ScanR CLI — interact with a running ScanR API or run scans directly."""
 from __future__ import annotations
 
-import json
 import sys
 
 import click

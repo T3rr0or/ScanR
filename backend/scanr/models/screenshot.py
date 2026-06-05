@@ -1,9 +1,15 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from sqlalchemy import ForeignKey, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base, TimestampMixin, new_uuid
+
+if TYPE_CHECKING:
+    from .host import Host
+    from .scan import Scan
 
 
 class Screenshot(Base, TimestampMixin):

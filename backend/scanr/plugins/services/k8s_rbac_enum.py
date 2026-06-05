@@ -9,8 +9,6 @@ Requires: credentials with type "k8s_token" and username containing the token.
 """
 from __future__ import annotations
 
-import asyncio
-import json
 import logging
 from typing import TYPE_CHECKING
 

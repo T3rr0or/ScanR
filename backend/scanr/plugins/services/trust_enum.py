@@ -60,7 +60,6 @@ class TrustEnumPlugin(PluginBase):
         self, ip: str, port: int, cred: dict, context: "ScanContext"
     ) -> FindingData | None:
         """Enumerate trusts via LDAP query or nltest."""
-        loop = asyncio.get_running_loop()
 
         trusts: list[dict] = []
 

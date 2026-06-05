@@ -68,7 +68,6 @@ async def _async_run_due_schedules() -> None:
 
 
 async def _fire_schedule(sched, session, now: datetime) -> None:
-    from sqlalchemy import select
 
     from scanr.models import Scan, ScanStatus, Target
     from scanr.models.base import new_uuid

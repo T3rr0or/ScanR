@@ -43,14 +43,14 @@ class CveMatcherPlugin(PluginBase):
                     severity=sev,
                     title=f"{cve_id}: {svc.product} {svc.version}{kev_note}",
                     description=cve.get("description", "") + (
-                        f"\n\nThis CVE is listed in the CISA Known Exploited Vulnerabilities catalog. "
+                        "\n\nThis CVE is listed in the CISA Known Exploited Vulnerabilities catalog. "
                         "Immediate patching is required." if is_kev else ""
                     ),
                     evidence=f"Detected: {svc.product} {svc.version} on port {port.number}",
                     remediation=f"Update {svc.product} to a patched version. See https://nvd.nist.gov/vuln/detail/{cve_id}",
                     references=[
                         f"https://nvd.nist.gov/vuln/detail/{cve_id}",
-                        *([f"https://www.cisa.gov/known-exploited-vulnerabilities-catalog"] if is_kev else []),
+                        *(["https://www.cisa.gov/known-exploited-vulnerabilities-catalog"] if is_kev else []),
                     ],
                     cvss_score=cve.get("cvss_score"),
                     cvss_vector=cve.get("cvss_vector"),

@@ -9,12 +9,11 @@ because it accepted our zero-padded credential.
 
 We use a safe, non-destructive detection probe that does NOT change any passwords.
 """
+
 from __future__ import annotations
 
 import asyncio
 import logging
-import os
-import struct
 from typing import TYPE_CHECKING
 
 from scanr.core.plugin_base import FindingData, PluginBase, PluginCategory, Severity
@@ -51,41 +50,41 @@ class ZerologonPlugin(PluginBase):
         if not dc_name:
             return []
 
-        vulnerable = await asyncio.get_running_loop().run_in_executor(
-            None, self._check_zerologon, host.ip, dc_name
-        )
+        vulnerable = await asyncio.get_running_loop().run_in_executor(None, self._check_zerologon, host.ip, dc_name)
         if not vulnerable:
             return []
 
-        return [FindingData(
-            plugin_id=self.id,
-            severity=Severity.critical,
-            title="ZeroLogon Vulnerability Detected (CVE-2020-1472)",
-            description=(
-                "The domain controller is vulnerable to CVE-2020-1472 (ZeroLogon). "
-                "An unauthenticated attacker on the network can exploit this vulnerability "
-                "to reset the domain controller's machine account password to empty, "
-                "then use impacket's secretsdump to extract all domain credentials, "
-                "resulting in complete domain compromise."
-            ),
-            evidence=(
-                f"Netlogon ServerAuthenticate3 on {host.ip} returned STATUS_ACCESS_DENIED "
-                f"when supplied with all-zero client credentials, indicating the server "
-                f"accepted the spoofed authenticator (DC name: {dc_name})."
-            ),
-            remediation=(
-                "Apply Microsoft's August 2020 security update (KB4571694) and enable "
-                "enforcement mode by setting FullSecureChannelProtection=1 in the registry. "
-                "See MS guidance: https://support.microsoft.com/kb/4557222"
-            ),
-            references=[
-                "https://nvd.nist.gov/vuln/detail/CVE-2020-1472",
-                "https://www.secura.com/blog/zero-logon",
-                "https://support.microsoft.com/kb/4557222",
-            ],
-            port_number=445,
-            protocol="tcp",
-        )]
+        return [
+            FindingData(
+                plugin_id=self.id,
+                severity=Severity.critical,
+                title="ZeroLogon Vulnerability Detected (CVE-2020-1472)",
+                description=(
+                    "The domain controller is vulnerable to CVE-2020-1472 (ZeroLogon). "
+                    "An unauthenticated attacker on the network can exploit this vulnerability "
+                    "to reset the domain controller's machine account password to empty, "
+                    "then use impacket's secretsdump to extract all domain credentials, "
+                    "resulting in complete domain compromise."
+                ),
+                evidence=(
+                    f"Netlogon ServerAuthenticate3 on {host.ip} returned STATUS_ACCESS_DENIED "
+                    f"when supplied with all-zero client credentials, indicating the server "
+                    f"accepted the spoofed authenticator (DC name: {dc_name})."
+                ),
+                remediation=(
+                    "Apply Microsoft's August 2020 security update (KB4571694) and enable "
+                    "enforcement mode by setting FullSecureChannelProtection=1 in the registry. "
+                    "See MS guidance: https://support.microsoft.com/kb/4557222"
+                ),
+                references=[
+                    "https://nvd.nist.gov/vuln/detail/CVE-2020-1472",
+                    "https://www.secura.com/blog/zero-logon",
+                    "https://support.microsoft.com/kb/4557222",
+                ],
+                port_number=445,
+                protocol="tcp",
+            )
+        ]
 
     def _get_dc_name(self, host: "Host") -> str | None:
         if host.hostname:
@@ -113,11 +112,7 @@ class ZerologonPlugin(PluginBase):
             # A patched DC rejects this immediately; a vulnerable DC returns
             # STATUS_ACCESS_DENIED (accepted authenticator but no session key).
             client_challenge = b"\x00" * 8
-            resp = nrpc.hNetrServerReqChallenge(
-                dce, NULL, dc_name + "\x00", client_challenge
-            )
-            server_challenge = resp["ServerChallenge"]
-
+            nrpc.hNetrServerReqChallenge(dce, NULL, dc_name + "\x00", client_challenge)
             zero_creds = b"\x00" * 8
             try:
                 nrpc.hNetrServerAuthenticate3(
