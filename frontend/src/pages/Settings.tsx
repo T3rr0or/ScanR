@@ -160,9 +160,14 @@ function SystemSection() {
     return () => clearTimeout(t)
   }, [upStatus?.state])
 
+  const [updateErr, setUpdateErr] = useState<string | null>(null)
   const updateMut = useMutation({
     mutationFn: () => api.post('/system/update'),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['update-status'] }),
+    onSuccess: () => { setUpdateErr(null); qc.invalidateQueries({ queryKey: ['update-status'] }) },
+    onError: (e: unknown) => {
+      const msg = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail ?? String(e)
+      setUpdateErr(msg)
+    },
   })
 
   const updateAvailable = ver?.update_available
@@ -303,15 +308,22 @@ function SystemSection() {
                   </div>
                 )}
                 {(updateState === 'idle' || !updateState) && (
-                  <button
-                    className="btn btn-primary"
-                    onClick={() => updateMut.mutate()}
-                    disabled={updateMut.isPending}
-                    style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
-                  >
-                    <RefreshCw size={14} style={{ animation: updateMut.isPending ? 'spin 1s linear infinite' : 'none' }} />
-                    {updateMut.isPending ? 'Starting…' : 'Update Now'}
-                  </button>
+                  <>
+                    {updateErr && (
+                      <div style={{ fontSize: 11, color: 'var(--sev-high)', marginBottom: 8, padding: '6px 8px', background: 'var(--bg-0)', borderRadius: 4 }}>
+                        {updateErr}
+                      </div>
+                    )}
+                    <button
+                      className="btn btn-primary"
+                      onClick={() => updateMut.mutate()}
+                      disabled={updateMut.isPending}
+                      style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                    >
+                      <RefreshCw size={14} style={{ animation: updateMut.isPending ? 'spin 1s linear infinite' : 'none' }} />
+                      {updateMut.isPending ? 'Starting…' : 'Update Now'}
+                    </button>
+                  </>
                 )}
               </div>
             ) : (

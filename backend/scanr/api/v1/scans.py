@@ -539,7 +539,6 @@ async def rerun_scan(
 
     # Copy scan-scoped credentials
     from scanr.models.scan_credential import ScanCredential
-    from scanr.models.credential import Credential
     cred_result = await db.execute(
         select(ScanCredential).where(ScanCredential.scan_id == scan_id)
     )
@@ -672,18 +671,10 @@ async def import_findings(
         evidence = "\n".join(evidence_parts) if evidence_parts else None
 
         # Extract host from request
-        host_ip = item.findtext("host") or ""
-        port = None
-        try:
-            port_str = item.findtext("port") or ""
-            port = int(port_str) if port_str else None
-        except ValueError:
-            pass
-
         finding = Finding(
             id=new_uuid(),
             scan_id=scan_id,
-            plugin_id=f"import.burp",
+            plugin_id="import.burp",
             severity=severity,
             title=title[:512],
             description=description,
