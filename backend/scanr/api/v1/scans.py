@@ -7,7 +7,7 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field, field_validator
-from sqlalchemy import select, text
+from sqlalchemy import select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -147,6 +147,72 @@ def _validate_profile_json(raw: str) -> str:
     return validated.model_dump_json(exclude_none=True)
 
 
+async def _validate_targets(targets: list[str]) -> None:
+    """Reject malformed targets and any that point at scanner infrastructure."""
+    from scanr.config import get_settings
+    from scanr.utils.ip_utils import expand_targets as _expand, is_forbidden_target
+
+    denylist = get_settings().scan_denylist
+    for raw in targets:
+        value = raw.strip()
+        if is_forbidden_target(value, denylist):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Target {value!r} is not allowed (scanner infrastructure / loopback / metadata).",
+            )
+        try:
+            expanded = list(_expand(value))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=f"Invalid target: {exc}")
+        for ip in expanded:
+            if is_forbidden_target(ip, denylist):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Target {value!r} expands to a disallowed address ({ip}).",
+                )
+
+
+async def _verify_credential_owner(
+    credential_id: str | None, user_id: str, db: AsyncSession
+) -> None:
+    """Ensure a referenced vault credential exists and belongs to the user."""
+    if not credential_id:
+        return
+    from scanr.models.credential import Credential
+
+    result = await db.execute(
+        select(Credential.id).where(
+            Credential.id == credential_id, Credential.user_id == user_id
+        )
+    )
+    if result.scalar_one_or_none() is None:
+        raise HTTPException(
+            status_code=404, detail="Credential not found or not owned by you"
+        )
+
+
+async def _transition_status(
+    scan_id: str,
+    user_id: str,
+    expected: ScanStatus,
+    new: ScanStatus,
+    db: AsyncSession,
+) -> bool:
+    """Atomically move a scan from `expected` to `new` status.
+
+    Returns True if exactly one row was updated. Doing the check and the write
+    in a single conditional UPDATE avoids a check-then-set race between
+    concurrent pause/resume requests.
+    """
+    result = await db.execute(
+        update(Scan)
+        .where(Scan.id == scan_id, Scan.user_id == user_id, Scan.status == expected)
+        .values(status=new)
+    )
+    await db.commit()
+    return result.rowcount == 1
+
+
 async def _get_own_scan(scan_id: str, user_id: str, db: AsyncSession) -> Scan:
     """Load a scan and verify it belongs to the requesting user. Raises 404 if not found."""
     result = await db.execute(
@@ -190,15 +256,14 @@ async def create_scan(
         raise HTTPException(status_code=400, detail="At least one target required")
 
     # Validate targets eagerly so we reject invalid input at API time, not scan execution time
-    from scanr.utils.ip_utils import expand_targets as _expand
-    for raw in body.targets:
-        try:
-            list(_expand(raw.strip()))
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=f"Invalid target: {exc}")
+    await _validate_targets(body.targets)
 
     if body.profile_json:
         body.profile_json = _validate_profile_json(body.profile_json)
+
+    # Verify any referenced vault credential belongs to the requesting user
+    # before binding it to the scan (prevents using another user's credential).
+    await _verify_credential_owner(body.credential_id, current_user.id, db)
 
     scan = Scan(
         id=new_uuid(),
@@ -422,11 +487,11 @@ async def pause_scan(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_scope("scans:write")),
 ):
-    scan = await _get_own_scan(scan_id, current_user.id, db)
-    if scan.status != ScanStatus.running:
-        raise HTTPException(status_code=409, detail=f"Cannot pause scan in status '{scan.status.value}'")
-    scan.status = ScanStatus.paused
-    await db.commit()
+    # Atomic transition: only one concurrent request can flip running -> paused.
+    if not await _transition_status(
+        scan_id, current_user.id, ScanStatus.running, ScanStatus.paused, db
+    ):
+        raise HTTPException(status_code=409, detail="Scan is not running")
     return {"status": "paused"}
 
 
@@ -436,11 +501,10 @@ async def resume_scan(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_scope("scans:write")),
 ):
-    scan = await _get_own_scan(scan_id, current_user.id, db)
-    if scan.status != ScanStatus.paused:
-        raise HTTPException(status_code=409, detail=f"Cannot resume scan in status '{scan.status.value}'")
-    scan.status = ScanStatus.running
-    await db.commit()
+    if not await _transition_status(
+        scan_id, current_user.id, ScanStatus.paused, ScanStatus.running, db
+    ):
+        raise HTTPException(status_code=409, detail="Scan is not paused")
     return {"status": "running"}
 
 

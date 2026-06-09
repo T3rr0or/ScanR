@@ -79,17 +79,21 @@ class AwsMetadataSsrfPlugin(PluginBase):
         if not web_ports:
             return []
 
-        # Check 1: Direct metadata access — all cloud providers, once per scan
-        for cache_attr, check_fn in [
-            ("_aws_direct_meta_checked", self._check_direct_metadata),
-            ("_azure_direct_meta_checked", self._check_azure_direct_metadata),
-            ("_gcp_direct_meta_checked", self._check_gcp_direct_metadata),
-        ]:
-            if not getattr(context, cache_attr, False):
-                setattr(context, cache_attr, True)
-                direct = await check_fn()
-                if direct:
-                    findings.append(direct)
+        # Check 1: Direct metadata access — all cloud providers, once per scan.
+        # These probe the cloud metadata endpoint *from the scanner host*, which
+        # can read the scanner's own IAM credentials if it runs in a cloud VM.
+        # Gate it behind an explicit opt-in so it is never done by surprise.
+        if context.profile_json().get("allow_cloud_metadata_probe", False):
+            for cache_attr, check_fn in [
+                ("_aws_direct_meta_checked", self._check_direct_metadata),
+                ("_azure_direct_meta_checked", self._check_azure_direct_metadata),
+                ("_gcp_direct_meta_checked", self._check_gcp_direct_metadata),
+            ]:
+                if not getattr(context, cache_attr, False):
+                    setattr(context, cache_attr, True)
+                    direct = await check_fn()
+                    if direct:
+                        findings.append(direct)
 
         # Check 2: SSRF via web app
         for port in web_ports:

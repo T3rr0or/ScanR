@@ -72,9 +72,14 @@ class NucleiRunnerPlugin(PluginBase):
             "-rate-limit", "50",
         ]
 
-        # Inject auth headers from scan credentials
+        # Inject auth headers from scan credentials. Reject any name/value
+        # containing CR/LF — a newline in a stored credential would otherwise
+        # split into additional nuclei arguments (header/argument injection).
         auth_headers = context.web_auth_headers()
         for name, value in auth_headers.items():
+            if any(c in f"{name}{value}" for c in ("\r", "\n")):
+                logger.warning("Skipping auth header with control characters: %r", name)
+                continue
             cmd.extend(["-H", f"{name}: {value}"])
 
         await context.log.info(f"$ {' '.join(cmd)}", phase="plugin")

@@ -5,7 +5,7 @@ import pytest
 async def test_create_scan(client, auth_headers):
     resp = await client.post("/api/v1/scans", headers=auth_headers, json={
         "name": "Test Scan",
-        "targets": ["127.0.0.1"],
+        "targets": ["192.0.2.10"],
         "profile": "quick",
     })
     assert resp.status_code == 201
@@ -51,7 +51,7 @@ async def test_create_scan_invalid_hostname_rejected(client, auth_headers):
 async def test_create_scan_profile_json_masscan_rate_capped(client, auth_headers):
     resp = await client.post("/api/v1/scans", headers=auth_headers, json={
         "name": "Too Fast",
-        "targets": ["127.0.0.1"],
+        "targets": ["192.0.2.10"],
         "profile": "custom",
         "profile_json": '{"masscan_rate": 9999999}',
     })
@@ -63,11 +63,57 @@ async def test_create_scan_profile_json_masscan_rate_capped(client, auth_headers
 async def test_create_scan_profile_json_port_range_capped(client, auth_headers):
     resp = await client.post("/api/v1/scans", headers=auth_headers, json={
         "name": "Too Many Ports",
-        "targets": ["127.0.0.1"],
+        "targets": ["192.0.2.10"],
         "profile": "custom",
         "profile_json": '{"port_range": "top-99999"}',
     })
     assert resp.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_create_scan_rejects_loopback_target(client, auth_headers):
+    """Scope guardrail: loopback targets (scanner host) are rejected."""
+    resp = await client.post("/api/v1/scans", headers=auth_headers, json={
+        "name": "Self scan",
+        "targets": ["127.0.0.1"],
+        "profile": "quick",
+    })
+    assert resp.status_code == 400
+    assert "not allowed" in resp.json()["detail"].lower()
+
+
+@pytest.mark.asyncio
+async def test_create_scan_rejects_metadata_target(client, auth_headers):
+    """Scope guardrail: cloud metadata link-local address is rejected."""
+    resp = await client.post("/api/v1/scans", headers=auth_headers, json={
+        "name": "Metadata grab",
+        "targets": ["169.254.169.254"],
+        "profile": "quick",
+    })
+    assert resp.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_create_scan_rejects_infra_hostname(client, auth_headers):
+    """Scope guardrail: infrastructure hostnames from the denylist are rejected."""
+    resp = await client.post("/api/v1/scans", headers=auth_headers, json={
+        "name": "DB scan",
+        "targets": ["postgres"],
+        "profile": "quick",
+    })
+    assert resp.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_create_scan_rejects_unowned_credential(client, auth_headers):
+    """A scan cannot reference a vault credential the user does not own."""
+    resp = await client.post("/api/v1/scans", headers=auth_headers, json={
+        "name": "Borrowed cred",
+        "targets": ["192.0.2.10"],
+        "profile": "quick",
+        "credential_id": "00000000-0000-0000-0000-000000000000",
+    })
+    assert resp.status_code == 404
 
 
 @pytest.mark.asyncio

@@ -308,6 +308,9 @@ API docs are available at **http://localhost:8000/docs**.
 | `ADMIN_PASSWORD` | required | Bootstrap admin password |
 | `ALLOWED_ORIGINS` | `http://localhost` | Comma-separated CORS origins |
 | `SECURE_COOKIES` | `true` | Mark auth cookies as secure |
+| `TRUSTED_PROXIES` | empty | Comma-separated proxy IPs/CIDRs allowed to set `X-Forwarded-For` for rate limiting |
+| `SCAN_TARGET_DENYLIST` | infra defaults | Hostnames/IPs that can never be scanned (merged with built-in loopback/link-local/metadata denylist) |
+| `SCAN_HEARTBEAT_TIMEOUT` | `300` | Seconds before a heartbeat-stale running scan is auto-failed |
 | `DATABASE_URL` | compose-managed | SQLAlchemy database URL |
 | `REDIS_URL` | compose-managed | Redis URL |
 | `CELERY_BROKER_URL` | compose-managed | Celery broker URL |
