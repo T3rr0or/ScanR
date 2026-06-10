@@ -15,6 +15,7 @@ from .scan_template import ScanTemplate
 from .schedule import Schedule
 from .screenshot import Screenshot
 from .service import Service
+from .setting import AppSetting
 from .target import Target, TargetType
 from .user import User, UserRole
 from .webhook import Webhook
@@ -53,4 +54,5 @@ __all__ = [
     "Webhook",
     "Exclusion",
     "Wordlist",
+    "AppSetting",
 ]

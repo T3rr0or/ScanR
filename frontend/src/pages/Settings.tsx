@@ -1,19 +1,21 @@
 import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { type LucideIcon, Key, Webhook, Copy, Check, Trash2, Plus, Send, Database, RefreshCw, Settings as SettingsIcon, User, Users, Monitor, ExternalLink, Terminal } from 'lucide-react'
+import { type LucideIcon, Key, Webhook, Copy, Check, Trash2, Plus, Send, Database, RefreshCw, Settings as SettingsIcon, User, Users, Monitor, ExternalLink, Terminal, Sparkles } from 'lucide-react'
 import { apiKeysApi, type APIKeyCreated } from '@/api/apiKeys'
 import { webhooksApi } from '@/api/webhooks'
 import api from '@/api/client'
 import { relTime } from '@/components/ui'
+import AutonomyModeInfo from '@/components/AutonomyModeInfo'
 import { useAuthStore } from '@/store/auth'
 
-type Tab = 'profile' | 'api-keys' | 'webhooks' | 'cve' | 'users' | 'system'
+type Tab = 'profile' | 'api-keys' | 'webhooks' | 'cve' | 'ai' | 'users' | 'system'
 
 const TABS: { id: Tab; label: string; Icon: LucideIcon; adminOnly?: boolean }[] = [
   { id: 'profile', label: 'Profile', Icon: User },
   { id: 'api-keys', label: 'API Keys', Icon: Key },
   { id: 'webhooks', label: 'Webhooks', Icon: Webhook },
   { id: 'cve', label: 'CVE Database', Icon: Database },
+  { id: 'ai', label: 'AI', Icon: Sparkles, adminOnly: true },
   { id: 'system', label: 'System', Icon: Monitor, adminOnly: true },
   { id: 'users', label: 'Users', Icon: Users, adminOnly: true },
 ]
@@ -67,11 +69,133 @@ export default function Settings() {
           {activeTab === 'api-keys' && <ApiKeysSection />}
           {activeTab === 'webhooks' && <WebhooksSection />}
           {activeTab === 'cve' && <CveDatabaseSection />}
+          {activeTab === 'ai' && role === 'admin' && <AiSection />}
           {activeTab === 'system' && role === 'admin' && <SystemSection />}
           {activeTab === 'users' && role === 'admin' && <UserManagementSection />}
         </div>
       </div>
     </div>
+  )
+}
+
+/* ── AI ─────────────────────────────────────────────────────── */
+const AI_PROVIDERS: { id: string; label: string; hint: string }[] = [
+  { id: 'anthropic', label: 'Anthropic (Claude)', hint: 'sk-ant-…' },
+  { id: 'openai', label: 'OpenAI (ChatGPT)', hint: 'sk-…' },
+  { id: 'deepseek', label: 'DeepSeek', hint: 'sk-…' },
+]
+
+interface AiStatus {
+  enabled: boolean
+  default_provider: string
+  default_model: string | null
+  providers: string[]
+  key_sources: Record<string, 'stored' | 'env' | null>
+  configured: Record<string, boolean>
+}
+
+function AiSection() {
+  const qc = useQueryClient()
+  const [inputs, setInputs] = useState<Record<string, string>>({})
+  const [showModes, setShowModes] = useState(false)
+
+  const { data: status } = useQuery<AiStatus>({
+    queryKey: ['ai-status'],
+    queryFn: () => api.get('/ai/status').then(r => r.data),
+  })
+
+  const invalidate = () => qc.invalidateQueries({ queryKey: ['ai-status'] })
+
+  const saveKey = useMutation({
+    mutationFn: (p: string) => api.put(`/ai/keys/${p}`, { api_key: inputs[p] }),
+    onSuccess: (_d, p) => { setInputs(s => ({ ...s, [p]: '' })); invalidate() },
+  })
+  const removeKey = useMutation({
+    mutationFn: (p: string) => api.delete(`/ai/keys/${p}`),
+    onSuccess: invalidate,
+  })
+  const setProvider = useMutation({
+    mutationFn: (p: string) => api.put('/ai/config', { provider: p }),
+    onSuccess: invalidate,
+  })
+
+  const sourceChip = (src: 'stored' | 'env' | null) => {
+    if (src === 'stored') return <span className="pill pill-completed">Stored</span>
+    if (src === 'env') return <span className="pill pill-pending">From env</span>
+    return <span className="pill pill-cancelled">Not set</span>
+  }
+
+  return (
+    <>
+      <div className="panel">
+        <div className="panel-head" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <span className="panel-title">AI providers</span>
+          <button className="btn btn-ghost btn-sm" onClick={() => setShowModes(true)}>
+            What are autonomy modes?
+          </button>
+        </div>
+        <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <p style={{ fontSize: 12.5, color: 'var(--text-2)', lineHeight: 1.55, margin: '0 0 6px' }}>
+            Add a provider API key to enable AI features (findings summaries today; report
+            narrative, false-positive testing, and autonomous pentest modes are on the roadmap).
+            Keys are encrypted at rest and never shown again after saving.
+          </p>
+
+          {AI_PROVIDERS.map(({ id, label, hint }) => {
+            const src = status?.key_sources?.[id] ?? null
+            const isDefault = status?.default_provider === id
+            return (
+              <div key={id} style={{ borderTop: '1px solid var(--border)', paddingTop: 10, marginTop: 2 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                  <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-1)' }}>{label}</span>
+                  {sourceChip(src)}
+                  {isDefault && <span className="pill pill-running">Default</span>}
+                  <span style={{ flex: 1 }} />
+                  {!isDefault && (
+                    <button className="btn btn-ghost btn-sm" onClick={() => setProvider.mutate(id)}>
+                      Set as default
+                    </button>
+                  )}
+                </div>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                  <input
+                    className="input"
+                    type="password"
+                    autoComplete="off"
+                    placeholder={src === 'stored' ? 'Replace stored key…' : `Enter API key (${hint})`}
+                    value={inputs[id] ?? ''}
+                    onChange={e => setInputs(s => ({ ...s, [id]: e.target.value }))}
+                    style={{ flex: 1, minWidth: 220 }}
+                  />
+                  <button
+                    className="btn btn-primary btn-sm"
+                    disabled={(inputs[id] ?? '').trim().length < 8 || saveKey.isPending}
+                    onClick={() => saveKey.mutate(id)}
+                  >
+                    Save
+                  </button>
+                  {src === 'stored' && (
+                    <button
+                      className="btn btn-ghost btn-sm"
+                      onClick={() => removeKey.mutate(id)}
+                      title="Remove stored key"
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  )}
+                </div>
+                {src === 'env' && (
+                  <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 4 }}>
+                    A key is set via environment variable. Saving here overrides it.
+                  </div>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      </div>
+      {showModes && <AutonomyModeInfo onClose={() => setShowModes(false)} />}
+    </>
   )
 }
 

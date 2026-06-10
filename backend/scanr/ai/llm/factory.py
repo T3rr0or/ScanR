@@ -35,7 +35,17 @@ def _api_key_for(provider: str, settings) -> str:
     }.get(provider, "")
 
 
-def build_provider(provider: str | None = None, model: str | None = None) -> LLMProvider:
+def build_provider(
+    provider: str | None = None,
+    model: str | None = None,
+    api_key: str | None = None,
+) -> LLMProvider:
+    """Build a provider.
+
+    ``api_key`` overrides the environment key when supplied (the API layer
+    passes a key resolved from the encrypted settings store, falling back to the
+    environment). When omitted, the environment variable is used.
+    """
     settings = get_settings()
     provider = (provider or settings.ai_provider or "anthropic").lower()
 
@@ -44,11 +54,11 @@ def build_provider(provider: str | None = None, model: str | None = None) -> LLM
             f"Unknown AI provider {provider!r}. Supported: {', '.join(SUPPORTED_PROVIDERS)}."
         )
 
-    api_key = _api_key_for(provider, settings)
+    api_key = api_key or _api_key_for(provider, settings)
     if not api_key:
         raise AIProviderError(
             f"No API key configured for provider {provider!r}. "
-            f"Set {provider.upper()}_API_KEY in the environment."
+            f"Add one in Settings, or set {provider.upper()}_API_KEY in the environment."
         )
 
     chosen_model = model or settings.ai_model or _DEFAULT_MODEL[provider]

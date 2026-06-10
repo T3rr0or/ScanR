@@ -263,10 +263,17 @@ Supported exports include HTML, PDF, JSON, CSV, and SARIF where configured.
 ## AI features
 
 ScanR can use an LLM to augment a scan. AI is **off unless you configure a
-provider key** — set one of `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, or
-`DEEPSEEK_API_KEY` and choose `AI_PROVIDER`. Install the optional AI extra
-(`pip install -e "backend[ai]"`, or build the image with it) so the provider
-SDKs are available; the base install runs fine without them.
+provider key**. Enter a key two ways:
+
+- **In the web app** (recommended): **Settings → AI** — paste a key for
+  Anthropic, OpenAI, or DeepSeek and pick the default provider. Keys are
+  encrypted at rest (Fernet, requires `VAULT_KEY`) and never shown again.
+- **Via environment**: set `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, or
+  `DEEPSEEK_API_KEY` and `AI_PROVIDER`. A key entered in the web app overrides
+  the environment value.
+
+The Docker image bundles the provider SDKs; for a source install add the AI
+extra (`pip install -e "backend[ai]"`). The base install runs fine without them.
 
 **Available now (assist mode — read-only):**
 
