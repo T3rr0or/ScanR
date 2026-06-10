@@ -67,6 +67,17 @@ class Settings(BaseSettings):
     # Webhook events
     webhook_scan_completed: bool = True  # fire webhook when scan finishes
 
+    # ── AI providers ─────────────────────────────────────────────────────────
+    # Default provider/model for AI features. Provider ∈ anthropic|openai|deepseek.
+    # ai_model blank = use the provider's built-in default. Keys are read from the
+    # environment and never logged or sent to the model as content.
+    ai_provider: str = "anthropic"
+    ai_model: str = ""
+    ai_max_tokens: int = 2048
+    openai_api_key: str = ""
+    deepseek_api_key: str = ""
+    anthropic_api_key: str = ""
+
     # Reports output directory
     reports_dir: Path = Path("./reports")
 

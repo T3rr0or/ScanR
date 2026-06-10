@@ -57,6 +57,12 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# AI providers — optional. Install with: pip install -e ".[ai]"
+# Imported lazily by the provider adapters; the base package runs without them.
+ai = [
+  "anthropic>=0.40.0",
+  "openai>=1.50.0",
+]
 dev = [
   "pytest>=8.0.0",
   "pytest-asyncio>=0.23.0",
