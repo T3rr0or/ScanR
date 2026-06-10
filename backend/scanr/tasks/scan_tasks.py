@@ -60,6 +60,17 @@ def run_scan_task(self, scan_id: str) -> dict:
             loop.close()
 
 
+async def _set_short_lock_timeout(db, seconds: int = 2) -> None:
+    """Keep maintenance updates from blocking behind long scan transactions."""
+    from scanr.config import get_settings
+    from sqlalchemy import text
+
+    if get_settings().database_url.startswith("postgres"):
+        # Postgres SET does not reliably accept bind params across drivers.
+        # Keep value static/safe; caller only needs a short timeout.
+        await db.execute(text("SET LOCAL lock_timeout = '2000ms'"))
+
+
 async def _heartbeat_loop(scan_id: str, interval: int = 30) -> None:
     """Periodically stamp scans.last_heartbeat while a scan runs.
 
@@ -75,6 +86,7 @@ async def _heartbeat_loop(scan_id: str, interval: int = 30) -> None:
             await asyncio.sleep(interval)
             try:
                 async with SessionLocal() as db:
+                    await _set_short_lock_timeout(db)
                     await db.execute(
                         update(Scan)
                         .where(Scan.id == scan_id)
@@ -134,31 +146,43 @@ async def _reap_stale_scans_async() -> dict:
     engine, SessionLocal = _make_engine_and_session()
     try:
         async with SessionLocal() as db:
-            # A scan is stale if it's running but its last heartbeat (or, for
-            # older rows, its start time) is older than the cutoff.
-            result = await db.execute(
-                select(Scan.id).where(
-                    Scan.status == ScanStatus.running,
-                    or_(
-                        Scan.last_heartbeat < cutoff,
-                        (Scan.last_heartbeat.is_(None)) & (Scan.started_at < cutoff),
-                    ),
-                )
-            )
-            stale_ids = [row[0] for row in result.all()]
-            if stale_ids:
-                await db.execute(
-                    update(Scan)
-                    .where(Scan.id.in_(stale_ids))
-                    .values(
-                        status=ScanStatus.failed,
-                        error_message="Scan worker stopped responding (heartbeat timeout)",
-                        finished_at=datetime.now(tz=timezone.utc),
+            try:
+                await _set_short_lock_timeout(db)
+                # A scan is stale if it's running but its last heartbeat (or, for
+                # older rows, its start time) is older than the cutoff. Skip rows
+                # currently locked by an active scan transaction so the watchdog
+                # never queues behind normal result writes or races completion.
+                result = await db.execute(
+                    select(Scan.id)
+                    .where(
+                        Scan.status == ScanStatus.running,
+                        or_(
+                            Scan.last_heartbeat < cutoff,
+                            (Scan.last_heartbeat.is_(None)) & (Scan.started_at < cutoff),
+                        ),
                     )
+                    .with_for_update(skip_locked=True)
                 )
-                await db.commit()
-                logger.warning("Reaped %d stale scan(s): %s", len(stale_ids), stale_ids)
-            return {"reaped": len(stale_ids)}
+                stale_ids = [row[0] for row in result.all()]
+                if stale_ids:
+                    await db.execute(
+                        update(Scan)
+                        .where(Scan.id.in_(stale_ids), Scan.status == ScanStatus.running)
+                        .values(
+                            status=ScanStatus.failed,
+                            error_message="Scan worker stopped responding (heartbeat timeout)",
+                            finished_at=datetime.now(tz=timezone.utc),
+                        )
+                    )
+                    await db.commit()
+                    logger.warning("Reaped %d stale scan(s): %s", len(stale_ids), stale_ids)
+                else:
+                    await db.commit()
+                return {"reaped": len(stale_ids)}
+            except Exception as exc:
+                await db.rollback()
+                logger.warning("stale-scan reaper skipped after lock timeout/error: %s", exc)
+                return {"reaped": 0, "error": str(exc)}
     finally:
         await engine.dispose()
 
@@ -189,6 +213,7 @@ async def _run_scan_async(task, scan_id: str) -> dict:
                 scan_engine = ScanEngine(scan_id=scan_id, db=db)
                 await scan_engine.run()
                 scan.status = ScanStatus.completed
+                scan.error_message = None
             except asyncio.CancelledError:
                 scan.status = ScanStatus.cancelled
                 raise

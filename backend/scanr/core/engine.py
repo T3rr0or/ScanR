@@ -696,6 +696,8 @@ class ScanEngine:
                         if new_rows:
                             self.db.add_all(new_rows)
                         await self.db.flush()
+                    # Release transaction locks before slow plugin checks run.
+                    await self.db.commit()
             except Exception as exc:
                 logger.error("Failed to persist host %s: %s", ip, exc, exc_info=True)
                 await context.log.error(f"Failed to persist host {ip}: {exc}", phase="engine", host=ip)
@@ -712,6 +714,7 @@ class ScanEngine:
                     .options(selectinload(Host.ports).selectinload(_Port.service))
                 )
                 host = host_result.scalar_one()
+                await self.db.commit()
 
             # Phase 4: Run applicable plugins concurrently
             host_ports = host_data.get("ports", [])
@@ -735,6 +738,7 @@ class ScanEngine:
 
             async with context.db_lock:
                 await self.db.flush()
+                await self.db.commit()
             context.hosts_scanned += 1
 
     async def _run_plugin(self, plugin, context, host, host_data, collector, sem):
@@ -836,6 +840,7 @@ class ScanEngine:
             )
             self.db.add(run)
             await self.db.flush()
+            await self.db.commit()
 
 
 def _elapsed_ms(started: float) -> int:
