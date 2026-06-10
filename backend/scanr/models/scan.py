@@ -44,6 +44,9 @@ class Scan(Base, TimestampMixin):
     celery_task_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Updated periodically while a scan runs; a watchdog marks scans whose
+    # heartbeat has gone stale (worker crash) as failed.
+    last_heartbeat: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id"), nullable=False, index=True)
     credential_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("credentials.id"), nullable=True)

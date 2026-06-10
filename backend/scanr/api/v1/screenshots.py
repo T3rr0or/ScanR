@@ -70,7 +70,13 @@ async def get_screenshot_image(
         raise HTTPException(status_code=404, detail="Screenshot not found")
     if not shot.file_path:
         raise HTTPException(status_code=404, detail="No image captured")
-    path = Path(shot.file_path)
+    from scanr.config import get_settings
+
+    path = Path(shot.file_path).resolve()
+    reports_dir = Path(get_settings().reports_dir).resolve()
+    # Defence in depth: only serve files from under the reports directory.
+    if not path.is_relative_to(reports_dir):
+        raise HTTPException(status_code=403, detail="Invalid screenshot path")
     if not path.exists():
         raise HTTPException(status_code=404, detail="Image file missing")
     return FileResponse(path, media_type="image/png")

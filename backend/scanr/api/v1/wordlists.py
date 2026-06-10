@@ -106,7 +106,11 @@ async def preview_wordlist(
     current_user: User = Depends(get_current_user),
 ):
     wl = await _get_accessible(wordlist_id, current_user.id, db)
-    path = Path(wl.file_path)
+    path = Path(wl.file_path).resolve()
+    # Defence in depth: never read outside the wordlist directory even if a
+    # stored file_path were tampered with.
+    if not path.is_relative_to(WORDLIST_DIR.resolve()):
+        raise HTTPException(status_code=403, detail="Invalid wordlist path")
     if not path.exists():
         raise HTTPException(status_code=404, detail="Wordlist file not found on disk")
     lines = []

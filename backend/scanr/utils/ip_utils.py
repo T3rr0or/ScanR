@@ -67,6 +67,45 @@ def is_private(ip: str) -> bool:
         return False
 
 
+# Hostnames that always resolve to the local host or cloud metadata services
+# and must never be scanned, regardless of deployment configuration.
+_FORBIDDEN_HOSTNAMES = {
+    "localhost",
+    "ip6-localhost",
+    "ip6-loopback",
+    "metadata.google.internal",
+}
+
+
+def is_forbidden_target(value: str, extra_denylist: set[str] | None = None) -> bool:
+    """Return True if a target points at the scanner's own infrastructure.
+
+    Rejects loopback, link-local (including 169.254.169.254 cloud metadata),
+    unspecified, multicast, and reserved addresses, plus a configurable set of
+    infrastructure hostnames. This is a scope guardrail to stop a scan from
+    pointing at the scanner host, its database/redis, or a cloud metadata
+    endpoint — never a substitute for the operator's own authorization.
+    """
+    v = value.strip().lower().rstrip(".")
+    if not v:
+        return False
+    if v in _FORBIDDEN_HOSTNAMES:
+        return True
+    if extra_denylist and v in extra_denylist:
+        return True
+    try:
+        addr = ipaddress.ip_address(v)
+    except ValueError:
+        return False  # plain hostname not on the denylist — allowed
+    return bool(
+        addr.is_loopback
+        or addr.is_link_local
+        or addr.is_unspecified
+        or addr.is_multicast
+        or addr.is_reserved
+    )
+
+
 def classify_target(value: str) -> str:
     """Return TargetType string for a raw target value."""
     value = value.strip()

@@ -2,20 +2,35 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 
 class ScanCredentialIn(BaseModel):
     """Inline credential provided at scan creation time."""
 
-    role: str = "primary_domain"  # "primary_domain" | "local_admin" | "ssh" | "snmp" | "api" | "generic"
-    type: str = "smb"             # credential type
-    username: str | None = None
-    domain: str | None = None     # AD domain e.g. "ACME.LOCAL" or "ACME"
-    password: str | None = None   # plaintext at input, encrypted before storage
-    extra: dict | None = None     # additional fields (community string, API key, etc.)
-    save_to_vault: bool = False   # if True, also create a global Credential record
-    vault_name: str | None = None  # name for vault entry if save_to_vault=True
+    role: str = Field(default="primary_domain", max_length=50)  # "primary_domain" | "local_admin" | "ssh" | ...
+    type: str = Field(default="smb", max_length=30)             # credential type
+    username: str | None = Field(default=None, max_length=255)
+    domain: str | None = Field(default=None, max_length=255)    # AD domain e.g. "ACME.LOCAL" or "ACME"
+    password: str | None = Field(default=None, max_length=1024)  # plaintext at input, encrypted before storage
+    extra: dict | None = None      # additional fields (community string, API key, etc.)
+    save_to_vault: bool = False    # if True, also create a global Credential record
+    vault_name: str | None = Field(default=None, max_length=255)  # name for vault entry if save_to_vault=True
+
+    @field_validator("extra")
+    @classmethod
+    def _bound_extra(cls, v: dict | None) -> dict | None:
+        """Cap the inline ``extra`` payload so a request can't bloat the DB."""
+        if v is None:
+            return v
+        if len(v) > 20:
+            raise ValueError("extra may contain at most 20 keys")
+        for key, val in v.items():
+            if len(str(key)) > 100:
+                raise ValueError("extra key too long (max 100 chars)")
+            if val is not None and len(str(val)) > 4096:
+                raise ValueError("extra value too long (max 4096 chars)")
+        return v
 
 
 class ScanCreate(BaseModel):

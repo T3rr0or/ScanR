@@ -159,7 +159,12 @@ class MasscanWrapper:
         except asyncio.TimeoutError:
             logger.warning("masscan timed out")
             if proc:
-                proc.kill()
+                try:
+                    proc.kill()
+                    # Reap the killed process so it doesn't linger as a zombie.
+                    await asyncio.wait_for(proc.wait(), timeout=5.0)
+                except Exception as exc:
+                    logger.warning("failed to reap masscan after timeout: %s", exc)
         except FileNotFoundError:
             logger.warning("masscan not found")
         except Exception as exc:

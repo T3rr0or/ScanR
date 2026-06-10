@@ -1,4 +1,10 @@
-from scanr.utils.ip_utils import classify_target, expand_targets, is_private, is_valid_ip
+from scanr.utils.ip_utils import (
+    classify_target,
+    expand_targets,
+    is_forbidden_target,
+    is_private,
+    is_valid_ip,
+)
 
 
 def test_expand_single_ip():
@@ -40,6 +46,30 @@ def test_is_private():
     assert is_private("10.0.0.1")
     assert is_private("172.16.0.1")
     assert not is_private("8.8.8.8")
+
+
+def test_is_forbidden_target_addresses():
+    # Loopback, link-local (incl. cloud metadata), unspecified, multicast
+    assert is_forbidden_target("127.0.0.1")
+    assert is_forbidden_target("::1")
+    assert is_forbidden_target("169.254.169.254")  # cloud metadata
+    assert is_forbidden_target("0.0.0.0")
+    assert is_forbidden_target("224.0.0.1")
+    # Routable / private targets are allowed (operator decides authorization)
+    assert not is_forbidden_target("8.8.8.8")
+    assert not is_forbidden_target("192.0.2.10")
+    assert not is_forbidden_target("10.0.0.5")
+
+
+def test_is_forbidden_target_hostnames():
+    assert is_forbidden_target("localhost")
+    assert is_forbidden_target("metadata.google.internal")
+    assert is_forbidden_target("LOCALHOST")  # case-insensitive
+    assert not is_forbidden_target("example.com")
+    # Extra denylist (scanner infra service names)
+    deny = {"postgres", "redis"}
+    assert is_forbidden_target("postgres", deny)
+    assert not is_forbidden_target("postgres")
 
 
 def test_classify_target():

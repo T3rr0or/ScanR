@@ -657,8 +657,12 @@ class ScanEngine:
                             status="up",
                         )
                         self.db.add(host)
-                        await self.db.flush()
 
+                        # IDs are generated in Python (new_uuid), so port/service
+                        # rows can be built with their foreign keys up front and
+                        # persisted in a single flush instead of one round trip
+                        # per port — far fewer DB calls for hosts with many ports.
+                        new_rows: list[object] = []
                         for p in host_data.get("ports", []):
                             port = Port(
                                 id=new_uuid(),
@@ -669,12 +673,11 @@ class ScanEngine:
                                 reason=p.get("reason"),
                                 banner=p.get("banner"),
                             )
-                            self.db.add(port)
-                            await self.db.flush()
+                            new_rows.append(port)
 
                             if p.get("service"):
                                 svc = p["service"]
-                                service = Service(
+                                new_rows.append(Service(
                                     id=new_uuid(),
                                     port_id=port.id,
                                     name=svc.get("name"),
@@ -683,14 +686,18 @@ class ScanEngine:
                                     extra_info=svc.get("extra_info"),
                                     cpe=svc.get("cpe"),
                                     tunnel=svc.get("tunnel"),
-                                )
-                                self.db.add(service)
+                                ))
                                 if svc.get("product"):
                                     await context.log.debug(
                                         f"{ip}:{p['number']} — {svc.get('product','')} {svc.get('version','')}".strip(),
                                         phase="fingerprint",
                                         host=ip,
                                     )
+                        if new_rows:
+                            self.db.add_all(new_rows)
+                        await self.db.flush()
+                    # Release transaction locks before slow plugin checks run.
+                    await self.db.commit()
             except Exception as exc:
                 logger.error("Failed to persist host %s: %s", ip, exc, exc_info=True)
                 await context.log.error(f"Failed to persist host {ip}: {exc}", phase="engine", host=ip)
@@ -707,6 +714,7 @@ class ScanEngine:
                     .options(selectinload(Host.ports).selectinload(_Port.service))
                 )
                 host = host_result.scalar_one()
+                await self.db.commit()
 
             # Phase 4: Run applicable plugins concurrently
             host_ports = host_data.get("ports", [])
@@ -730,6 +738,7 @@ class ScanEngine:
 
             async with context.db_lock:
                 await self.db.flush()
+                await self.db.commit()
             context.hosts_scanned += 1
 
     async def _run_plugin(self, plugin, context, host, host_data, collector, sem):
@@ -831,6 +840,7 @@ class ScanEngine:
             )
             self.db.add(run)
             await self.db.flush()
+            await self.db.commit()
 
 
 def _elapsed_ms(started: float) -> int:

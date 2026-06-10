@@ -43,6 +43,23 @@ class Settings(BaseSettings):
     max_concurrent_plugins: int = 20
     default_scan_timeout: int = 3600  # seconds
 
+    # Scan scope safety — hostnames/IPs that may never be a scan target because
+    # they belong to the scanner's own infrastructure. Comma-separated; merged
+    # with the built-in loopback/link-local/metadata denylist. Loopback,
+    # link-local (incl. 169.254.169.254 cloud metadata), multicast, reserved,
+    # and unspecified addresses are always rejected regardless of this list.
+    scan_target_denylist: str = "localhost,postgres,redis,db,scanr-api,scanr-worker"
+
+    # Trusted reverse-proxy peers. The X-Forwarded-For header is only honoured
+    # for rate limiting when the direct TCP peer is in this comma-separated list
+    # of IPs/CIDRs. Otherwise the header is ignored so clients cannot spoof
+    # their source IP to bypass rate limits. Empty = never trust XFF.
+    trusted_proxies: str = ""
+
+    # Mark scans whose worker heartbeat has gone stale (worker crash/OOM) as
+    # failed after this many seconds. Prevents scans stuck in "running" forever.
+    scan_heartbeat_timeout: int = 300  # seconds
+
     # Proxy — route HTTP scan traffic through Burp/SOCKS5 pivot
     proxy_url: str = ""  # e.g. http://127.0.0.1:8080 or socks5://127.0.0.1:1080
     proxy_type: str = ""  # auto-detected from URL scheme if empty; force "http" or "socks5"
@@ -69,6 +86,14 @@ class Settings(BaseSettings):
     @property
     def cors_origins(self) -> list[str]:
         return [o.strip() for o in self.allowed_origins.split(",") if o.strip()]
+
+    @property
+    def scan_denylist(self) -> set[str]:
+        return {h.strip().lower() for h in self.scan_target_denylist.split(",") if h.strip()}
+
+    @property
+    def trusted_proxy_list(self) -> list[str]:
+        return [p.strip() for p in self.trusted_proxies.split(",") if p.strip()]
 
     @model_validator(mode="after")
     def _check_required_secrets(self) -> "Settings":

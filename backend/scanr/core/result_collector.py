@@ -119,6 +119,9 @@ class ResultCollector:
                 setattr(scan, col, getattr(scan, col) + 1)
 
             await self.db.flush()
+            # Release the scans row lock promptly so heartbeat/watchdog updates
+            # are not blocked behind long-running host/plugin batches.
+            await self.db.commit()
             logger.debug("Finding recorded: %s [%s] on host %s", data.title, data.severity, host_id)
 
             # Fire webhook for critical findings (was dead code — fixed)

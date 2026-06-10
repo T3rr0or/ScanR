@@ -78,7 +78,10 @@ async def get_current_user(
     if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
 
-    # JWT users always get full access
+    # Interactive (JWT) sessions are granted the full scope set: scopes are an
+    # API-key concept used to restrict automation tokens, not a per-role limit
+    # on the web UI. Role-based authorization (e.g. require_admin) is still
+    # enforced separately on top of this for privileged endpoints.
     request.state.scopes = ["*"]
     return user
 

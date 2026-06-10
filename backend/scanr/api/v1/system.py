@@ -109,7 +109,15 @@ async def _run_self_update() -> None:
         if not workdir.exists():
             raise RuntimeError(f"Update directory does not exist: {workdir}")
 
-        env = os.environ.copy()
+        # Run with a minimal environment rather than copying the whole process
+        # environment (which holds SECRET_KEY, VAULT_KEY, DB and admin
+        # passwords). docker compose reads .env from the workdir, so the
+        # secrets it needs are still available without exposing the API's.
+        env = {
+            "PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"),
+            "HOME": os.environ.get("HOME", "/app"),
+            "SCANR_VERSION": os.environ.get("SCANR_VERSION", "latest"),
+        }
         commands = _split_update_command(settings.self_update_command)
 
         for i, argv in enumerate(commands):

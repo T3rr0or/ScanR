@@ -19,6 +19,9 @@ celery_app.conf.update(
     enable_utc=True,
     task_track_started=True,
     task_acks_late=True,
+    # With acks_late, a task killed by a lost worker is redelivered only when
+    # this is set; otherwise the message is dropped and the scan never recovers.
+    task_reject_on_worker_lost=True,
     worker_prefetch_multiplier=1,
     task_soft_time_limit=3600,
     task_time_limit=7200,
@@ -26,6 +29,10 @@ celery_app.conf.update(
         "check-schedules-every-minute": {
             "task": "scanr.tasks.scheduler_task.check_schedules_task",
             "schedule": 60.0,
+        },
+        "reap-stale-scans-every-2-minutes": {
+            "task": "scanr.reap_stale_scans",
+            "schedule": 120.0,
         },
     },
 )
