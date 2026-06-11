@@ -22,6 +22,7 @@ import {
 	Copy,
 	Link2,
 	RotateCcw,
+	Sparkles,
 } from "lucide-react";
 import { scansApi } from "@/api/scans";
 import { findingsApi, type Finding } from "@/api/findings";
@@ -54,7 +55,8 @@ type Tab =
 	| "topology"
 	| "screenshots"
 	| "exclusions"
-	| "chains";
+	| "chains"
+	| "ai";
 
 interface ScannedPort {
 	id: string;
@@ -353,6 +355,12 @@ export default function ScanDetail({ scanId, onBack }: Props) {
 					icon={<Camera size={12} />}
 					label="Screenshots"
 				/>
+				<TabBtn
+					active={tab === "ai"}
+					onClick={() => setTab("ai")}
+					icon={<Sparkles size={12} />}
+					label="AI"
+				/>
 				{isPending && (
 					<TabBtn
 						active={tab === "exclusions"}
@@ -474,6 +482,7 @@ export default function ScanDetail({ scanId, onBack }: Props) {
 				{tab === "screenshots" && <ScreenshotGallery scanId={scanId} />}
 				{tab === "exclusions" && <ExclusionsPanel scanId={scanId} />}
 				{tab === "chains" && <ChainsPanel chains={chains} />}
+				{tab === "ai" && <AiTab scanId={scanId} findings={findings} />}
 
 			{/* Topology host modal */}
 			{topoSelectedHost && (
@@ -484,6 +493,164 @@ export default function ScanDetail({ scanId, onBack }: Props) {
 					onClose={() => setTopoSelectedHost(null)}
 				/>
 			)}
+			</div>
+		</div>
+	);
+}
+
+function AiTab({ scanId, findings }: { scanId: string; findings: Finding[] }) {
+	const { data: status } = useQuery({
+		queryKey: ["ai-status"],
+		queryFn: () => api.get("/ai/status").then((r) => r.data),
+	});
+
+	const summaryMut = useMutation({
+		mutationFn: () => api.post(`/ai/scans/${scanId}/summary`).then((r) => r.data),
+	});
+	const reportMut = useMutation({
+		mutationFn: () => api.post(`/ai/scans/${scanId}/report`).then((r) => r.data),
+	});
+	const fpMut = useMutation({
+		mutationFn: () => api.post(`/ai/scans/${scanId}/false-positives`).then((r) => r.data),
+	});
+
+	const enabled = status?.enabled ?? false;
+	const pending = summaryMut.isPending || reportMut.isPending || fpMut.isPending;
+	const errOf = (m: { error: unknown }): string | null => {
+		const e = m.error as { response?: { data?: { detail?: string } }; message?: string } | null;
+		if (!e) return null;
+		return e.response?.data?.detail ?? e.message ?? "Request failed";
+	};
+
+	const findingTitle = (id: string) => findings.find((f) => f.id === id)?.title ?? id;
+
+	return (
+		<div className="page-pad" style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+			{!enabled && (
+				<div
+					style={{
+						padding: "12px 14px",
+						borderRadius: 8,
+						background: "var(--bg-2)",
+						border: "1px solid var(--border)",
+						fontSize: 12.5,
+						color: "var(--text-2)",
+					}}
+				>
+					No AI provider is configured. Add an API key in{" "}
+					<strong>Settings → AI</strong> to enable summaries, report narrative, and
+					false-positive testing.
+				</div>
+			)}
+
+			<div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+				<button
+					className="btn btn-primary btn-sm"
+					disabled={!enabled || pending}
+					onClick={() => summaryMut.mutate()}
+				>
+					{summaryMut.isPending ? "Summarizing…" : "Summarize findings"}
+				</button>
+				<button
+					className="btn btn-ghost btn-sm"
+					disabled={!enabled || pending}
+					onClick={() => reportMut.mutate()}
+				>
+					{reportMut.isPending ? "Generating…" : "Generate report narrative"}
+				</button>
+				<button
+					className="btn btn-ghost btn-sm"
+					disabled={!enabled || pending}
+					onClick={() => fpMut.mutate()}
+				>
+					{fpMut.isPending ? "Testing…" : "Test false positives"}
+				</button>
+			</div>
+
+			{[summaryMut, reportMut, fpMut].map((m, i) =>
+				errOf(m) ? (
+					<div key={i} style={{ color: "var(--sev-high)", fontSize: 12 }}>
+						{errOf(m)}
+					</div>
+				) : null,
+			)}
+
+			{summaryMut.data && (
+				<AiResultPanel
+					title="Summary"
+					meta={summaryMut.data}
+					text={summaryMut.data.summary}
+				/>
+			)}
+			{reportMut.data && (
+				<AiResultPanel
+					title="Report narrative"
+					meta={reportMut.data}
+					text={reportMut.data.report}
+				/>
+			)}
+			{fpMut.data && (
+				<div className="panel">
+					<div className="panel-head">
+						<span className="panel-title">
+							Likely false positives — {fpMut.data.flagged_count} of{" "}
+							{fpMut.data.assessed_count} assessed
+						</span>
+					</div>
+					<div style={{ padding: 14 }}>
+						{fpMut.data.items.length === 0 ? (
+							<div style={{ fontSize: 12.5, color: "var(--text-2)" }}>
+								No findings were flagged as likely false positives.
+							</div>
+						) : (
+							<ul style={{ margin: 0, paddingLeft: 18, display: "flex", flexDirection: "column", gap: 8 }}>
+								{fpMut.data.items.map((it: { id: string; confidence: string; reason: string }) => (
+									<li key={it.id} style={{ fontSize: 12.5, color: "var(--text-1)" }}>
+										<span style={{ fontWeight: 600 }}>{findingTitle(it.id)}</span>{" "}
+										<span className="pill pill-pending">{it.confidence}</span>
+										<div style={{ color: "var(--text-2)", marginTop: 2 }}>{it.reason}</div>
+									</li>
+								))}
+							</ul>
+						)}
+						<div style={{ fontSize: 11, color: "var(--text-3)", marginTop: 10 }}>
+							Advisory only — review before marking anything as a false positive.
+						</div>
+					</div>
+				</div>
+			)}
+		</div>
+	);
+}
+
+function AiResultPanel({
+	title,
+	text,
+	meta,
+}: {
+	title: string;
+	text: string;
+	meta: { provider: string; model: string; usage?: { input_tokens: number; output_tokens: number } };
+}) {
+	return (
+		<div className="panel">
+			<div className="panel-head" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+				<span className="panel-title">{title}</span>
+				<span style={{ fontSize: 11, color: "var(--text-3)" }}>
+					{meta.provider} · {meta.model}
+					{meta.usage ? ` · ${meta.usage.input_tokens + meta.usage.output_tokens} tok` : ""}
+				</span>
+			</div>
+			<div
+				style={{
+					padding: 14,
+					whiteSpace: "pre-wrap",
+					fontSize: 13,
+					lineHeight: 1.6,
+					color: "var(--text-1)",
+				}}
+			>
+				{text}
 			</div>
 		</div>
 	);

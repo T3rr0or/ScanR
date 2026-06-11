@@ -11,11 +11,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from scanr.ai.assist._common import fenced_block
 from scanr.ai.llm.base import LLMProvider, Msg, Usage
-
-_SEVERITY_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
-_MAX_FINDINGS = 200
-_MAX_DESC = 240
 
 _SYSTEM_PROMPT = (
     "You are a penetration-testing report assistant. You are given a list of "
@@ -41,29 +38,9 @@ class SummaryResult:
     finding_count: int
 
 
-def _finding_row(f: dict) -> str:
-    sev = (f.get("severity") or "info").lower()
-    title = (f.get("title") or "").replace("\n", " ").strip()
-    host = f.get("host_ip") or f.get("host_id") or "-"
-    port = f.get("port_number")
-    where = f"{host}:{port}" if port else str(host)
-    desc = (f.get("description") or "").replace("\n", " ").strip()
-    if len(desc) > _MAX_DESC:
-        desc = desc[:_MAX_DESC] + "…"
-    cvss = f.get("cvss_score")
-    cvss_s = f" cvss={cvss}" if cvss else ""
-    return f"- [{sev.upper()}] {title} @ {where}{cvss_s}" + (f"\n    {desc}" if desc else "")
-
-
 def build_messages(findings: list[dict]) -> list[Msg]:
     """Build the user message from compacted, severity-sorted findings."""
-    ranked = sorted(findings, key=lambda f: _SEVERITY_ORDER.get((f.get("severity") or "info").lower(), 4))
-    shown = ranked[:_MAX_FINDINGS]
-    rows = "\n".join(_finding_row(f) for f in shown)
-    omitted = len(ranked) - len(shown)
-    header = f"Findings ({len(findings)} total"
-    header += f", showing top {len(shown)} by severity)" if omitted > 0 else ")"
-    body = f"{header}:\n\n<findings>\n{rows}\n</findings>"
+    body, _ = fenced_block(findings)
     return [Msg(role="user", content=body)]
 
 

@@ -275,21 +275,29 @@ provider key**. Enter a key two ways:
 The Docker image bundles the provider SDKs; for a source install add the AI
 extra (`pip install -e "backend[ai]"`). The base install runs fine without them.
 
-**Available now (assist mode — read-only):**
+**Available now (assist mode — read-only):** open a scan and use the **AI** tab,
+or call the API directly.
 
-- **Findings summary** - generate an executive + technical narrative of a
-  scan's findings: `POST /api/v1/scans/{scan_id}/summary`. `GET /api/v1/ai/status`
-  reports which providers are configured.
+- **Findings summary** - executive + technical narrative of a scan's findings:
+  `POST /api/v1/scans/{scan_id}/summary`.
+- **Report narrative** - structured engagement-report sections (executive
+  summary, risk assessment, key findings, prioritized remediation):
+  `POST /api/v1/scans/{scan_id}/report`.
+- **False-positive testing** - the model reviews each finding's evidence and
+  flags the ones likely to be false positives, with confidence and a reason, for
+  analyst review (nothing is auto-hidden):
+  `POST /api/v1/scans/{scan_id}/false-positives`.
+
+`GET /api/v1/ai/status` reports which providers are configured.
 
 Assist mode only reasons over results ScanR already collected — it never sends
 new traffic to your targets, and finding text is passed to the model as fenced,
 untrusted data (never as instructions).
 
-**Planned (opt-in, gated):** report-narrative generation, false-positive
-re-testing, and an **autonomous pentest mode** that drives ScanR's own plugins
-and adapts in real time. The autonomy levels (`off → assist → guided →
-autonomous → autonomous + aggressive`) and the full safety model are documented
-in [`docs/ai-pentest-design.md`](docs/ai-pentest-design.md).
+**Planned (opt-in, gated):** an **autonomous pentest mode** that drives ScanR's
+own plugins and adapts in real time. The autonomy levels (`off → assist →
+guided → autonomous → autonomous + aggressive`) and the full safety model are
+documented in [`docs/ai-pentest-design.md`](docs/ai-pentest-design.md).
 
 Providers are swappable per request (ChatGPT/OpenAI, DeepSeek, Anthropic), so
 you can run a cheap model for high-volume work and a stronger one for analysis.

@@ -8,6 +8,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from scanr.ai import settings_store as store
+from scanr.ai.assist.false_positive import test_false_positives
+from scanr.ai.assist.report import generate_report_narrative
 from scanr.ai.assist.summary import summarize_findings
 from scanr.ai.llm.factory import (
     SUPPORTED_PROVIDERS,
@@ -111,6 +113,74 @@ async def set_config(
     await store.set_defaults(db, body.provider, body.model)
 
 
+async def _own_scan(db: AsyncSession, scan_id: str, user_id: str) -> Scan:
+    res = await db.execute(select(Scan).where(Scan.id == scan_id, Scan.user_id == user_id))
+    scan = res.scalar_one_or_none()
+    if scan is None:
+        raise HTTPException(status_code=404, detail="Scan not found")
+    return scan
+
+
+async def _build_provider(db: AsyncSession, provider: str | None, model: str | None):
+    """Resolve provider/model/key and construct the provider, or raise HTTPException."""
+    provider_name = provider or await store.get_default_provider(db)
+    chosen_model = model or (await store.get_default_model(db)) or None
+    if provider_name not in SUPPORTED_PROVIDERS:
+        raise HTTPException(status_code=400, detail=f"Unknown provider {provider_name!r}.")
+    api_key = await store.resolve_api_key(db, provider_name)
+    try:
+        return build_provider(provider_name, chosen_model, api_key=api_key)
+    except AIProviderError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+async def _load_findings(db: AsyncSession, scan_id: str, *, include_false_positives: bool) -> list[dict]:
+    q = (
+        select(Finding, Host.ip.label("host_ip"))
+        .outerjoin(Host, Finding.host_id == Host.id)
+        .where(Finding.scan_id == scan_id)
+    )
+    if not include_false_positives:
+        q = q.where(Finding.false_positive == False)  # noqa: E712
+    rows = (await db.execute(q)).all()
+    return [
+        {
+            "id": f.id,
+            "severity": f.severity,
+            "title": f.title,
+            "host_ip": ip,
+            "host_id": f.host_id,
+            "port_number": f.port_number,
+            "description": f.description,
+            "evidence": f.evidence,
+            "cvss_score": f.cvss_score,
+            "false_positive": f.false_positive,
+        }
+        for f, ip in rows
+    ]
+
+
+def _usage_dict(usage) -> dict:
+    return {
+        "input_tokens": usage.input_tokens,
+        "output_tokens": usage.output_tokens,
+        "cached_input_tokens": usage.cached_input_tokens,
+    }
+
+
+async def _run_assist(coro):
+    """Map provider/SDK errors from an assist coroutine to HTTP responses."""
+    try:
+        return await coro
+    except RuntimeError as exc:  # SDK not installed
+        raise HTTPException(status_code=503, detail=str(exc))
+    except HTTPException:
+        raise
+    except Exception as exc:  # provider/network error
+        logger.warning("AI assist call failed: %s", exc)
+        raise HTTPException(status_code=502, detail=f"AI provider error: {exc}")
+
+
 @router.post("/scans/{scan_id}/summary")
 @limiter.limit("10/minute")
 async def summarize_scan(
@@ -122,62 +192,74 @@ async def summarize_scan(
 ):
     """Generate an AI narrative summary of a scan's findings (read-only, assist mode)."""
     body = body or SummaryRequest()
-
-    own = await db.execute(select(Scan.id).where(Scan.id == scan_id, Scan.user_id == current_user.id))
-    if own.scalar_one_or_none() is None:
-        raise HTTPException(status_code=404, detail="Scan not found")
-
-    provider_name = body.provider or await store.get_default_provider(db)
-    model = body.model or (await store.get_default_model(db)) or None
-    if provider_name not in SUPPORTED_PROVIDERS:
-        raise HTTPException(status_code=400, detail=f"Unknown provider {provider_name!r}.")
-    api_key = await store.resolve_api_key(db, provider_name)
-
-    q = (
-        select(Finding, Host.ip.label("host_ip"))
-        .outerjoin(Host, Finding.host_id == Host.id)
-        .where(Finding.scan_id == scan_id)
+    await _own_scan(db, scan_id, current_user.id)
+    provider = await _build_provider(db, body.provider, body.model)
+    findings = await _load_findings(db, scan_id, include_false_positives=body.include_false_positives)
+    result = await _run_assist(
+        summarize_findings(provider, findings, max_tokens=get_settings().ai_max_tokens)
     )
-    if not body.include_false_positives:
-        q = q.where(Finding.false_positive == False)  # noqa: E712
-    rows = (await db.execute(q)).all()
-
-    findings = [
-        {
-            "severity": f.severity,
-            "title": f.title,
-            "host_ip": ip,
-            "host_id": f.host_id,
-            "port_number": f.port_number,
-            "description": f.description,
-            "cvss_score": f.cvss_score,
-        }
-        for f, ip in rows
-    ]
-
-    try:
-        provider = build_provider(provider_name, model, api_key=api_key)
-    except AIProviderError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-
-    settings = get_settings()
-    try:
-        result = await summarize_findings(provider, findings, max_tokens=settings.ai_max_tokens)
-    except RuntimeError as exc:  # SDK not installed
-        raise HTTPException(status_code=503, detail=str(exc))
-    except Exception as exc:  # provider/network error
-        logger.warning("AI summary failed for scan %s: %s", scan_id, exc)
-        raise HTTPException(status_code=502, detail=f"AI provider error: {exc}")
-
     return {
         "scan_id": scan_id,
         "summary": result.text,
         "provider": result.provider,
         "model": result.model,
         "finding_count": result.finding_count,
-        "usage": {
-            "input_tokens": result.usage.input_tokens,
-            "output_tokens": result.usage.output_tokens,
-            "cached_input_tokens": result.usage.cached_input_tokens,
-        },
+        "usage": _usage_dict(result.usage),
+    }
+
+
+@router.post("/scans/{scan_id}/report")
+@limiter.limit("10/minute")
+async def report_narrative(
+    request: Request,
+    scan_id: str,
+    body: SummaryRequest | None = None,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_scope("findings:read")),
+):
+    """Generate a structured engagement-report narrative (read-only, assist mode)."""
+    body = body or SummaryRequest()
+    scan = await _own_scan(db, scan_id, current_user.id)
+    provider = await _build_provider(db, body.provider, body.model)
+    findings = await _load_findings(db, scan_id, include_false_positives=body.include_false_positives)
+    result = await _run_assist(
+        generate_report_narrative(
+            provider, findings, scan_name=scan.name, max_tokens=max(get_settings().ai_max_tokens, 3072)
+        )
+    )
+    return {
+        "scan_id": scan_id,
+        "report": result.text,
+        "provider": result.provider,
+        "model": result.model,
+        "finding_count": result.finding_count,
+        "usage": _usage_dict(result.usage),
+    }
+
+
+@router.post("/scans/{scan_id}/false-positives")
+@limiter.limit("10/minute")
+async def false_positives(
+    request: Request,
+    scan_id: str,
+    body: SummaryRequest | None = None,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_scope("findings:read")),
+):
+    """Have the model flag findings likely to be false positives (advisory only)."""
+    body = body or SummaryRequest()
+    await _own_scan(db, scan_id, current_user.id)
+    provider = await _build_provider(db, body.provider, body.model)
+    findings = await _load_findings(db, scan_id, include_false_positives=False)
+    result = await _run_assist(
+        test_false_positives(provider, findings, max_tokens=get_settings().ai_max_tokens)
+    )
+    return {
+        "scan_id": scan_id,
+        "items": result.items,
+        "assessed_count": result.assessed_count,
+        "flagged_count": len(result.items),
+        "provider": result.provider,
+        "model": result.model,
+        "usage": _usage_dict(result.usage),
     }

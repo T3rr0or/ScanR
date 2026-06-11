@@ -73,6 +73,75 @@ async def test_summarize_calls_provider_and_returns_text():
     assert any("Open Redis" in m.content for m in call["messages"])
 
 
+@pytest.mark.asyncio
+async def test_report_empty_skips_provider():
+    from scanr.ai.assist.report import generate_report_narrative
+    provider = FakeProvider()
+    result = await generate_report_narrative(provider, [])
+    assert result.finding_count == 0
+    assert provider.calls == []
+    assert "Executive Summary" in result.text
+
+
+@pytest.mark.asyncio
+async def test_report_calls_provider():
+    from scanr.ai.assist.report import generate_report_narrative
+    provider = FakeProvider(reply="## Executive Summary\nstuff")
+    findings = [{"severity": "critical", "title": "RCE", "host_ip": "192.0.2.9"}]
+    result = await generate_report_narrative(provider, findings, scan_name="Engagement X")
+    assert result.text.startswith("## Executive Summary")
+    call = provider.calls[0]
+    assert "Engagement X" in call["messages"][0].content
+    assert "untrusted data" in call["system"].lower()
+
+
+def test_fp_parse_items_tolerant():
+    from scanr.ai.assist.false_positive import _parse_items
+    valid = {"a", "b"}
+    # fenced + prose around the array, an invented id, a bad confidence
+    text = (
+        "Here you go:\n```json\n"
+        '[{"id":"a","confidence":"high","reason":"weak match"},'
+        '{"id":"zzz","confidence":"high","reason":"invented"},'
+        '{"id":"b","confidence":"bogus","reason":"x"}]\n```'
+    )
+    items = _parse_items(text, valid)
+    ids = {i["id"] for i in items}
+    assert ids == {"a", "b"}  # invented id dropped
+    b = next(i for i in items if i["id"] == "b")
+    assert b["confidence"] == "low"  # invalid confidence normalized
+
+
+def test_fp_parse_items_garbage():
+    from scanr.ai.assist.false_positive import _parse_items
+    assert _parse_items("no json here", {"a"}) == []
+
+
+@pytest.mark.asyncio
+async def test_false_positives_flags_and_filters():
+    from scanr.ai.assist.false_positive import test_false_positives
+    provider = FakeProvider(reply='[{"id":"f1","confidence":"high","reason":"generic banner match"}]')
+    findings = [
+        {"id": "f1", "severity": "medium", "title": "Maybe", "host_ip": "192.0.2.1", "evidence": "weak"},
+        {"id": "f2", "severity": "low", "title": "Already FP", "host_ip": "192.0.2.1", "false_positive": True},
+    ]
+    result = await test_false_positives(provider, findings)
+    assert result.assessed_count == 1  # f2 skipped (already FP)
+    assert [i["id"] for i in result.items] == ["f1"]
+    # already-FP findings are not even sent to the model
+    assert "Already FP" not in provider.calls[0]["messages"][0].content
+
+
+@pytest.mark.asyncio
+async def test_false_positives_all_already_fp_skips_provider():
+    from scanr.ai.assist.false_positive import test_false_positives
+    provider = FakeProvider()
+    findings = [{"id": "f1", "severity": "low", "title": "x", "false_positive": True}]
+    result = await test_false_positives(provider, findings)
+    assert result.items == [] and result.assessed_count == 0
+    assert provider.calls == []
+
+
 def _settings(**overrides):
     base = dict(
         ai_provider="anthropic",
