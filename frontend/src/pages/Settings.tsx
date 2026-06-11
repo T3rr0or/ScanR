@@ -1,373 +1,809 @@
-import { useState, useEffect } from 'react'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { type LucideIcon, Key, Webhook, Copy, Check, Trash2, Plus, Send, Database, RefreshCw, Settings as SettingsIcon, User, Users, Monitor, ExternalLink, Terminal, Sparkles } from 'lucide-react'
-import { apiKeysApi, type APIKeyCreated } from '@/api/apiKeys'
-import { webhooksApi } from '@/api/webhooks'
-import api from '@/api/client'
-import { relTime } from '@/components/ui'
-import AutonomyModeInfo from '@/components/AutonomyModeInfo'
-import { useAuthStore } from '@/store/auth'
+import { useState, useEffect } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import {
+	type LucideIcon,
+	Key,
+	Webhook,
+	Copy,
+	Check,
+	Trash2,
+	Plus,
+	Send,
+	Database,
+	RefreshCw,
+	Settings as SettingsIcon,
+	User,
+	Users,
+	Monitor,
+	ExternalLink,
+	Terminal,
+	Sparkles,
+} from "lucide-react";
+import { apiKeysApi, type APIKeyCreated } from "@/api/apiKeys";
+import { webhooksApi } from "@/api/webhooks";
+import api from "@/api/client";
+import { relTime } from "@/components/ui";
+import AutonomyModeInfo from "@/components/AutonomyModeInfo";
+import { useAuthStore } from "@/store/auth";
 
-type Tab = 'profile' | 'api-keys' | 'webhooks' | 'cve' | 'ai' | 'users' | 'system'
+type Tab =
+	| "profile"
+	| "api-keys"
+	| "webhooks"
+	| "cve"
+	| "ai"
+	| "users"
+	| "system";
 
-const TABS: { id: Tab; label: string; Icon: LucideIcon; adminOnly?: boolean }[] = [
-  { id: 'profile', label: 'Profile', Icon: User },
-  { id: 'api-keys', label: 'API Keys', Icon: Key },
-  { id: 'webhooks', label: 'Webhooks', Icon: Webhook },
-  { id: 'cve', label: 'CVE Database', Icon: Database },
-  { id: 'ai', label: 'AI', Icon: Sparkles, adminOnly: true },
-  { id: 'system', label: 'System', Icon: Monitor, adminOnly: true },
-  { id: 'users', label: 'Users', Icon: Users, adminOnly: true },
-]
+const TABS: {
+	id: Tab;
+	label: string;
+	Icon: LucideIcon;
+	adminOnly?: boolean;
+}[] = [
+	{ id: "profile", label: "Profile", Icon: User },
+	{ id: "api-keys", label: "API Keys", Icon: Key },
+	{ id: "webhooks", label: "Webhooks", Icon: Webhook },
+	{ id: "cve", label: "CVE Database", Icon: Database },
+	{ id: "ai", label: "AI", Icon: Sparkles, adminOnly: true },
+	{ id: "system", label: "System", Icon: Monitor, adminOnly: true },
+	{ id: "users", label: "Users", Icon: Users, adminOnly: true },
+];
 
 export default function Settings() {
-  const [activeTab, setActiveTab] = useState<Tab>('profile')
-  const token = useAuthStore(s => s.token)
+	const [activeTab, setActiveTab] = useState<Tab>("profile");
+	const token = useAuthStore((s) => s.token);
 
-  // Decode role from JWT to show admin-only tabs
-  let role = 'analyst'
-  try {
-    const payload = JSON.parse(atob(token!.split('.')[1]))
-    role = payload.role ?? 'analyst'
-  } catch {}
+	// Decode role from JWT to show admin-only tabs
+	let role = "analyst";
+	try {
+		const payload = JSON.parse(atob(token!.split(".")[1]));
+		role = payload.role ?? "analyst";
+	} catch {}
 
-  const visibleTabs = TABS.filter(t => !t.adminOnly || role === 'admin')
+	const visibleTabs = TABS.filter((t) => !t.adminOnly || role === "admin");
 
-  return (
-    <div className="page-pad">
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 24 }}>
-        <SettingsIcon size={18} style={{ color: 'var(--accent)' }} />
-        <h1 style={{ fontSize: 20, fontWeight: 700, color: 'var(--text-0)' }}>Settings</h1>
-      </div>
+	return (
+		<div className="page-pad">
+			<div
+				style={{
+					display: "flex",
+					alignItems: "center",
+					gap: 10,
+					marginBottom: 24,
+				}}
+			>
+				<SettingsIcon size={18} style={{ color: "var(--accent)" }} />
+				<h1 style={{ fontSize: 20, fontWeight: 700, color: "var(--text-0)" }}>
+					Settings
+				</h1>
+			</div>
 
-      <div style={{ display: 'flex', gap: 20, alignItems: 'flex-start', flexWrap: 'wrap' }}>
-        <div className="panel" style={{ width: 'clamp(140px, 25vw, 180px)', flexShrink: 0, padding: 6 }}>
-          {visibleTabs.map(({ id, label, Icon }) => {
-            const active = activeTab === id
-            return (
-              <button
-                key={id}
-                onClick={() => setActiveTab(id)}
-                style={{
-                  display: 'flex', alignItems: 'center', gap: 8,
-                  width: '100%', padding: '8px 10px', borderRadius: 6,
-                  background: active ? 'var(--bg-3)' : 'transparent',
-                  border: active ? '1px solid var(--border)' : '1px solid transparent',
-                  cursor: 'pointer', textAlign: 'left', marginBottom: 2,
-                  color: active ? 'var(--text-0)' : 'var(--text-2)',
-                }}
-              >
-                <Icon size={13} />
-                <span style={{ fontSize: 13, fontWeight: active ? 600 : 400 }}>{label}</span>
-              </button>
-            )
-          })}
-        </div>
+			<div
+				style={{
+					display: "flex",
+					gap: 20,
+					alignItems: "flex-start",
+					flexWrap: "wrap",
+				}}
+			>
+				<div
+					className="panel"
+					style={{
+						width: "clamp(140px, 25vw, 180px)",
+						flexShrink: 0,
+						padding: 6,
+					}}
+				>
+					{visibleTabs.map(({ id, label, Icon }) => {
+						const active = activeTab === id;
+						return (
+							<button
+								key={id}
+								onClick={() => setActiveTab(id)}
+								style={{
+									display: "flex",
+									alignItems: "center",
+									gap: 8,
+									width: "100%",
+									padding: "8px 10px",
+									borderRadius: 6,
+									background: active ? "var(--bg-3)" : "transparent",
+									border: active
+										? "1px solid var(--border)"
+										: "1px solid transparent",
+									cursor: "pointer",
+									textAlign: "left",
+									marginBottom: 2,
+									color: active ? "var(--text-0)" : "var(--text-2)",
+								}}
+							>
+								<Icon size={13} />
+								<span style={{ fontSize: 13, fontWeight: active ? 600 : 400 }}>
+									{label}
+								</span>
+							</button>
+						);
+					})}
+				</div>
 
-        <div style={{ flex: 1, minWidth: 0, maxWidth: 700 }}>
-          {activeTab === 'profile' && <ProfileSection />}
-          {activeTab === 'api-keys' && <ApiKeysSection />}
-          {activeTab === 'webhooks' && <WebhooksSection />}
-          {activeTab === 'cve' && <CveDatabaseSection />}
-          {activeTab === 'ai' && role === 'admin' && <AiSection />}
-          {activeTab === 'system' && role === 'admin' && <SystemSection />}
-          {activeTab === 'users' && role === 'admin' && <UserManagementSection />}
-        </div>
-      </div>
-    </div>
-  )
+				<div style={{ flex: 1, minWidth: 0, maxWidth: 700 }}>
+					{activeTab === "profile" && <ProfileSection />}
+					{activeTab === "api-keys" && <ApiKeysSection />}
+					{activeTab === "webhooks" && <WebhooksSection />}
+					{activeTab === "cve" && <CveDatabaseSection />}
+					{activeTab === "ai" && role === "admin" && <AiSection />}
+					{activeTab === "system" && role === "admin" && <SystemSection />}
+					{activeTab === "users" && role === "admin" && (
+						<UserManagementSection />
+					)}
+				</div>
+			</div>
+		</div>
+	);
 }
 
 /* ── AI ─────────────────────────────────────────────────────── */
 const AI_PROVIDERS: { id: string; label: string; hint: string }[] = [
-  { id: 'anthropic', label: 'Anthropic (Claude)', hint: 'sk-ant-…' },
-  { id: 'openai', label: 'OpenAI (ChatGPT)', hint: 'sk-…' },
-  { id: 'deepseek', label: 'DeepSeek', hint: 'sk-…' },
-]
+	{ id: "anthropic", label: "Anthropic (Claude)", hint: "sk-ant-…" },
+	{ id: "openai", label: "OpenAI (ChatGPT)", hint: "sk-…" },
+	{ id: "deepseek", label: "DeepSeek", hint: "sk-…" },
+];
 
 interface AiStatus {
-  enabled: boolean
-  default_provider: string
-  providers: string[]
-  key_sources: Record<string, 'stored' | 'env' | null>
-  configured: Record<string, boolean>
-  model_overrides: Record<string, string | null>
-  default_models: Record<string, string>
-  effective_models: Record<string, string>
+	enabled: boolean;
+	default_provider: string;
+	providers: string[];
+	key_sources: Record<string, "stored" | "env" | null>;
+	configured: Record<string, boolean>;
+	model_overrides: Record<string, string | null>;
+	default_models: Record<string, string>;
+	effective_models: Record<string, string>;
 }
 
 function AiSection() {
-  const qc = useQueryClient()
-  const [inputs, setInputs] = useState<Record<string, string>>({})
-  // Model inputs are seeded from status once loaded; undefined = not yet edited.
-  const [models, setModels] = useState<Record<string, string>>({})
-  const [showModes, setShowModes] = useState(false)
+	const qc = useQueryClient();
+	const [inputs, setInputs] = useState<Record<string, string>>({});
+	const [models, setModels] = useState<Record<string, string>>({});
+	const [showModes, setShowModes] = useState(false);
+	// Model dropdown state
+	const [modelOpen, setModelOpen] = useState<string | null>(null);
+	const [modelLists, setModelLists] = useState<
+		Record<string, { id: string; display_name: string }[]>
+	>({});
+	const [loadingModels, setLoadingModels] = useState<Record<string, boolean>>(
+		{},
+	);
+	const [modelErr, setModelErr] = useState<Record<string, string>>({});
 
-  const { data: status } = useQuery<AiStatus>({
-    queryKey: ['ai-status'],
-    queryFn: () => api.get('/ai/status').then(r => r.data),
-  })
+	const { data: status } = useQuery<AiStatus>({
+		queryKey: ["ai-status"],
+		queryFn: () => api.get("/ai/status").then((r) => r.data),
+	});
 
-  const invalidate = () => qc.invalidateQueries({ queryKey: ['ai-status'] })
+	const invalidate = () => qc.invalidateQueries({ queryKey: ["ai-status"] });
 
-  const saveKey = useMutation({
-    mutationFn: (p: string) => api.put(`/ai/keys/${p}`, { api_key: inputs[p] }),
-    onSuccess: (_d, p) => { setInputs(s => ({ ...s, [p]: '' })); invalidate() },
-  })
-  const removeKey = useMutation({
-    mutationFn: (p: string) => api.delete(`/ai/keys/${p}`),
-    onSuccess: invalidate,
-  })
-  const setProvider = useMutation({
-    mutationFn: (p: string) => api.put('/ai/config', { provider: p }),
-    onSuccess: invalidate,
-  })
-  const saveModel = useMutation({
-    mutationFn: (p: string) => api.put(`/ai/models/${p}`, { model: (models[p] ?? '').trim() }),
-    onSuccess: (_d, p) => { setModels(s => { const n = { ...s }; delete n[p]; return n }); invalidate() },
-  })
+	const fetchModels = (provider: string) => {
+		if (modelLists[provider]?.length) {
+			setModelOpen((prev) => (prev === provider ? null : provider));
+			return;
+		}
+		setLoadingModels((s) => ({ ...s, [provider]: true }));
+		setModelErr((s) => {
+			const n = { ...s };
+			delete n[provider];
+			return n;
+		});
+		api
+			.get(`/ai/models/available/${provider}`)
+			.then((r) => {
+				setModelLists((s) => ({ ...s, [provider]: r.data.models }));
+				setModelOpen(provider);
+			})
+			.catch(() =>
+				setModelErr((s) => ({ ...s, [provider]: "Failed to fetch models" })),
+			)
+			.finally(() => setLoadingModels((s) => ({ ...s, [provider]: false })));
+	};
 
-  const sourceChip = (src: 'stored' | 'env' | null) => {
-    if (src === 'stored') return <span className="pill pill-completed">Stored</span>
-    if (src === 'env') return <span className="pill pill-pending">From env</span>
-    return <span className="pill pill-cancelled">Not set</span>
-  }
+	const saveKey = useMutation({
+		mutationFn: (p: string) => api.put(`/ai/keys/${p}`, { api_key: inputs[p] }),
+		onSuccess: (_d, p) => {
+			setInputs((s) => ({ ...s, [p]: "" }));
+			invalidate();
+		},
+	});
+	const removeKey = useMutation({
+		mutationFn: (p: string) => api.delete(`/ai/keys/${p}`),
+		onSuccess: invalidate,
+	});
+	const setProvider = useMutation({
+		mutationFn: (p: string) => api.put("/ai/config", { provider: p }),
+		onSuccess: invalidate,
+	});
+	const saveModel = useMutation({
+		mutationFn: (p: string) =>
+			api.put(`/ai/models/${p}`, { model: (models[p] ?? "").trim() }),
+		onSuccess: (_d, p) => {
+			setModels((s) => {
+				const n = { ...s };
+				delete n[p];
+				return n;
+			});
+			invalidate();
+		},
+	});
 
-  return (
-    <>
-      <div className="panel">
-        <div className="panel-head" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <span className="panel-title">AI providers</span>
-          <button className="btn btn-ghost btn-sm" onClick={() => setShowModes(true)}>
-            What are autonomy modes?
-          </button>
-        </div>
-        <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 8 }}>
-          <p style={{ fontSize: 12.5, color: 'var(--text-2)', lineHeight: 1.55, margin: '0 0 6px' }}>
-            Add a provider API key to enable AI features (findings summaries, report narrative,
-            and false-positive testing today; autonomous pentest modes are on the roadmap).
-            Optionally override the model per provider. Keys are encrypted at rest and never
-            shown again after saving.
-          </p>
+	const sourceChip = (src: "stored" | "env" | null) => {
+		if (src === "stored")
+			return <span className="pill pill-completed">Stored</span>;
+		if (src === "env")
+			return <span className="pill pill-pending">From env</span>;
+		return <span className="pill pill-cancelled">Not set</span>;
+	};
 
-          {AI_PROVIDERS.map(({ id, label, hint }) => {
-            const src = status?.key_sources?.[id] ?? null
-            const isDefault = status?.default_provider === id
-            return (
-              <div key={id} style={{ borderTop: '1px solid var(--border)', paddingTop: 10, marginTop: 2 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-                  <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-1)' }}>{label}</span>
-                  {sourceChip(src)}
-                  {isDefault && <span className="pill pill-running">Default</span>}
-                  <span style={{ flex: 1 }} />
-                  {!isDefault && (
-                    <button className="btn btn-ghost btn-sm" onClick={() => setProvider.mutate(id)}>
-                      Set as default
-                    </button>
-                  )}
-                </div>
-                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                  <input
-                    className="input"
-                    type="password"
-                    autoComplete="off"
-                    placeholder={src === 'stored' ? 'Replace stored key…' : `Enter API key (${hint})`}
-                    value={inputs[id] ?? ''}
-                    onChange={e => setInputs(s => ({ ...s, [id]: e.target.value }))}
-                    style={{ flex: 1, minWidth: 220 }}
-                  />
-                  <button
-                    className="btn btn-primary btn-sm"
-                    disabled={(inputs[id] ?? '').trim().length < 8 || saveKey.isPending}
-                    onClick={() => saveKey.mutate(id)}
-                  >
-                    Save
-                  </button>
-                  {src === 'stored' && (
-                    <button
-                      className="btn btn-ghost btn-sm"
-                      onClick={() => removeKey.mutate(id)}
-                      title="Remove stored key"
-                    >
-                      <Trash2 size={13} />
-                    </button>
-                  )}
-                </div>
-                {src === 'env' && (
-                  <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 4 }}>
-                    A key is set via environment variable. Saving here overrides it.
-                  </div>
-                )}
+	return (
+		<>
+			<div className="panel">
+				<div
+					className="panel-head"
+					style={{
+						display: "flex",
+						alignItems: "center",
+						justifyContent: "space-between",
+					}}
+				>
+					<span className="panel-title">AI providers</span>
+					<button
+						className="btn btn-ghost btn-sm"
+						onClick={() => setShowModes(true)}
+					>
+						What are autonomy modes?
+					</button>
+				</div>
+				<div
+					style={{
+						padding: 16,
+						display: "flex",
+						flexDirection: "column",
+						gap: 8,
+					}}
+				>
+					<p
+						style={{
+							fontSize: 12.5,
+							color: "var(--text-2)",
+							lineHeight: 1.55,
+							margin: "0 0 6px",
+						}}
+					>
+						Add a provider API key to enable AI features (findings summaries,
+						report narrative, and false-positive testing today; autonomous
+						pentest modes are on the roadmap). Optionally override the model per
+						provider. Keys are encrypted at rest and never shown again after
+						saving.
+					</p>
 
-                {/* Model override */}
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 8 }}>
-                  <span style={{ fontSize: 11, color: 'var(--text-3)', minWidth: 44 }}>Model</span>
-                  <input
-                    className="input"
-                    autoComplete="off"
-                    placeholder={`Default: ${status?.default_models?.[id] ?? ''}`}
-                    value={models[id] ?? status?.model_overrides?.[id] ?? ''}
-                    onChange={e => setModels(s => ({ ...s, [id]: e.target.value }))}
-                    style={{ flex: 1, minWidth: 220 }}
-                  />
-                  <button
-                    className="btn btn-ghost btn-sm"
-                    disabled={models[id] === undefined || saveModel.isPending}
-                    onClick={() => saveModel.mutate(id)}
-                    title="Leave blank and save to use the provider default"
-                  >
-                    Save model
-                  </button>
-                </div>
-                <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 4 }}>
-                  Using: <code>{status?.effective_models?.[id] ?? '—'}</code>
-                  {status?.model_overrides?.[id] ? ' (custom)' : ' (default)'}
-                </div>
-              </div>
-            )
-          })}
-        </div>
-      </div>
-      {showModes && <AutonomyModeInfo onClose={() => setShowModes(false)} />}
-    </>
-  )
+					{AI_PROVIDERS.map(({ id, label, hint }) => {
+						const src = status?.key_sources?.[id] ?? null;
+						const isDefault = status?.default_provider === id;
+						return (
+							<div
+								key={id}
+								style={{
+									borderTop: "1px solid var(--border)",
+									paddingTop: 10,
+									marginTop: 2,
+								}}
+							>
+								<div
+									style={{
+										display: "flex",
+										alignItems: "center",
+										gap: 8,
+										marginBottom: 6,
+									}}
+								>
+									<span
+										style={{
+											fontSize: 13,
+											fontWeight: 600,
+											color: "var(--text-1)",
+										}}
+									>
+										{label}
+									</span>
+									{sourceChip(src)}
+									{isDefault && (
+										<span className="pill pill-running">Default</span>
+									)}
+									<span style={{ flex: 1 }} />
+									{!isDefault && (
+										<button
+											className="btn btn-ghost btn-sm"
+											onClick={() => setProvider.mutate(id)}
+										>
+											Set as default
+										</button>
+									)}
+								</div>
+								<div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+									<input
+										className="input"
+										type="password"
+										autoComplete="off"
+										placeholder={
+											src === "stored"
+												? "Replace stored key…"
+												: `Enter API key (${hint})`
+										}
+										value={inputs[id] ?? ""}
+										onChange={(e) =>
+											setInputs((s) => ({ ...s, [id]: e.target.value }))
+										}
+										style={{ flex: 1, minWidth: 220 }}
+									/>
+									<button
+										className="btn btn-primary btn-sm"
+										disabled={
+											(inputs[id] ?? "").trim().length < 8 || saveKey.isPending
+										}
+										onClick={() => saveKey.mutate(id)}
+									>
+										Save
+									</button>
+									{src === "stored" && (
+										<button
+											className="btn btn-ghost btn-sm"
+											onClick={() => removeKey.mutate(id)}
+											title="Remove stored key"
+										>
+											<Trash2 size={13} />
+										</button>
+									)}
+								</div>
+								{src === "env" && (
+									<div
+										style={{
+											fontSize: 11,
+											color: "var(--text-3)",
+											marginTop: 4,
+										}}
+									>
+										A key is set via environment variable. Saving here overrides
+										it.
+									</div>
+								)}
+
+								{/* Model override — dropdown */}
+								<div
+									style={{
+										display: "flex",
+										gap: 8,
+										alignItems: "center",
+										flexWrap: "wrap",
+										marginTop: 8,
+									}}
+								>
+									<span
+										style={{
+											fontSize: 11,
+											color: "var(--text-3)",
+											minWidth: 44,
+										}}
+									>
+										Model
+									</span>
+									<div style={{ position: "relative", flex: 1, minWidth: 220 }}>
+										<div
+											onClick={() => fetchModels(id)}
+											style={{
+												display: "flex",
+												alignItems: "center",
+												justifyContent: "space-between",
+												padding: "6px 10px",
+												borderRadius: 6,
+												border: "1px solid var(--border)",
+												cursor: "pointer",
+												fontSize: 12.5,
+												color: "var(--text-1)",
+												background: "var(--bg-0)",
+												minHeight: 32,
+											}}
+										>
+											<span
+												style={{
+													color:
+														models[id] != null && models[id] !== ""
+															? "var(--text-0)"
+															: "var(--text-3)",
+												}}
+											>
+												{models[id] != null && models[id] !== ""
+													? models[id]
+													: loadingModels[id]
+														? "Loading models…"
+														: `Default: ${status?.default_models?.[id] ?? ""}`}
+											</span>
+											<span style={{ fontSize: 10, color: "var(--text-3)" }}>
+												▼
+											</span>
+										</div>
+										{modelOpen === id && modelLists[id] && (
+											<div
+												style={{
+													position: "absolute",
+													top: "100%",
+													left: 0,
+													right: 0,
+													zIndex: 50,
+													marginTop: 2,
+													maxHeight: 240,
+													overflow: "auto",
+													background: "var(--bg-0)",
+													border: "1px solid var(--border)",
+													borderRadius: 6,
+													boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
+												}}
+											>
+												<div
+													onClick={() => {
+														setModels((s) => ({ ...s, [id]: "" }));
+														setModelOpen(null);
+													}}
+													style={{
+														padding: "6px 10px",
+														fontSize: 11.5,
+														cursor: "pointer",
+														color: "var(--text-3)",
+														borderBottom: "1px solid var(--border)",
+													}}
+												>
+													Use default ({status?.default_models?.[id] ?? ""})
+												</div>
+												{modelLists[id].map((m) => (
+													<div
+														key={m.id}
+														onClick={() => {
+															setModels((s) => ({ ...s, [id]: m.id }));
+															setModelOpen(null);
+														}}
+														style={{
+															padding: "6px 10px",
+															fontSize: 12,
+															cursor: "pointer",
+															color:
+																models[id] != null &&
+																models[id] !== "" &&
+																models[id] === m.id
+																	? "var(--accent)"
+																	: "var(--text-1)",
+															fontWeight:
+																models[id] != null &&
+																models[id] !== "" &&
+																models[id] === m.id
+																	? 600
+																	: 400,
+														}}
+													>
+														{m.display_name || m.id}
+													</div>
+												))}
+											</div>
+										)}
+										{modelErr[id] && (
+											<div
+												style={{
+													fontSize: 10,
+													color: "var(--sev-high)",
+													marginTop: 2,
+												}}
+											>
+												{modelErr[id]}
+											</div>
+										)}
+									</div>
+									{src && (
+										<button
+											className="btn btn-ghost btn-sm"
+											disabled={loadingModels[id]}
+											onClick={() => fetchModels(id)}
+											title="Refresh model list"
+										>
+											{loadingModels[id] ? "…" : "↻"}
+										</button>
+									)}
+									{models[id] != null && models[id] !== "" && (
+										<button
+											className="btn btn-ghost btn-sm"
+											disabled={saveModel.isPending}
+											onClick={() => saveModel.mutate(id)}
+										>
+											Save
+										</button>
+									)}
+								</div>
+								<div
+									style={{ fontSize: 11, color: "var(--text-3)", marginTop: 4 }}
+								>
+									Using: <code>{status?.effective_models?.[id] ?? "—"}</code>
+									{status?.model_overrides?.[id] ? " (custom)" : " (default)"}
+								</div>
+							</div>
+						);
+					})}
+				</div>
+			</div>
+			{showModes && <AutonomyModeInfo onClose={() => setShowModes(false)} />}
+		</>
+	);
 }
 
 /* ── Profile ────────────────────────────────────────────────── */
 function ProfileSection() {
-  const qc = useQueryClient()
-  const { data: me } = useQuery({ queryKey: ['me'], queryFn: () => api.get('/users/me').then(r => r.data) })
-  const [name, setName] = useState('')
-  const [email, setEmail] = useState('')
-  const [curPwd, setCurPwd] = useState('')
-  const [newPwd, setNewPwd] = useState('')
-  const [pwdErr, setPwdErr] = useState<string | null>(null)
-  const [pwdOk, setPwdOk] = useState(false)
+	const qc = useQueryClient();
+	const { data: me } = useQuery({
+		queryKey: ["me"],
+		queryFn: () => api.get("/users/me").then((r) => r.data),
+	});
+	const [name, setName] = useState("");
+	const [email, setEmail] = useState("");
+	const [curPwd, setCurPwd] = useState("");
+	const [newPwd, setNewPwd] = useState("");
+	const [pwdErr, setPwdErr] = useState<string | null>(null);
+	const [pwdOk, setPwdOk] = useState(false);
 
-  const profileMut = useMutation({
-    mutationFn: () => api.patch('/users/me', {
-      ...(name ? { full_name: name } : {}),
-      ...(email ? { email } : {}),
-    }),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['me'] }); setName(''); setEmail('') },
-  })
+	const profileMut = useMutation({
+		mutationFn: () =>
+			api.patch("/users/me", {
+				...(name ? { full_name: name } : {}),
+				...(email ? { email } : {}),
+			}),
+		onSuccess: () => {
+			qc.invalidateQueries({ queryKey: ["me"] });
+			setName("");
+			setEmail("");
+		},
+	});
 
-  const pwdMut = useMutation({
-    mutationFn: () => api.post('/users/me/change-password', { current_password: curPwd, new_password: newPwd }),
-    onSuccess: () => { setCurPwd(''); setNewPwd(''); setPwdErr(null); setPwdOk(true); setTimeout(() => setPwdOk(false), 3000) },
-    onError: (e: unknown) => setPwdErr(e instanceof Error ? e.message : 'Failed'),
-  })
+	const pwdMut = useMutation({
+		mutationFn: () =>
+			api.post("/users/me/change-password", {
+				current_password: curPwd,
+				new_password: newPwd,
+			}),
+		onSuccess: () => {
+			setCurPwd("");
+			setNewPwd("");
+			setPwdErr(null);
+			setPwdOk(true);
+			setTimeout(() => setPwdOk(false), 3000);
+		},
+		onError: (e: unknown) =>
+			setPwdErr(e instanceof Error ? e.message : "Failed"),
+	});
 
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-      {/* Identity */}
-      <div className="panel" style={{ padding: 16 }}>
-        <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-0)', marginBottom: 12 }}>Profile</div>
-        {me && <div style={{ fontSize: 12, color: 'var(--text-2)', marginBottom: 12 }}>
-          <strong>{me.email}</strong> · {me.role} · {me.full_name || <span style={{ opacity: 0.5 }}>no name set</span>}
-        </div>}
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <input className="input" placeholder="New display name" value={name} onChange={e => setName(e.target.value)} style={{ flex: 1, minWidth: 180 }} />
-          <input className="input" placeholder="New email" type="email" value={email} onChange={e => setEmail(e.target.value)} style={{ flex: 1, minWidth: 200 }} />
-          <button className="btn btn-primary btn-sm" onClick={() => profileMut.mutate()} disabled={(!name && !email) || profileMut.isPending}>
-            {profileMut.isPending ? 'Saving…' : 'Save'}
-          </button>
-        </div>
-      </div>
+	return (
+		<div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+			{/* Identity */}
+			<div className="panel" style={{ padding: 16 }}>
+				<div
+					style={{
+						fontSize: 13,
+						fontWeight: 600,
+						color: "var(--text-0)",
+						marginBottom: 12,
+					}}
+				>
+					Profile
+				</div>
+				{me && (
+					<div
+						style={{ fontSize: 12, color: "var(--text-2)", marginBottom: 12 }}
+					>
+						<strong>{me.email}</strong> · {me.role} ·{" "}
+						{me.full_name || <span style={{ opacity: 0.5 }}>no name set</span>}
+					</div>
+				)}
+				<div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+					<input
+						className="input"
+						placeholder="New display name"
+						value={name}
+						onChange={(e) => setName(e.target.value)}
+						style={{ flex: 1, minWidth: 180 }}
+					/>
+					<input
+						className="input"
+						placeholder="New email"
+						type="email"
+						value={email}
+						onChange={(e) => setEmail(e.target.value)}
+						style={{ flex: 1, minWidth: 200 }}
+					/>
+					<button
+						className="btn btn-primary btn-sm"
+						onClick={() => profileMut.mutate()}
+						disabled={(!name && !email) || profileMut.isPending}
+					>
+						{profileMut.isPending ? "Saving…" : "Save"}
+					</button>
+				</div>
+			</div>
 
-      {/* Password */}
-      <div className="panel" style={{ padding: 16 }}>
-        <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-0)', marginBottom: 12 }}>Change Password</div>
-        {pwdErr && <div style={{ color: 'var(--sev-high)', fontSize: 12, marginBottom: 8 }}>{pwdErr}</div>}
-        {pwdOk && <div style={{ color: 'var(--ok)', fontSize: 12, marginBottom: 8 }}>Password changed.</div>}
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <input className="input" type="password" placeholder="Current password" value={curPwd} onChange={e => setCurPwd(e.target.value)} style={{ flex: 1, minWidth: 180 }} />
-          <input className="input" type="password" placeholder="New password (min 10 chars)" value={newPwd} onChange={e => setNewPwd(e.target.value)} style={{ flex: 1, minWidth: 220 }} />
-          <button className="btn btn-primary btn-sm" onClick={() => pwdMut.mutate()} disabled={!curPwd || newPwd.length < 10 || pwdMut.isPending}>
-            {pwdMut.isPending ? 'Changing…' : 'Change'}
-          </button>
-        </div>
-      </div>
-    </div>
-  )
+			{/* Password */}
+			<div className="panel" style={{ padding: 16 }}>
+				<div
+					style={{
+						fontSize: 13,
+						fontWeight: 600,
+						color: "var(--text-0)",
+						marginBottom: 12,
+					}}
+				>
+					Change Password
+				</div>
+				{pwdErr && (
+					<div
+						style={{ color: "var(--sev-high)", fontSize: 12, marginBottom: 8 }}
+					>
+						{pwdErr}
+					</div>
+				)}
+				{pwdOk && (
+					<div style={{ color: "var(--ok)", fontSize: 12, marginBottom: 8 }}>
+						Password changed.
+					</div>
+				)}
+				<div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+					<input
+						className="input"
+						type="password"
+						placeholder="Current password"
+						value={curPwd}
+						onChange={(e) => setCurPwd(e.target.value)}
+						style={{ flex: 1, minWidth: 180 }}
+					/>
+					<input
+						className="input"
+						type="password"
+						placeholder="New password (min 10 chars)"
+						value={newPwd}
+						onChange={(e) => setNewPwd(e.target.value)}
+						style={{ flex: 1, minWidth: 220 }}
+					/>
+					<button
+						className="btn btn-primary btn-sm"
+						onClick={() => pwdMut.mutate()}
+						disabled={!curPwd || newPwd.length < 10 || pwdMut.isPending}
+					>
+						{pwdMut.isPending ? "Changing…" : "Change"}
+					</button>
+				</div>
+			</div>
+		</div>
+	);
 }
 
 /* ── System ──────────────────────────────────────────────── */
 function SystemSection() {
-  const qc = useQueryClient()
+	const qc = useQueryClient();
 
-  const { data: ver } = useQuery({
-    queryKey: ['system-version'],
-    queryFn: () => api.get('/system/version').then(r => r.data),
-    refetchInterval: 300_000,
-  })
+	const { data: ver } = useQuery({
+		queryKey: ["system-version"],
+		queryFn: () => api.get("/system/version").then((r) => r.data),
+		refetchInterval: 300_000,
+	});
 
-  const { data: upStatus } = useQuery({
-    queryKey: ['update-status'],
-    queryFn: () => api.get('/system/update/status').then(r => r.data),
-    refetchInterval: (q) => {
-      const s = q.state.data?.state
-      return (s === 'running' || s === 'queued') ? 2000 : s === 'succeeded' ? 4000 : false
-    },
-  })
+	const { data: upStatus } = useQuery({
+		queryKey: ["update-status"],
+		queryFn: () => api.get("/system/update/status").then((r) => r.data),
+		refetchInterval: (q) => {
+			const s = q.state.data?.state;
+			return s === "running" || s === "queued"
+				? 2000
+				: s === "succeeded"
+					? 4000
+					: false;
+		},
+	});
 
-  // Auto-reload 8 s after restart fires so new containers have time to come up
-  useEffect(() => {
-    if (upStatus?.state !== 'succeeded') return
-    const t = setTimeout(() => window.location.reload(), 8000)
-    return () => clearTimeout(t)
-  }, [upStatus?.state])
+	// Auto-reload 8 s after restart fires so new containers have time to come up
+	useEffect(() => {
+		if (upStatus?.state !== "succeeded") return;
+		const t = setTimeout(() => window.location.reload(), 8000);
+		return () => clearTimeout(t);
+	}, [upStatus?.state]);
 
-  const [updateErr, setUpdateErr] = useState<string | null>(null)
-  const updateMut = useMutation({
-    mutationFn: () => api.post('/system/update'),
-    onSuccess: () => { setUpdateErr(null); qc.invalidateQueries({ queryKey: ['update-status'] }) },
-    onError: (e: unknown) => {
-      const msg = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail ?? String(e)
-      setUpdateErr(msg)
-    },
-  })
-  const clearStatusMut = useMutation({
-    mutationFn: () => api.delete('/system/update/status'),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['update-status'] }),
-  })
+	const [updateErr, setUpdateErr] = useState<string | null>(null);
+	const updateMut = useMutation({
+		mutationFn: () => api.post("/system/update"),
+		onSuccess: () => {
+			setUpdateErr(null);
+			qc.invalidateQueries({ queryKey: ["update-status"] });
+		},
+		onError: (e: unknown) => {
+			const msg =
+				(e as { response?: { data?: { detail?: string } } })?.response?.data
+					?.detail ?? String(e);
+			setUpdateErr(msg);
+		},
+	});
+	const clearStatusMut = useMutation({
+		mutationFn: () => api.delete("/system/update/status"),
+		onSuccess: () => qc.invalidateQueries({ queryKey: ["update-status"] }),
+	});
 
-  const updateAvailable = ver?.update_available
-  const latestVersion = ver?.latest
-  const currentVersion = ver?.current
-  const releaseUrl = ver?.release_url
-  const selfUpdateEnabled = ver?.self_update_enabled
-  const updateState = upStatus?.state
+	const updateAvailable = ver?.update_available;
+	const latestVersion = ver?.latest;
+	const currentVersion = ver?.current;
+	const releaseUrl = ver?.release_url;
+	const selfUpdateEnabled = ver?.self_update_enabled;
+	const updateState = upStatus?.state;
 
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      {/* Version */}
-      <div className="panel" style={{ padding: 16 }}>
-        <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-0)', marginBottom: 12 }}>ScanR Version</div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 }}>
-          <span className="mono" style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-0)' }}>v{currentVersion || '...'}</span>
-          {updateAvailable && (
-            <span style={{
-              fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 12,
-              background: 'oklch(0.25 0.1 60 / 0.3)', color: 'var(--sev-medium)',
-            }}>
-              v{latestVersion} available
-            </span>
-          )}
-          {!updateAvailable && ver && (
-            <span style={{ fontSize: 11, color: 'var(--ok)', fontWeight: 500 }}>Up to date</span>
-          )}
-        </div>
+	return (
+		<div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+			{/* Version */}
+			<div className="panel" style={{ padding: 16 }}>
+				<div
+					style={{
+						fontSize: 14,
+						fontWeight: 600,
+						color: "var(--text-0)",
+						marginBottom: 12,
+					}}
+				>
+					ScanR Version
+				</div>
+				<div
+					style={{
+						display: "flex",
+						alignItems: "center",
+						gap: 12,
+						marginBottom: 8,
+					}}
+				>
+					<span
+						className="mono"
+						style={{ fontSize: 16, fontWeight: 700, color: "var(--text-0)" }}
+					>
+						v{currentVersion || "..."}
+					</span>
+					{updateAvailable && (
+						<span
+							style={{
+								fontSize: 11,
+								fontWeight: 600,
+								padding: "2px 8px",
+								borderRadius: 12,
+								background: "oklch(0.25 0.1 60 / 0.3)",
+								color: "var(--sev-medium)",
+							}}
+						>
+							v{latestVersion} available
+						</span>
+					)}
+					{!updateAvailable && ver && (
+						<span style={{ fontSize: 11, color: "var(--ok)", fontWeight: 500 }}>
+							Up to date
+						</span>
+					)}
+				</div>
 
-        {updateAvailable && (
-          <>
-            {/* Self-update button (when Docker socket mounted) */}
-            {selfUpdateEnabled ? (
-              <div style={{
-                background: 'var(--bg-1)', border: '1px solid var(--border)', borderRadius: 8,
-                padding: 14, marginTop: 8,
-              }}>
-                <style>{`
+				{updateAvailable && (
+					<>
+						{/* Self-update button (when Docker socket mounted) */}
+						{selfUpdateEnabled ? (
+							<div
+								style={{
+									background: "var(--bg-1)",
+									border: "1px solid var(--border)",
+									borderRadius: 8,
+									padding: 14,
+									marginTop: 8,
+								}}
+							>
+								<style>{`
                   @keyframes scanr-shimmer {
                     0%   { background-position: 200% center; }
                     100% { background-position: -200% center; }
@@ -375,612 +811,1472 @@ function SystemSection() {
                   @keyframes scanr-pulse { 0%,100% { opacity:1 } 50% { opacity:.45 } }
                 `}</style>
 
-                {/* Step indicator */}
-                {(updateState === 'queued' || updateState === 'running' || updateState === 'succeeded') && (() => {
-                  const steps = ['Queued', 'Pulling images', 'Restarting']
-                  const activeStep = updateState === 'queued' ? 0 : updateState === 'running' ? 1 : 2
-                  return (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 0, marginBottom: 14 }}>
-                      {steps.map((label, idx) => {
-                        const done = idx < activeStep
-                        const active = idx === activeStep
-                        return (
-                          <div key={label} style={{ display: 'flex', alignItems: 'center', flex: idx < steps.length - 1 ? 1 : undefined }}>
-                            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
-                              <div style={{
-                                width: 22, height: 22, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                                fontSize: 10, fontWeight: 700, flexShrink: 0,
-                                background: done ? 'var(--ok)' : active ? 'var(--accent)' : 'var(--bg-3)',
-                                color: done || active ? '#fff' : 'var(--text-3)',
-                                animation: active ? 'scanr-pulse 1.4s ease-in-out infinite' : 'none',
-                                border: active ? '2px solid color-mix(in oklch, var(--accent) 60%, transparent)' : '2px solid transparent',
-                                boxSizing: 'border-box',
-                              }}>
-                                {done ? '✓' : idx + 1}
-                              </div>
-                              <span style={{ fontSize: 10, color: done ? 'var(--ok)' : active ? 'var(--accent)' : 'var(--text-3)', whiteSpace: 'nowrap', fontWeight: active ? 600 : 400 }}>
-                                {label}
-                              </span>
-                            </div>
-                            {idx < steps.length - 1 && (
-                              <div style={{
-                                flex: 1, height: 2, margin: '0 4px', marginBottom: 14,
-                                background: done ? 'var(--ok)' : 'var(--border)',
-                                transition: 'background 0.4s',
-                              }} />
-                            )}
-                          </div>
-                        )
-                      })}
-                    </div>
-                  )
-                })()}
+								{/* Step indicator */}
+								{(updateState === "queued" ||
+									updateState === "running" ||
+									updateState === "succeeded") &&
+									(() => {
+										const steps = ["Queued", "Pulling images", "Restarting"];
+										const activeStep =
+											updateState === "queued"
+												? 0
+												: updateState === "running"
+													? 1
+													: 2;
+										return (
+											<div
+												style={{
+													display: "flex",
+													alignItems: "center",
+													gap: 0,
+													marginBottom: 14,
+												}}
+											>
+												{steps.map((label, idx) => {
+													const done = idx < activeStep;
+													const active = idx === activeStep;
+													return (
+														<div
+															key={label}
+															style={{
+																display: "flex",
+																alignItems: "center",
+																flex: idx < steps.length - 1 ? 1 : undefined,
+															}}
+														>
+															<div
+																style={{
+																	display: "flex",
+																	flexDirection: "column",
+																	alignItems: "center",
+																	gap: 4,
+																}}
+															>
+																<div
+																	style={{
+																		width: 22,
+																		height: 22,
+																		borderRadius: "50%",
+																		display: "flex",
+																		alignItems: "center",
+																		justifyContent: "center",
+																		fontSize: 10,
+																		fontWeight: 700,
+																		flexShrink: 0,
+																		background: done
+																			? "var(--ok)"
+																			: active
+																				? "var(--accent)"
+																				: "var(--bg-3)",
+																		color:
+																			done || active ? "#fff" : "var(--text-3)",
+																		animation: active
+																			? "scanr-pulse 1.4s ease-in-out infinite"
+																			: "none",
+																		border: active
+																			? "2px solid color-mix(in oklch, var(--accent) 60%, transparent)"
+																			: "2px solid transparent",
+																		boxSizing: "border-box",
+																	}}
+																>
+																	{done ? "✓" : idx + 1}
+																</div>
+																<span
+																	style={{
+																		fontSize: 10,
+																		color: done
+																			? "var(--ok)"
+																			: active
+																				? "var(--accent)"
+																				: "var(--text-3)",
+																		whiteSpace: "nowrap",
+																		fontWeight: active ? 600 : 400,
+																	}}
+																>
+																	{label}
+																</span>
+															</div>
+															{idx < steps.length - 1 && (
+																<div
+																	style={{
+																		flex: 1,
+																		height: 2,
+																		margin: "0 4px",
+																		marginBottom: 14,
+																		background: done
+																			? "var(--ok)"
+																			: "var(--border)",
+																		transition: "background 0.4s",
+																	}}
+																/>
+															)}
+														</div>
+													);
+												})}
+											</div>
+										);
+									})()}
 
-                {/* Progress bar */}
-                {(updateState === 'queued' || updateState === 'running' || updateState === 'succeeded') && (
-                  <div style={{ height: 6, borderRadius: 3, background: 'var(--bg-3)', overflow: 'hidden', marginBottom: 12 }}>
-                    {updateState === 'queued' && (
-                      <div style={{ width: '15%', height: '100%', borderRadius: 3, background: 'var(--accent)', animation: 'scanr-pulse 1.4s ease-in-out infinite' }} />
-                    )}
-                    {updateState === 'running' && (
-                      <div style={{
-                        width: '100%', height: '100%', borderRadius: 3,
-                        background: 'linear-gradient(90deg, transparent 0%, var(--accent) 40%, color-mix(in oklch, var(--accent) 80%, white) 50%, var(--accent) 60%, transparent 100%)',
-                        backgroundSize: '200% 100%',
-                        animation: 'scanr-shimmer 1.6s linear infinite',
-                      }} />
-                    )}
-                    {updateState === 'succeeded' && (
-                      <div style={{ width: '100%', height: '100%', borderRadius: 3, background: 'var(--ok)', transition: 'width 0.4s ease' }} />
-                    )}
-                  </div>
-                )}
+								{/* Progress bar */}
+								{(updateState === "queued" ||
+									updateState === "running" ||
+									updateState === "succeeded") && (
+									<div
+										style={{
+											height: 6,
+											borderRadius: 3,
+											background: "var(--bg-3)",
+											overflow: "hidden",
+											marginBottom: 12,
+										}}
+									>
+										{updateState === "queued" && (
+											<div
+												style={{
+													width: "15%",
+													height: "100%",
+													borderRadius: 3,
+													background: "var(--accent)",
+													animation: "scanr-pulse 1.4s ease-in-out infinite",
+												}}
+											/>
+										)}
+										{updateState === "running" && (
+											<div
+												style={{
+													width: "100%",
+													height: "100%",
+													borderRadius: 3,
+													background:
+														"linear-gradient(90deg, transparent 0%, var(--accent) 40%, color-mix(in oklch, var(--accent) 80%, white) 50%, var(--accent) 60%, transparent 100%)",
+													backgroundSize: "200% 100%",
+													animation: "scanr-shimmer 1.6s linear infinite",
+												}}
+											/>
+										)}
+										{updateState === "succeeded" && (
+											<div
+												style={{
+													width: "100%",
+													height: "100%",
+													borderRadius: 3,
+													background: "var(--ok)",
+													transition: "width 0.4s ease",
+												}}
+											/>
+										)}
+									</div>
+								)}
 
-                {/* State messages */}
-                {updateState === 'queued' && (
-                  <div style={{ fontSize: 12, color: 'var(--text-2)' }}>Queued — starting soon…</div>
-                )}
-                {updateState === 'running' && (
-                  <div>
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
-                      <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--accent)' }}>Pulling images for v{latestVersion}…</div>
-                      <button onClick={() => clearStatusMut.mutate()} className="btn btn-ghost btn-sm" style={{ fontSize: 11 }} title="Clear stuck state">Dismiss</button>
-                    </div>
-                    <pre style={{
-                      fontSize: 10, color: 'var(--text-3)', background: 'var(--bg-0)',
-                      padding: 8, borderRadius: 4, maxHeight: 180, overflow: 'auto',
-                      whiteSpace: 'pre-wrap', wordBreak: 'break-all', margin: 0,
-                    }}>
-                      {upStatus?.log || 'Connecting to registry…'}
-                    </pre>
-                  </div>
-                )}
-                {updateState === 'succeeded' && (
-                  <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--ok)', display: 'flex', alignItems: 'center', gap: 8 }}>
-                    ScanR is restarting with v{latestVersion} — page will reload shortly.
-                    <button onClick={() => window.location.reload()} className="btn btn-ghost btn-sm" style={{ fontSize: 11 }}>Reload now</button>
-                  </div>
-                )}
-                {updateState === 'failed' && (
-                  <div>
-                    <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--sev-high)', marginBottom: 4 }}>Update failed</div>
-                    <pre style={{ fontSize: 10, color: 'var(--sev-high)', padding: '8px', background: 'var(--bg-0)', borderRadius: 4, maxHeight: 200, overflow: 'auto', whiteSpace: 'pre-wrap', margin: 0 }}>
-                      {upStatus?.message}{'\n'}{upStatus?.log}
-                    </pre>
-                    <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-                      <button onClick={() => updateMut.mutate()} className="btn btn-primary btn-sm" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                        <RefreshCw size={13} /> Retry
-                      </button>
-                      <button onClick={() => clearStatusMut.mutate()} className="btn btn-ghost btn-sm">Dismiss</button>
-                    </div>
-                  </div>
-                )}
-                {(updateState === 'idle' || !updateState) && (
-                  <>
-                    {updateErr && (
-                      <div style={{ fontSize: 11, color: 'var(--sev-high)', marginBottom: 8, padding: '6px 8px', background: 'var(--bg-0)', borderRadius: 4 }}>
-                        {updateErr}
-                      </div>
-                    )}
-                    <button
-                      className="btn btn-primary"
-                      onClick={() => updateMut.mutate()}
-                      disabled={updateMut.isPending}
-                      style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
-                    >
-                      <RefreshCw size={14} style={{ animation: updateMut.isPending ? 'spin 1s linear infinite' : 'none' }} />
-                      {updateMut.isPending ? 'Starting…' : 'Update Now'}
-                    </button>
-                  </>
-                )}
-              </div>
-            ) : (
-              /* Fallback: copy-paste for manual Docker Compose update */
-              <div style={{
-                background: 'var(--bg-1)', border: '1px solid var(--border)', borderRadius: 8,
-                padding: 14, marginTop: 8,
-              }}>
-                <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-0)', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <Terminal size={13} />
-                  Update via terminal
-                </div>
-                <div style={{
-                  background: 'var(--bg-0)', border: '1px solid var(--border)', borderRadius: 6,
-                  padding: '10px 14px',
-                }}>
-                  <code style={{ fontSize: 12, color: 'var(--text-1)', whiteSpace: 'pre-wrap' }}>
-{`cd /opt/scanr
+								{/* State messages */}
+								{updateState === "queued" && (
+									<div style={{ fontSize: 12, color: "var(--text-2)" }}>
+										Queued — starting soon…
+									</div>
+								)}
+								{updateState === "running" && (
+									<div>
+										<div
+											style={{
+												display: "flex",
+												alignItems: "center",
+												justifyContent: "space-between",
+												marginBottom: 6,
+											}}
+										>
+											<div
+												style={{
+													fontSize: 12,
+													fontWeight: 600,
+													color: "var(--accent)",
+												}}
+											>
+												Pulling images for v{latestVersion}…
+											</div>
+											<button
+												onClick={() => clearStatusMut.mutate()}
+												className="btn btn-ghost btn-sm"
+												style={{ fontSize: 11 }}
+												title="Clear stuck state"
+											>
+												Dismiss
+											</button>
+										</div>
+										<pre
+											style={{
+												fontSize: 10,
+												color: "var(--text-3)",
+												background: "var(--bg-0)",
+												padding: 8,
+												borderRadius: 4,
+												maxHeight: 180,
+												overflow: "auto",
+												whiteSpace: "pre-wrap",
+												wordBreak: "break-all",
+												margin: 0,
+											}}
+										>
+											{upStatus?.log || "Connecting to registry…"}
+										</pre>
+									</div>
+								)}
+								{updateState === "succeeded" && (
+									<div
+										style={{
+											fontSize: 12,
+											fontWeight: 600,
+											color: "var(--ok)",
+											display: "flex",
+											alignItems: "center",
+											gap: 8,
+										}}
+									>
+										ScanR is restarting with v{latestVersion} — page will reload
+										shortly.
+										<button
+											onClick={() => window.location.reload()}
+											className="btn btn-ghost btn-sm"
+											style={{ fontSize: 11 }}
+										>
+											Reload now
+										</button>
+									</div>
+								)}
+								{updateState === "failed" && (
+									<div>
+										<div
+											style={{
+												fontSize: 12,
+												fontWeight: 600,
+												color: "var(--sev-high)",
+												marginBottom: 4,
+											}}
+										>
+											Update failed
+										</div>
+										<pre
+											style={{
+												fontSize: 10,
+												color: "var(--sev-high)",
+												padding: "8px",
+												background: "var(--bg-0)",
+												borderRadius: 4,
+												maxHeight: 200,
+												overflow: "auto",
+												whiteSpace: "pre-wrap",
+												margin: 0,
+											}}
+										>
+											{upStatus?.message}
+											{"\n"}
+											{upStatus?.log}
+										</pre>
+										<div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+											<button
+												onClick={() => updateMut.mutate()}
+												className="btn btn-primary btn-sm"
+												style={{
+													display: "inline-flex",
+													alignItems: "center",
+													gap: 6,
+												}}
+											>
+												<RefreshCw size={13} /> Retry
+											</button>
+											<button
+												onClick={() => clearStatusMut.mutate()}
+												className="btn btn-ghost btn-sm"
+											>
+												Dismiss
+											</button>
+										</div>
+									</div>
+								)}
+								{(updateState === "idle" || !updateState) && (
+									<>
+										{updateErr && (
+											<div
+												style={{
+													fontSize: 11,
+													color: "var(--sev-high)",
+													marginBottom: 8,
+													padding: "6px 8px",
+													background: "var(--bg-0)",
+													borderRadius: 4,
+												}}
+											>
+												{updateErr}
+											</div>
+										)}
+										<button
+											className="btn btn-primary"
+											onClick={() => updateMut.mutate()}
+											disabled={updateMut.isPending}
+											style={{
+												display: "inline-flex",
+												alignItems: "center",
+												gap: 6,
+											}}
+										>
+											<RefreshCw
+												size={14}
+												style={{
+													animation: updateMut.isPending
+														? "spin 1s linear infinite"
+														: "none",
+												}}
+											/>
+											{updateMut.isPending ? "Starting…" : "Update Now"}
+										</button>
+									</>
+								)}
+							</div>
+						) : (
+							/* Fallback: copy-paste for manual Docker Compose update */
+							<div
+								style={{
+									background: "var(--bg-1)",
+									border: "1px solid var(--border)",
+									borderRadius: 8,
+									padding: 14,
+									marginTop: 8,
+								}}
+							>
+								<div
+									style={{
+										fontSize: 12,
+										fontWeight: 600,
+										color: "var(--text-0)",
+										marginBottom: 8,
+										display: "flex",
+										alignItems: "center",
+										gap: 6,
+									}}
+								>
+									<Terminal size={13} />
+									Update via terminal
+								</div>
+								<div
+									style={{
+										background: "var(--bg-0)",
+										border: "1px solid var(--border)",
+										borderRadius: 6,
+										padding: "10px 14px",
+									}}
+								>
+									<code
+										style={{
+											fontSize: 12,
+											color: "var(--text-1)",
+											whiteSpace: "pre-wrap",
+										}}
+									>
+										{`cd /opt/scanr
 docker compose pull
 docker compose up -d`}
-                  </code>
-                </div>
-                <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
-                  <CopyButton text="cd /opt/scanr && docker compose pull && docker compose up -d" />
-                  {releaseUrl && (
-                    <a href={releaseUrl} target="_blank" rel="noopener noreferrer"
-                      className="btn btn-ghost btn-sm"
-                      style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 12, textDecoration: 'none' }}>
-                      <ExternalLink size={12} /> Release Notes
-                    </a>
-                  )}
-                </div>
-              </div>
-            )}
-          </>
-        )}
-      </div>
+									</code>
+								</div>
+								<div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+									<CopyButton text="cd /opt/scanr && docker compose pull && docker compose up -d" />
+									{releaseUrl && (
+										<a
+											href={releaseUrl}
+											target="_blank"
+											rel="noopener noreferrer"
+											className="btn btn-ghost btn-sm"
+											style={{
+												display: "inline-flex",
+												alignItems: "center",
+												gap: 4,
+												fontSize: 12,
+												textDecoration: "none",
+											}}
+										>
+											<ExternalLink size={12} /> Release Notes
+										</a>
+									)}
+								</div>
+							</div>
+						)}
+					</>
+				)}
+			</div>
 
-      {/* Info */}
-      <div className="panel" style={{ padding: 16 }}>
-        <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-0)', marginBottom: 8 }}>Deployment Info</div>
-        <div style={{ fontSize: 12, color: 'var(--text-2)', display: 'flex', flexDirection: 'column', gap: 4 }}>
-          <div>• Images: <code style={{ fontSize: 11 }}>ghcr.io/t3rr0or/scanr-*</code></div>
-          <div>• Migrations run automatically on startup</div>
-          <div>• Self-update: {selfUpdateEnabled ? <span style={{color:'var(--ok)'}}>enabled</span> : <span style={{color:'var(--text-3)'}}>disabled (mount Docker socket to enable)</span>}</div>
-        </div>
-      </div>
-    </div>
-  )
+			{/* Info */}
+			<div className="panel" style={{ padding: 16 }}>
+				<div
+					style={{
+						fontSize: 13,
+						fontWeight: 600,
+						color: "var(--text-0)",
+						marginBottom: 8,
+					}}
+				>
+					Deployment Info
+				</div>
+				<div
+					style={{
+						fontSize: 12,
+						color: "var(--text-2)",
+						display: "flex",
+						flexDirection: "column",
+						gap: 4,
+					}}
+				>
+					<div>
+						• Images:{" "}
+						<code style={{ fontSize: 11 }}>ghcr.io/t3rr0or/scanr-*</code>
+					</div>
+					<div>• Migrations run automatically on startup</div>
+					<div>
+						• Self-update:{" "}
+						{selfUpdateEnabled ? (
+							<span style={{ color: "var(--ok)" }}>enabled</span>
+						) : (
+							<span style={{ color: "var(--text-3)" }}>
+								disabled (mount Docker socket to enable)
+							</span>
+						)}
+					</div>
+				</div>
+			</div>
+		</div>
+	);
 }
 
 function CopyButton({ text }: { text: string }) {
-  const [copied, setCopied] = useState(false)
-  return (
-    <button
-      className="btn btn-primary btn-sm"
-      style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 12 }}
-      onClick={() => { navigator.clipboard.writeText(text); setCopied(true); setTimeout(() => setCopied(false), 2000) }}
-    >
-      {copied ? <><Check size={12} /> Copied</> : <><Copy size={12} /> Copy Command</>}
-    </button>
-  )
+	const [copied, setCopied] = useState(false);
+	return (
+		<button
+			className="btn btn-primary btn-sm"
+			style={{
+				display: "inline-flex",
+				alignItems: "center",
+				gap: 4,
+				fontSize: 12,
+			}}
+			onClick={() => {
+				navigator.clipboard.writeText(text);
+				setCopied(true);
+				setTimeout(() => setCopied(false), 2000);
+			}}
+		>
+			{copied ? (
+				<>
+					<Check size={12} /> Copied
+				</>
+			) : (
+				<>
+					<Copy size={12} /> Copy Command
+				</>
+			)}
+		</button>
+	);
 }
 
 /* ── User Management (admin only) ───────────────────────────── */
 function UserManagementSection() {
-  const qc = useQueryClient()
-  const [showCreate, setShowCreate] = useState(false)
-  const [form, setForm] = useState({ email: '', password: '', full_name: '', role: 'analyst' })
-  const [err, setErr] = useState<string | null>(null)
+	const qc = useQueryClient();
+	const [showCreate, setShowCreate] = useState(false);
+	const [form, setForm] = useState({
+		email: "",
+		password: "",
+		full_name: "",
+		role: "analyst",
+	});
+	const [err, setErr] = useState<string | null>(null);
 
-  const { data: users = [] } = useQuery({ queryKey: ['admin-users'], queryFn: () => api.get('/users').then(r => r.data) })
+	const { data: users = [] } = useQuery({
+		queryKey: ["admin-users"],
+		queryFn: () => api.get("/users").then((r) => r.data),
+	});
 
-  const createMut = useMutation({
-    mutationFn: () => api.post('/users', form),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['admin-users'] }); setShowCreate(false); setForm({ email: '', password: '', full_name: '', role: 'analyst' }); setErr(null) },
-    onError: (e: unknown) => setErr(e instanceof Error ? e.message : 'Failed'),
-  })
+	const createMut = useMutation({
+		mutationFn: () => api.post("/users", form),
+		onSuccess: () => {
+			qc.invalidateQueries({ queryKey: ["admin-users"] });
+			setShowCreate(false);
+			setForm({ email: "", password: "", full_name: "", role: "analyst" });
+			setErr(null);
+		},
+		onError: (e: unknown) => setErr(e instanceof Error ? e.message : "Failed"),
+	});
 
-  const toggleMut = useMutation({
-    mutationFn: ({ id, is_active }: { id: string; is_active: boolean }) => api.patch(`/users/${id}`, { is_active }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['admin-users'] }),
-  })
+	const toggleMut = useMutation({
+		mutationFn: ({ id, is_active }: { id: string; is_active: boolean }) =>
+			api.patch(`/users/${id}`, { is_active }),
+		onSuccess: () => qc.invalidateQueries({ queryKey: ["admin-users"] }),
+	});
 
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <p style={{ fontSize: 12, color: 'var(--text-3)' }}>Manage user accounts. Deactivated users cannot log in.</p>
-        <button className="btn btn-primary btn-sm" onClick={() => setShowCreate(v => !v)}><Plus size={13} /> New User</button>
-      </div>
+	return (
+		<div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+			<div
+				style={{
+					display: "flex",
+					justifyContent: "space-between",
+					alignItems: "center",
+				}}
+			>
+				<p style={{ fontSize: 12, color: "var(--text-3)" }}>
+					Manage user accounts. Deactivated users cannot log in.
+				</p>
+				<button
+					className="btn btn-primary btn-sm"
+					onClick={() => setShowCreate((v) => !v)}
+				>
+					<Plus size={13} /> New User
+				</button>
+			</div>
 
-      {showCreate && (
-        <div className="panel" style={{ padding: 14 }}>
-          {err && <div style={{ color: 'var(--sev-high)', fontSize: 12, marginBottom: 8 }}>{err}</div>}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 8 }}>
-            <input className="input" placeholder="Email" type="email" value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} />
-            <input className="input" placeholder="Password (min 10)" type="password" value={form.password} onChange={e => setForm(f => ({ ...f, password: e.target.value }))} />
-            <input className="input" placeholder="Full name (optional)" value={form.full_name} onChange={e => setForm(f => ({ ...f, full_name: e.target.value }))} />
-            <select className="select-field" value={form.role} onChange={e => setForm(f => ({ ...f, role: e.target.value }))}>
-              <option value="analyst">Analyst</option>
-              <option value="viewer">Viewer</option>
-              <option value="admin">Admin</option>
-            </select>
-          </div>
-          <div style={{ display: 'flex', gap: 8 }}>
-            <button className="btn btn-primary btn-sm" onClick={() => createMut.mutate()} disabled={!form.email || form.password.length < 10 || createMut.isPending}>Create</button>
-            <button className="btn btn-ghost btn-sm" onClick={() => setShowCreate(false)}>Cancel</button>
-          </div>
-        </div>
-      )}
+			{showCreate && (
+				<div className="panel" style={{ padding: 14 }}>
+					{err && (
+						<div
+							style={{
+								color: "var(--sev-high)",
+								fontSize: 12,
+								marginBottom: 8,
+							}}
+						>
+							{err}
+						</div>
+					)}
+					<div
+						style={{
+							display: "grid",
+							gridTemplateColumns: "1fr 1fr",
+							gap: 8,
+							marginBottom: 8,
+						}}
+					>
+						<input
+							className="input"
+							placeholder="Email"
+							type="email"
+							value={form.email}
+							onChange={(e) =>
+								setForm((f) => ({ ...f, email: e.target.value }))
+							}
+						/>
+						<input
+							className="input"
+							placeholder="Password (min 10)"
+							type="password"
+							value={form.password}
+							onChange={(e) =>
+								setForm((f) => ({ ...f, password: e.target.value }))
+							}
+						/>
+						<input
+							className="input"
+							placeholder="Full name (optional)"
+							value={form.full_name}
+							onChange={(e) =>
+								setForm((f) => ({ ...f, full_name: e.target.value }))
+							}
+						/>
+						<select
+							className="select-field"
+							value={form.role}
+							onChange={(e) => setForm((f) => ({ ...f, role: e.target.value }))}
+						>
+							<option value="analyst">Analyst</option>
+							<option value="viewer">Viewer</option>
+							<option value="admin">Admin</option>
+						</select>
+					</div>
+					<div style={{ display: "flex", gap: 8 }}>
+						<button
+							className="btn btn-primary btn-sm"
+							onClick={() => createMut.mutate()}
+							disabled={
+								!form.email || form.password.length < 10 || createMut.isPending
+							}
+						>
+							Create
+						</button>
+						<button
+							className="btn btn-ghost btn-sm"
+							onClick={() => setShowCreate(false)}
+						>
+							Cancel
+						</button>
+					</div>
+				</div>
+			)}
 
-      <div className="panel" style={{ overflow: 'hidden' }}>
-        <table className="tbl" style={{ width: '100%' }}>
-          <thead><tr><th>Email</th><th>Name</th><th>Role</th><th>Status</th><th></th></tr></thead>
-          <tbody>
-            {(users as { id: string; email: string; full_name: string | null; role: string; is_active: boolean }[]).map(u => (
-              <tr key={u.id}>
-                <td style={{ fontSize: 12 }}>{u.email}</td>
-                <td style={{ fontSize: 12, color: 'var(--text-2)' }}>{u.full_name || '—'}</td>
-                <td><span className="pill">{u.role}</span></td>
-                <td><span className={`pill pill-${u.is_active ? 'ok' : 'medium'}`}>{u.is_active ? 'Active' : 'Disabled'}</span></td>
-                <td>
-                  <button
-                    className="btn btn-ghost btn-sm"
-                    onClick={() => toggleMut.mutate({ id: u.id, is_active: !u.is_active })}
-                    style={{ fontSize: 11 }}
-                  >
-                    {u.is_active ? 'Disable' : 'Enable'}
-                  </button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  )
+			<div className="panel" style={{ overflow: "hidden" }}>
+				<table className="tbl" style={{ width: "100%" }}>
+					<thead>
+						<tr>
+							<th>Email</th>
+							<th>Name</th>
+							<th>Role</th>
+							<th>Status</th>
+							<th></th>
+						</tr>
+					</thead>
+					<tbody>
+						{(
+							users as {
+								id: string;
+								email: string;
+								full_name: string | null;
+								role: string;
+								is_active: boolean;
+							}[]
+						).map((u) => (
+							<tr key={u.id}>
+								<td style={{ fontSize: 12 }}>{u.email}</td>
+								<td style={{ fontSize: 12, color: "var(--text-2)" }}>
+									{u.full_name || "—"}
+								</td>
+								<td>
+									<span className="pill">{u.role}</span>
+								</td>
+								<td>
+									<span
+										className={`pill pill-${u.is_active ? "ok" : "medium"}`}
+									>
+										{u.is_active ? "Active" : "Disabled"}
+									</span>
+								</td>
+								<td>
+									<button
+										className="btn btn-ghost btn-sm"
+										onClick={() =>
+											toggleMut.mutate({ id: u.id, is_active: !u.is_active })
+										}
+										style={{ fontSize: 11 }}
+									>
+										{u.is_active ? "Disable" : "Enable"}
+									</button>
+								</td>
+							</tr>
+						))}
+					</tbody>
+				</table>
+			</div>
+		</div>
+	);
 }
 
 /* ── CVE Database ──────────────────────────────────────────── */
 function CveDatabaseSection() {
-  const qc = useQueryClient()
-  const { data: status } = useQuery({
-    queryKey: ['cve-status'],
-    queryFn: () => api.get('/system/cve-status').then(r => r.data),
-    refetchInterval: 5000,
-  })
+	const qc = useQueryClient();
+	const { data: status } = useQuery({
+		queryKey: ["cve-status"],
+		queryFn: () => api.get("/system/cve-status").then((r) => r.data),
+		refetchInterval: 5000,
+	});
 
-  const refreshMut = useMutation({
-    mutationFn: () => api.post('/system/cve-refresh'),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['cve-status'] }),
-  })
+	const refreshMut = useMutation({
+		mutationFn: () => api.post("/system/cve-refresh"),
+		onSuccess: () => qc.invalidateQueries({ queryKey: ["cve-status"] }),
+	});
 
-  return (
-    <div className="panel" style={{ padding: 16 }}>
-      <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-0)', marginBottom: 16 }}>CVE Feed Status</div>
+	return (
+		<div className="panel" style={{ padding: 16 }}>
+			<div
+				style={{
+					fontSize: 14,
+					fontWeight: 600,
+					color: "var(--text-0)",
+					marginBottom: 16,
+				}}
+			>
+				CVE Feed Status
+			</div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 16 }}>
-        <div>
-          <div style={{ fontSize: 10, color: 'var(--text-3)', marginBottom: 4 }}>NVD Database</div>
-          <div style={{ fontSize: 13, fontWeight: 600, color: status?.nvd_db_exists ? 'var(--ok)' : 'var(--sev-high)' }}>
-            {status?.nvd_db_exists ? 'Loaded' : 'Not downloaded'}
-          </div>
-        </div>
-        <div>
-          <div style={{ fontSize: 10, color: 'var(--text-3)', marginBottom: 4 }}>CISA KEV Entries</div>
-          <div className="mono" style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-0)' }}>{status?.kev_count ?? '—'}</div>
-        </div>
-        <div style={{ gridColumn: '1 / -1' }}>
-          <div style={{ fontSize: 10, color: 'var(--text-3)', marginBottom: 4 }}>Last Updated</div>
-          <div className="mono" style={{ fontSize: 12, color: 'var(--text-2)' }}>
-            {status?.last_updated ? new Date(status.last_updated).toLocaleString() : 'Never'}
-          </div>
-        </div>
-      </div>
+			<div
+				style={{
+					display: "grid",
+					gridTemplateColumns: "1fr 1fr",
+					gap: 12,
+					marginBottom: 16,
+				}}
+			>
+				<div>
+					<div
+						style={{ fontSize: 10, color: "var(--text-3)", marginBottom: 4 }}
+					>
+						NVD Database
+					</div>
+					<div
+						style={{
+							fontSize: 13,
+							fontWeight: 600,
+							color: status?.nvd_db_exists ? "var(--ok)" : "var(--sev-high)",
+						}}
+					>
+						{status?.nvd_db_exists ? "Loaded" : "Not downloaded"}
+					</div>
+				</div>
+				<div>
+					<div
+						style={{ fontSize: 10, color: "var(--text-3)", marginBottom: 4 }}
+					>
+						CISA KEV Entries
+					</div>
+					<div
+						className="mono"
+						style={{ fontSize: 13, fontWeight: 600, color: "var(--text-0)" }}
+					>
+						{status?.kev_count ?? "—"}
+					</div>
+				</div>
+				<div style={{ gridColumn: "1 / -1" }}>
+					<div
+						style={{ fontSize: 10, color: "var(--text-3)", marginBottom: 4 }}
+					>
+						Last Updated
+					</div>
+					<div
+						className="mono"
+						style={{ fontSize: 12, color: "var(--text-2)" }}
+					>
+						{status?.last_updated
+							? new Date(status.last_updated).toLocaleString()
+							: "Never"}
+					</div>
+				</div>
+			</div>
 
-      <button
-        onClick={() => refreshMut.mutate()}
-        disabled={refreshMut.isPending}
-        className="btn btn-primary btn-sm"
-        style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
-      >
-        <RefreshCw size={13} style={{ animation: refreshMut.isPending ? 'spin 1s linear infinite' : 'none' }} />
-        {refreshMut.isPending ? 'Refreshing…' : 'Refresh CVE Feeds'}
-      </button>
+			<button
+				onClick={() => refreshMut.mutate()}
+				disabled={refreshMut.isPending}
+				className="btn btn-primary btn-sm"
+				style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
+			>
+				<RefreshCw
+					size={13}
+					style={{
+						animation: refreshMut.isPending
+							? "spin 1s linear infinite"
+							: "none",
+					}}
+				/>
+				{refreshMut.isPending ? "Refreshing…" : "Refresh CVE Feeds"}
+			</button>
 
-      <p style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 10 }}>
-        Downloads NVD feeds (2020–present) and CISA Known Exploited Vulnerabilities catalog.
-        Takes a few minutes. Runs automatically on first worker boot.
-      </p>
-    </div>
-  )
+			<p style={{ fontSize: 11, color: "var(--text-3)", marginTop: 10 }}>
+				Downloads NVD feeds (2020–present) and CISA Known Exploited
+				Vulnerabilities catalog. Takes a few minutes. Runs automatically on
+				first worker boot.
+			</p>
+		</div>
+	);
 }
 
 /* ── API Keys ─────────────────────────────────────────────── */
 const ALL_SCOPES = [
-  { value: 'scans:read',        label: 'Scans — read',         desc: 'List and view scans' },
-  { value: 'scans:write',       label: 'Scans — write',        desc: 'Create, launch, cancel, delete scans' },
-  { value: 'findings:read',     label: 'Findings — read',      desc: 'List and view findings' },
-  { value: 'findings:triage',   label: 'Findings — triage',    desc: 'Mark false positives, update status' },
-  { value: 'reports:read',      label: 'Reports — read',       desc: 'View reports' },
-  { value: 'reports:export',    label: 'Reports — export',     desc: 'Generate and download PDF reports' },
-  { value: 'credentials:read',  label: 'Credentials — read',   desc: 'List credentials' },
-  { value: 'credentials:write', label: 'Credentials — write',  desc: 'Create/delete credentials' },
-  { value: 'agents:read',       label: 'Agents — read',        desc: 'List scan agents' },
-  { value: 'agents:write',      label: 'Agents — write',       desc: 'Register/remove agents' },
-  { value: '*',                 label: 'Full access',           desc: 'All scopes (same as a user session)' },
-]
+	{ value: "scans:read", label: "Scans — read", desc: "List and view scans" },
+	{
+		value: "scans:write",
+		label: "Scans — write",
+		desc: "Create, launch, cancel, delete scans",
+	},
+	{
+		value: "findings:read",
+		label: "Findings — read",
+		desc: "List and view findings",
+	},
+	{
+		value: "findings:triage",
+		label: "Findings — triage",
+		desc: "Mark false positives, update status",
+	},
+	{ value: "reports:read", label: "Reports — read", desc: "View reports" },
+	{
+		value: "reports:export",
+		label: "Reports — export",
+		desc: "Generate and download PDF reports",
+	},
+	{
+		value: "credentials:read",
+		label: "Credentials — read",
+		desc: "List credentials",
+	},
+	{
+		value: "credentials:write",
+		label: "Credentials — write",
+		desc: "Create/delete credentials",
+	},
+	{ value: "agents:read", label: "Agents — read", desc: "List scan agents" },
+	{
+		value: "agents:write",
+		label: "Agents — write",
+		desc: "Register/remove agents",
+	},
+	{
+		value: "*",
+		label: "Full access",
+		desc: "All scopes (same as a user session)",
+	},
+];
 
 function ApiKeysSection() {
-  const qc = useQueryClient()
-  const [showCreate, setShowCreate] = useState(false)
-  const [newKeyName, setNewKeyName] = useState('')
-  const [selectedScopes, setSelectedScopes] = useState<string[]>(['scans:read', 'findings:read'])
-  const [createdKey, setCreatedKey] = useState<APIKeyCreated | null>(null)
-  const [copied, setCopied] = useState(false)
+	const qc = useQueryClient();
+	const [showCreate, setShowCreate] = useState(false);
+	const [newKeyName, setNewKeyName] = useState("");
+	const [selectedScopes, setSelectedScopes] = useState<string[]>([
+		"scans:read",
+		"findings:read",
+	]);
+	const [createdKey, setCreatedKey] = useState<APIKeyCreated | null>(null);
+	const [copied, setCopied] = useState(false);
 
-  const { data: keys = [] } = useQuery({ queryKey: ['api-keys'], queryFn: apiKeysApi.list })
+	const { data: keys = [] } = useQuery({
+		queryKey: ["api-keys"],
+		queryFn: apiKeysApi.list,
+	});
 
-  const toggleScope = (s: string) => {
-    if (s === '*') { setSelectedScopes(['*']); return }
-    setSelectedScopes(prev => {
-      const without = prev.filter(x => x !== '*')
-      return without.includes(s) ? without.filter(x => x !== s) : [...without, s]
-    })
-  }
+	const toggleScope = (s: string) => {
+		if (s === "*") {
+			setSelectedScopes(["*"]);
+			return;
+		}
+		setSelectedScopes((prev) => {
+			const without = prev.filter((x) => x !== "*");
+			return without.includes(s)
+				? without.filter((x) => x !== s)
+				: [...without, s];
+		});
+	};
 
-  const [keyErr, setKeyErr] = useState<string | null>(null)
-  const _onKeyErr = (e: unknown) => setKeyErr(e instanceof Error ? e.message : String(e))
+	const [keyErr, setKeyErr] = useState<string | null>(null);
+	const _onKeyErr = (e: unknown) =>
+		setKeyErr(e instanceof Error ? e.message : String(e));
 
-  const createMut = useMutation({
-    mutationFn: () => apiKeysApi.create({ name: newKeyName, scopes: selectedScopes }),
-    onSuccess: (key) => {
-      setCreatedKey(key); setShowCreate(false); setNewKeyName('')
-      setSelectedScopes(['scans:read', 'findings:read'])
-      qc.invalidateQueries({ queryKey: ['api-keys'] }); setKeyErr(null)
-    },
-    onError: _onKeyErr,
-  })
+	const createMut = useMutation({
+		mutationFn: () =>
+			apiKeysApi.create({ name: newKeyName, scopes: selectedScopes }),
+		onSuccess: (key) => {
+			setCreatedKey(key);
+			setShowCreate(false);
+			setNewKeyName("");
+			setSelectedScopes(["scans:read", "findings:read"]);
+			qc.invalidateQueries({ queryKey: ["api-keys"] });
+			setKeyErr(null);
+		},
+		onError: _onKeyErr,
+	});
 
-  const revokeMut = useMutation({
-    mutationFn: apiKeysApi.revoke,
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['api-keys'] }); setKeyErr(null) },
-    onError: _onKeyErr,
-  })
+	const revokeMut = useMutation({
+		mutationFn: apiKeysApi.revoke,
+		onSuccess: () => {
+			qc.invalidateQueries({ queryKey: ["api-keys"] });
+			setKeyErr(null);
+		},
+		onError: _onKeyErr,
+	});
 
-  const copyKey = (key: string) => {
-    navigator.clipboard.writeText(key)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
-  }
+	const copyKey = (key: string) => {
+		navigator.clipboard.writeText(key);
+		setCopied(true);
+		setTimeout(() => setCopied(false), 2000);
+	};
 
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      {keyErr && <div style={{ background: 'var(--sev-high)', color: '#fff', padding: '6px 10px', borderRadius: 4, fontSize: 12 }}>{keyErr}</div>}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <p style={{ fontSize: 12, color: 'var(--text-3)' }}>API keys allow CI/CD pipelines and external tools to authenticate with ScanR.</p>
-        <button onClick={() => setShowCreate(true)} className="btn btn-primary btn-sm">
-          <Plus size={13} /> New Key
-        </button>
-      </div>
+	return (
+		<div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+			{keyErr && (
+				<div
+					style={{
+						background: "var(--sev-high)",
+						color: "#fff",
+						padding: "6px 10px",
+						borderRadius: 4,
+						fontSize: 12,
+					}}
+				>
+					{keyErr}
+				</div>
+			)}
+			<div
+				style={{
+					display: "flex",
+					alignItems: "center",
+					justifyContent: "space-between",
+				}}
+			>
+				<p style={{ fontSize: 12, color: "var(--text-3)" }}>
+					API keys allow CI/CD pipelines and external tools to authenticate with
+					ScanR.
+				</p>
+				<button
+					onClick={() => setShowCreate(true)}
+					className="btn btn-primary btn-sm"
+				>
+					<Plus size={13} /> New Key
+				</button>
+			</div>
 
-      {createdKey && (
-        <div style={{ padding: 14, borderRadius: 8, background: 'oklch(0.22 0.05 145 / 0.3)', border: '1px solid var(--ok)' }}>
-          <p style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--ok)', marginBottom: 8 }}>
-            API key created — copy it now, it won't be shown again:
-          </p>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'var(--bg-0)', border: '1px solid var(--border)', borderRadius: 6, padding: '8px 12px', marginBottom: 8 }}>
-            <span className="mono" style={{ flex: 1, fontSize: 11, wordBreak: 'break-all', color: 'var(--text-0)' }}>{createdKey.key}</span>
-            <button onClick={() => copyKey(createdKey.key)} className="btn btn-ghost btn-icon btn-sm">
-              {copied ? <Check size={13} style={{ color: 'var(--ok)' }} /> : <Copy size={13} />}
-            </button>
-          </div>
-          <button onClick={() => setCreatedKey(null)} style={{ fontSize: 11, color: 'var(--ok)', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}>
-            Dismiss
-          </button>
-        </div>
-      )}
+			{createdKey && (
+				<div
+					style={{
+						padding: 14,
+						borderRadius: 8,
+						background: "oklch(0.22 0.05 145 / 0.3)",
+						border: "1px solid var(--ok)",
+					}}
+				>
+					<p
+						style={{
+							fontSize: 12.5,
+							fontWeight: 600,
+							color: "var(--ok)",
+							marginBottom: 8,
+						}}
+					>
+						API key created — copy it now, it won't be shown again:
+					</p>
+					<div
+						style={{
+							display: "flex",
+							alignItems: "center",
+							gap: 8,
+							background: "var(--bg-0)",
+							border: "1px solid var(--border)",
+							borderRadius: 6,
+							padding: "8px 12px",
+							marginBottom: 8,
+						}}
+					>
+						<span
+							className="mono"
+							style={{
+								flex: 1,
+								fontSize: 11,
+								wordBreak: "break-all",
+								color: "var(--text-0)",
+							}}
+						>
+							{createdKey.key}
+						</span>
+						<button
+							onClick={() => copyKey(createdKey.key)}
+							className="btn btn-ghost btn-icon btn-sm"
+						>
+							{copied ? (
+								<Check size={13} style={{ color: "var(--ok)" }} />
+							) : (
+								<Copy size={13} />
+							)}
+						</button>
+					</div>
+					<button
+						onClick={() => setCreatedKey(null)}
+						style={{
+							fontSize: 11,
+							color: "var(--ok)",
+							background: "none",
+							border: "none",
+							cursor: "pointer",
+							textDecoration: "underline",
+						}}
+					>
+						Dismiss
+					</button>
+				</div>
+			)}
 
-      {showCreate && (
-        <div className="panel" style={{ padding: 14 }}>
-          <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-0)', marginBottom: 12 }}>New API Key</div>
-          <input
-            value={newKeyName}
-            onChange={e => setNewKeyName(e.target.value)}
-            placeholder="Key name (e.g. CI/CD pipeline)"
-            className="input"
-            style={{ marginBottom: 12 }}
-          />
-          <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-2)', marginBottom: 8 }}>Scopes</div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, marginBottom: 12 }}>
-            {ALL_SCOPES.map(s => (
-              <label key={s.value} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, cursor: 'pointer', padding: '6px 8px', borderRadius: 6, background: selectedScopes.includes(s.value) || selectedScopes.includes('*') ? 'var(--accent-soft)' : 'transparent' }}>
-                <input
-                  type="checkbox"
-                  checked={selectedScopes.includes(s.value) || selectedScopes.includes('*')}
-                  onChange={() => toggleScope(s.value)}
-                  style={{ marginTop: 1, accentColor: 'var(--accent)', flexShrink: 0 }}
-                />
-                <div>
-                  <div style={{ fontSize: 11.5, fontWeight: 500, color: 'var(--text-0)' }}>{s.label}</div>
-                  <div style={{ fontSize: 10.5, color: 'var(--text-3)' }}>{s.desc}</div>
-                </div>
-              </label>
-            ))}
-          </div>
-          <div style={{ display: 'flex', gap: 8 }}>
-            <button
-              onClick={() => createMut.mutate()}
-              disabled={!newKeyName || selectedScopes.length === 0 || createMut.isPending}
-              className="btn btn-primary btn-sm"
-            >
-              {createMut.isPending ? 'Creating…' : 'Create'}
-            </button>
-            <button onClick={() => setShowCreate(false)} className="btn btn-ghost btn-sm">Cancel</button>
-          </div>
-        </div>
-      )}
+			{showCreate && (
+				<div className="panel" style={{ padding: 14 }}>
+					<div
+						style={{
+							fontSize: 13,
+							fontWeight: 600,
+							color: "var(--text-0)",
+							marginBottom: 12,
+						}}
+					>
+						New API Key
+					</div>
+					<input
+						value={newKeyName}
+						onChange={(e) => setNewKeyName(e.target.value)}
+						placeholder="Key name (e.g. CI/CD pipeline)"
+						className="input"
+						style={{ marginBottom: 12 }}
+					/>
+					<div
+						style={{
+							fontSize: 11,
+							fontWeight: 600,
+							color: "var(--text-2)",
+							marginBottom: 8,
+						}}
+					>
+						Scopes
+					</div>
+					<div
+						style={{
+							display: "grid",
+							gridTemplateColumns: "1fr 1fr",
+							gap: 6,
+							marginBottom: 12,
+						}}
+					>
+						{ALL_SCOPES.map((s) => (
+							<label
+								key={s.value}
+								style={{
+									display: "flex",
+									alignItems: "flex-start",
+									gap: 8,
+									cursor: "pointer",
+									padding: "6px 8px",
+									borderRadius: 6,
+									background:
+										selectedScopes.includes(s.value) ||
+										selectedScopes.includes("*")
+											? "var(--accent-soft)"
+											: "transparent",
+								}}
+							>
+								<input
+									type="checkbox"
+									checked={
+										selectedScopes.includes(s.value) ||
+										selectedScopes.includes("*")
+									}
+									onChange={() => toggleScope(s.value)}
+									style={{
+										marginTop: 1,
+										accentColor: "var(--accent)",
+										flexShrink: 0,
+									}}
+								/>
+								<div>
+									<div
+										style={{
+											fontSize: 11.5,
+											fontWeight: 500,
+											color: "var(--text-0)",
+										}}
+									>
+										{s.label}
+									</div>
+									<div style={{ fontSize: 10.5, color: "var(--text-3)" }}>
+										{s.desc}
+									</div>
+								</div>
+							</label>
+						))}
+					</div>
+					<div style={{ display: "flex", gap: 8 }}>
+						<button
+							onClick={() => createMut.mutate()}
+							disabled={
+								!newKeyName ||
+								selectedScopes.length === 0 ||
+								createMut.isPending
+							}
+							className="btn btn-primary btn-sm"
+						>
+							{createMut.isPending ? "Creating…" : "Create"}
+						</button>
+						<button
+							onClick={() => setShowCreate(false)}
+							className="btn btn-ghost btn-sm"
+						>
+							Cancel
+						</button>
+					</div>
+				</div>
+			)}
 
-      <div className="panel" style={{ overflow: 'hidden' }}>
-        <table className="tbl">
-          <thead>
-            <tr>
-              <th>Name</th>
-              <th>Prefix</th>
-              <th>Scopes</th>
-              <th>Last Used</th>
-              <th>Created</th>
-              <th />
-            </tr>
-          </thead>
-          <tbody>
-            {keys.map(k => (
-              <tr key={k.id}>
-                <td style={{ fontWeight: 500, color: 'var(--text-0)' }}>{k.name}</td>
-                <td className="mono dimmer" style={{ fontSize: 11 }}>{k.prefix}…</td>
-                <td>
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                    {k.scopes.map(s => (
-                      <span key={s} className="mono" style={{ fontSize: 10, background: 'var(--accent-soft)', color: 'var(--accent)', padding: '2px 5px', borderRadius: 4 }}>{s}</span>
-                    ))}
-                  </div>
-                </td>
-                <td className="dimmer" style={{ fontSize: 11 }}>{k.last_used_at ? relTime(k.last_used_at) : 'Never'}</td>
-                <td className="dimmer" style={{ fontSize: 11 }}>{relTime(k.created_at)}</td>
-                <td style={{ textAlign: 'right' }}>
-                  <button onClick={() => revokeMut.mutate(k.id)} className="btn btn-ghost btn-icon btn-sm" title="Revoke" style={{ color: 'var(--sev-high)' }}>
-                    <Trash2 size={13} />
-                  </button>
-                </td>
-              </tr>
-            ))}
-            {keys.length === 0 && (
-              <tr>
-                <td colSpan={6} style={{ padding: '32px 16px', textAlign: 'center', color: 'var(--text-3)', fontSize: 12 }}>
-                  No API keys
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  )
+			<div className="panel" style={{ overflow: "hidden" }}>
+				<table className="tbl">
+					<thead>
+						<tr>
+							<th>Name</th>
+							<th>Prefix</th>
+							<th>Scopes</th>
+							<th>Last Used</th>
+							<th>Created</th>
+							<th />
+						</tr>
+					</thead>
+					<tbody>
+						{keys.map((k) => (
+							<tr key={k.id}>
+								<td style={{ fontWeight: 500, color: "var(--text-0)" }}>
+									{k.name}
+								</td>
+								<td className="mono dimmer" style={{ fontSize: 11 }}>
+									{k.prefix}…
+								</td>
+								<td>
+									<div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+										{k.scopes.map((s) => (
+											<span
+												key={s}
+												className="mono"
+												style={{
+													fontSize: 10,
+													background: "var(--accent-soft)",
+													color: "var(--accent)",
+													padding: "2px 5px",
+													borderRadius: 4,
+												}}
+											>
+												{s}
+											</span>
+										))}
+									</div>
+								</td>
+								<td className="dimmer" style={{ fontSize: 11 }}>
+									{k.last_used_at ? relTime(k.last_used_at) : "Never"}
+								</td>
+								<td className="dimmer" style={{ fontSize: 11 }}>
+									{relTime(k.created_at)}
+								</td>
+								<td style={{ textAlign: "right" }}>
+									<button
+										onClick={() => revokeMut.mutate(k.id)}
+										className="btn btn-ghost btn-icon btn-sm"
+										title="Revoke"
+										style={{ color: "var(--sev-high)" }}
+									>
+										<Trash2 size={13} />
+									</button>
+								</td>
+							</tr>
+						))}
+						{keys.length === 0 && (
+							<tr>
+								<td
+									colSpan={6}
+									style={{
+										padding: "32px 16px",
+										textAlign: "center",
+										color: "var(--text-3)",
+										fontSize: 12,
+									}}
+								>
+									No API keys
+								</td>
+							</tr>
+						)}
+					</tbody>
+				</table>
+			</div>
+		</div>
+	);
 }
 
 /* ── Webhooks ─────────────────────────────────────────────── */
-const ALL_EVENTS = ['scan.completed', 'scan.failed', 'finding.critical', 'finding.high', '*']
+const ALL_EVENTS = [
+	"scan.completed",
+	"scan.failed",
+	"finding.critical",
+	"finding.high",
+	"*",
+];
 
 function WebhooksSection() {
-  const qc = useQueryClient()
-  const [showCreate, setShowCreate] = useState(false)
-  const [form, setForm] = useState({ name: '', url: '', secret: '', events: ['scan.completed', 'finding.critical'] })
+	const qc = useQueryClient();
+	const [showCreate, setShowCreate] = useState(false);
+	const [form, setForm] = useState({
+		name: "",
+		url: "",
+		secret: "",
+		events: ["scan.completed", "finding.critical"],
+	});
 
-  const { data: webhooks = [] } = useQuery({ queryKey: ['webhooks'], queryFn: webhooksApi.list })
+	const { data: webhooks = [] } = useQuery({
+		queryKey: ["webhooks"],
+		queryFn: webhooksApi.list,
+	});
 
-  const [whErr, setWhErr] = useState<string | null>(null)
-  const _onWhErr = (e: unknown) => setWhErr(e instanceof Error ? e.message : String(e))
+	const [whErr, setWhErr] = useState<string | null>(null);
+	const _onWhErr = (e: unknown) =>
+		setWhErr(e instanceof Error ? e.message : String(e));
 
-  const createMut = useMutation({
-    mutationFn: () => webhooksApi.create({ ...form, secret: form.secret || undefined }),
-    onSuccess: () => {
-      setShowCreate(false)
-      setForm({ name: '', url: '', secret: '', events: ['scan.completed', 'finding.critical'] })
-      qc.invalidateQueries({ queryKey: ['webhooks'] }); setWhErr(null)
-    },
-    onError: _onWhErr,
-  })
+	const createMut = useMutation({
+		mutationFn: () =>
+			webhooksApi.create({ ...form, secret: form.secret || undefined }),
+		onSuccess: () => {
+			setShowCreate(false);
+			setForm({
+				name: "",
+				url: "",
+				secret: "",
+				events: ["scan.completed", "finding.critical"],
+			});
+			qc.invalidateQueries({ queryKey: ["webhooks"] });
+			setWhErr(null);
+		},
+		onError: _onWhErr,
+	});
 
-  const deleteMut = useMutation({
-    mutationFn: webhooksApi.delete,
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['webhooks'] }); setWhErr(null) },
-    onError: _onWhErr,
-  })
+	const deleteMut = useMutation({
+		mutationFn: webhooksApi.delete,
+		onSuccess: () => {
+			qc.invalidateQueries({ queryKey: ["webhooks"] });
+			setWhErr(null);
+		},
+		onError: _onWhErr,
+	});
 
-  const testMut = useMutation({ mutationFn: webhooksApi.test, onError: _onWhErr })
+	const testMut = useMutation({
+		mutationFn: webhooksApi.test,
+		onError: _onWhErr,
+	});
 
-  const toggleEvent = (event: string) => {
-    setForm(f => ({
-      ...f,
-      events: f.events.includes(event) ? f.events.filter(e => e !== event) : [...f.events, event],
-    }))
-  }
+	const toggleEvent = (event: string) => {
+		setForm((f) => ({
+			...f,
+			events: f.events.includes(event)
+				? f.events.filter((e) => e !== event)
+				: [...f.events, event],
+		}));
+	};
 
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      {whErr && <div style={{ background: 'var(--sev-high)', color: '#fff', padding: '6px 10px', borderRadius: 4, fontSize: 12 }}>{whErr}</div>}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <p style={{ fontSize: 12, color: 'var(--text-3)' }}>Webhooks send HTTP POST requests to external URLs when scan events occur.</p>
-        <button onClick={() => setShowCreate(true)} className="btn btn-primary btn-sm">
-          <Plus size={13} /> New Webhook
-        </button>
-      </div>
+	return (
+		<div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+			{whErr && (
+				<div
+					style={{
+						background: "var(--sev-high)",
+						color: "#fff",
+						padding: "6px 10px",
+						borderRadius: 4,
+						fontSize: 12,
+					}}
+				>
+					{whErr}
+				</div>
+			)}
+			<div
+				style={{
+					display: "flex",
+					alignItems: "center",
+					justifyContent: "space-between",
+				}}
+			>
+				<p style={{ fontSize: 12, color: "var(--text-3)" }}>
+					Webhooks send HTTP POST requests to external URLs when scan events
+					occur.
+				</p>
+				<button
+					onClick={() => setShowCreate(true)}
+					className="btn btn-primary btn-sm"
+				>
+					<Plus size={13} /> New Webhook
+				</button>
+			</div>
 
-      {showCreate && (
-        <div className="panel" style={{ padding: 14 }}>
-          <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-0)', marginBottom: 12 }}>New Webhook</div>
-          <input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
-            placeholder="Name" className="input" style={{ marginBottom: 8 }} />
-          <input value={form.url} onChange={e => setForm(f => ({ ...f, url: e.target.value }))}
-            placeholder="https://hooks.example.com/payload" className="input"
-            style={{ marginBottom: 8, fontFamily: 'var(--font-mono)', fontSize: 12 }} />
-          <input value={form.secret} onChange={e => setForm(f => ({ ...f, secret: e.target.value }))}
-            placeholder="HMAC signing secret (optional)" className="input" style={{ marginBottom: 12 }} />
-          <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-2)', marginBottom: 6 }}>Events</div>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
-            {ALL_EVENTS.map(ev => (
-              <label key={ev} style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
-                <input type="checkbox" checked={form.events.includes(ev)} onChange={() => toggleEvent(ev)}
-                  style={{ accentColor: 'var(--accent)' }} />
-                <span className="mono" style={{ fontSize: 11, color: 'var(--text-1)' }}>{ev}</span>
-              </label>
-            ))}
-          </div>
-          <div style={{ display: 'flex', gap: 8 }}>
-            <button onClick={() => createMut.mutate()} disabled={!form.name || !form.url || createMut.isPending} className="btn btn-primary btn-sm">
-              {createMut.isPending ? 'Creating…' : 'Create'}
-            </button>
-            <button onClick={() => setShowCreate(false)} className="btn btn-ghost btn-sm">Cancel</button>
-          </div>
-        </div>
-      )}
+			{showCreate && (
+				<div className="panel" style={{ padding: 14 }}>
+					<div
+						style={{
+							fontSize: 13,
+							fontWeight: 600,
+							color: "var(--text-0)",
+							marginBottom: 12,
+						}}
+					>
+						New Webhook
+					</div>
+					<input
+						value={form.name}
+						onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+						placeholder="Name"
+						className="input"
+						style={{ marginBottom: 8 }}
+					/>
+					<input
+						value={form.url}
+						onChange={(e) => setForm((f) => ({ ...f, url: e.target.value }))}
+						placeholder="https://hooks.example.com/payload"
+						className="input"
+						style={{
+							marginBottom: 8,
+							fontFamily: "var(--font-mono)",
+							fontSize: 12,
+						}}
+					/>
+					<input
+						value={form.secret}
+						onChange={(e) => setForm((f) => ({ ...f, secret: e.target.value }))}
+						placeholder="HMAC signing secret (optional)"
+						className="input"
+						style={{ marginBottom: 12 }}
+					/>
+					<div
+						style={{
+							fontSize: 11,
+							fontWeight: 600,
+							color: "var(--text-2)",
+							marginBottom: 6,
+						}}
+					>
+						Events
+					</div>
+					<div
+						style={{
+							display: "flex",
+							flexWrap: "wrap",
+							gap: 8,
+							marginBottom: 12,
+						}}
+					>
+						{ALL_EVENTS.map((ev) => (
+							<label
+								key={ev}
+								style={{
+									display: "flex",
+									alignItems: "center",
+									gap: 6,
+									cursor: "pointer",
+								}}
+							>
+								<input
+									type="checkbox"
+									checked={form.events.includes(ev)}
+									onChange={() => toggleEvent(ev)}
+									style={{ accentColor: "var(--accent)" }}
+								/>
+								<span
+									className="mono"
+									style={{ fontSize: 11, color: "var(--text-1)" }}
+								>
+									{ev}
+								</span>
+							</label>
+						))}
+					</div>
+					<div style={{ display: "flex", gap: 8 }}>
+						<button
+							onClick={() => createMut.mutate()}
+							disabled={!form.name || !form.url || createMut.isPending}
+							className="btn btn-primary btn-sm"
+						>
+							{createMut.isPending ? "Creating…" : "Create"}
+						</button>
+						<button
+							onClick={() => setShowCreate(false)}
+							className="btn btn-ghost btn-sm"
+						>
+							Cancel
+						</button>
+					</div>
+				</div>
+			)}
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-        {webhooks.map(w => (
-          <div key={w.id} className="panel" style={{ padding: 14 }}>
-            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-                  <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-0)' }}>{w.name}</span>
-                  {w.last_status != null && (
-                    <span className="mono" style={{
-                      fontSize: 10, padding: '1px 5px', borderRadius: 4,
-                      background: w.last_status < 300 ? 'oklch(0.22 0.05 145 / 0.4)' : 'oklch(0.25 0.1 30 / 0.4)',
-                      color: w.last_status < 300 ? 'var(--ok)' : 'var(--sev-high)',
-                    }}>
-                      {w.last_status}
-                    </span>
-                  )}
-                  <span className={`pill ${w.enabled ? 'pill-completed' : 'pill-cancelled'}`} style={{ fontSize: 10 }}>
-                    {w.enabled ? 'enabled' : 'disabled'}
-                  </span>
-                </div>
-                <div className="mono dimmer" style={{ fontSize: 11, marginBottom: 8, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {w.url}
-                </div>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                  {w.events.map(ev => (
-                    <span key={ev} className="mono" style={{ fontSize: 10, background: 'var(--accent-soft)', color: 'var(--accent)', padding: '2px 5px', borderRadius: 4 }}>{ev}</span>
-                  ))}
-                </div>
-              </div>
-              <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
-                <button onClick={() => testMut.mutate(w.id)} disabled={testMut.isPending} className="btn btn-ghost btn-icon btn-sm" title="Send test payload">
-                  <Send size={13} />
-                </button>
-                <button onClick={() => deleteMut.mutate(w.id)} className="btn btn-ghost btn-icon btn-sm" title="Delete" style={{ color: 'var(--sev-high)' }}>
-                  <Trash2 size={13} />
-                </button>
-              </div>
-            </div>
-          </div>
-        ))}
-        {webhooks.length === 0 && (
-          <div style={{ textAlign: 'center', padding: '32px', color: 'var(--text-3)', fontSize: 12 }}>
-            No webhooks configured
-          </div>
-        )}
-      </div>
-    </div>
-  )
+			<div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+				{webhooks.map((w) => (
+					<div key={w.id} className="panel" style={{ padding: 14 }}>
+						<div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
+							<div style={{ flex: 1, minWidth: 0 }}>
+								<div
+									style={{
+										display: "flex",
+										alignItems: "center",
+										gap: 8,
+										marginBottom: 6,
+									}}
+								>
+									<span
+										style={{
+											fontSize: 13,
+											fontWeight: 600,
+											color: "var(--text-0)",
+										}}
+									>
+										{w.name}
+									</span>
+									{w.last_status != null && (
+										<span
+											className="mono"
+											style={{
+												fontSize: 10,
+												padding: "1px 5px",
+												borderRadius: 4,
+												background:
+													w.last_status < 300
+														? "oklch(0.22 0.05 145 / 0.4)"
+														: "oklch(0.25 0.1 30 / 0.4)",
+												color:
+													w.last_status < 300 ? "var(--ok)" : "var(--sev-high)",
+											}}
+										>
+											{w.last_status}
+										</span>
+									)}
+									<span
+										className={`pill ${w.enabled ? "pill-completed" : "pill-cancelled"}`}
+										style={{ fontSize: 10 }}
+									>
+										{w.enabled ? "enabled" : "disabled"}
+									</span>
+								</div>
+								<div
+									className="mono dimmer"
+									style={{
+										fontSize: 11,
+										marginBottom: 8,
+										overflow: "hidden",
+										textOverflow: "ellipsis",
+										whiteSpace: "nowrap",
+									}}
+								>
+									{w.url}
+								</div>
+								<div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+									{w.events.map((ev) => (
+										<span
+											key={ev}
+											className="mono"
+											style={{
+												fontSize: 10,
+												background: "var(--accent-soft)",
+												color: "var(--accent)",
+												padding: "2px 5px",
+												borderRadius: 4,
+											}}
+										>
+											{ev}
+										</span>
+									))}
+								</div>
+							</div>
+							<div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
+								<button
+									onClick={() => testMut.mutate(w.id)}
+									disabled={testMut.isPending}
+									className="btn btn-ghost btn-icon btn-sm"
+									title="Send test payload"
+								>
+									<Send size={13} />
+								</button>
+								<button
+									onClick={() => deleteMut.mutate(w.id)}
+									className="btn btn-ghost btn-icon btn-sm"
+									title="Delete"
+									style={{ color: "var(--sev-high)" }}
+								>
+									<Trash2 size={13} />
+								</button>
+							</div>
+						</div>
+					</div>
+				))}
+				{webhooks.length === 0 && (
+					<div
+						style={{
+							textAlign: "center",
+							padding: "32px",
+							color: "var(--text-3)",
+							fontSize: 12,
+						}}
+					>
+						No webhooks configured
+					</div>
+				)}
+			</div>
+		</div>
+	);
 }

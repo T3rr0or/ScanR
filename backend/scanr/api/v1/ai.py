@@ -17,6 +17,7 @@ from scanr.ai.llm.factory import (
     build_provider,
     default_model,
 )
+from scanr.ai.llm.models import list_models as fetch_models
 from scanr.config import get_settings
 from scanr.core.limiter import limiter
 from scanr.db import get_db
@@ -49,6 +50,11 @@ class ApiKeyBody(BaseModel):
 
 class AIConfigBody(BaseModel):
     provider: str
+
+
+class SaveResultBody(BaseModel):
+    type: str = Field(pattern="^(summary|report|false_positives)$")
+    content: dict  # the full API response to save
 
 
 class ModelBody(BaseModel):
@@ -134,6 +140,55 @@ async def set_model(
     await store.set_model(db, provider, body.model)
 
 
+@router.get("/models/available/{provider}")
+async def list_provider_models(
+    provider: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_admin),
+):
+    """Fetch available models from the provider's API (cached for 5 min)."""
+    _check_provider(provider)
+    api_key = await store.resolve_api_key(db, provider)
+    if not api_key:
+        raise HTTPException(
+            status_code=400,
+            detail=f"No API key configured for provider {provider!r}. Add one first.",
+        )
+    try:
+        models = await fetch_models(provider, api_key)
+        return {"provider": provider, "models": models}
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Failed to fetch models: {exc}")
+
+
+async def _save_result(
+    db: AsyncSession,
+    scan_id: str,
+    result_type: str,
+    provider: str,
+    model: str,
+    content: dict,
+    usage: dict | None,
+) -> str:
+    """Persist an AI result to the database."""
+    from scanr.models.ai_result import AiResult
+    from scanr.models.base import new_uuid
+    import json as _json
+
+    result = AiResult(
+        id=new_uuid(),
+        scan_id=scan_id,
+        type=result_type,
+        provider=provider,
+        model=model,
+        content=_json.dumps(content),
+        token_usage=_json.dumps(usage) if usage else None,
+    )
+    db.add(result)
+    await db.commit()
+    return result.id
+
+
 async def _own_scan(db: AsyncSession, scan_id: str, user_id: str) -> Scan:
     res = await db.execute(select(Scan).where(Scan.id == scan_id, Scan.user_id == user_id))
     scan = res.scalar_one_or_none()
@@ -216,10 +271,8 @@ async def summarize_scan(
     await _own_scan(db, scan_id, current_user.id)
     provider = await _build_provider(db, body.provider, body.model)
     findings = await _load_findings(db, scan_id, include_false_positives=body.include_false_positives)
-    result = await _run_assist(
-        summarize_findings(provider, findings, max_tokens=get_settings().ai_max_tokens)
-    )
-    return {
+    result = await _run_assist(summarize_findings(provider, findings, max_tokens=get_settings().ai_max_tokens))
+    response = {
         "scan_id": scan_id,
         "summary": result.text,
         "provider": result.provider,
@@ -227,6 +280,49 @@ async def summarize_scan(
         "finding_count": result.finding_count,
         "usage": _usage_dict(result.usage),
     }
+    try:
+        response["saved_id"] = await _save_result(
+            db,
+            scan_id,
+            "summary",
+            result.provider,
+            result.model,
+            {"text": result.text},
+            _usage_dict(result.usage),
+        )
+    except Exception:
+        logger.warning("Failed to persist summary result for scan %s", scan_id)
+    return response
+
+
+@router.get("/scans/{scan_id}/results")
+async def list_results(
+    scan_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_scope("findings:read")),
+):
+    """List saved AI results for a scan."""
+    await _own_scan(db, scan_id, current_user.id)
+    from scanr.models.ai_result import AiResult
+    import json as _json
+
+    rows = (
+        (await db.execute(select(AiResult).where(AiResult.scan_id == scan_id).order_by(AiResult.created_at.desc())))
+        .scalars()
+        .all()
+    )
+    return [
+        {
+            "id": r.id,
+            "type": r.type,
+            "provider": r.provider,
+            "model": r.model,
+            "content": _json.loads(r.content) if isinstance(r.content, str) else r.content,
+            "token_usage": _json.loads(r.token_usage) if r.token_usage else None,
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+        }
+        for r in rows
+    ]
 
 
 @router.post("/scans/{scan_id}/report")
@@ -248,7 +344,7 @@ async def report_narrative(
             provider, findings, scan_name=scan.name, max_tokens=max(get_settings().ai_max_tokens, 3072)
         )
     )
-    return {
+    response = {
         "scan_id": scan_id,
         "report": result.text,
         "provider": result.provider,
@@ -256,6 +352,19 @@ async def report_narrative(
         "finding_count": result.finding_count,
         "usage": _usage_dict(result.usage),
     }
+    try:
+        response["saved_id"] = await _save_result(
+            db,
+            scan_id,
+            "report",
+            result.provider,
+            result.model,
+            {"text": result.text},
+            _usage_dict(result.usage),
+        )
+    except Exception:
+        logger.warning("Failed to persist report result for scan %s", scan_id)
+    return response
 
 
 @router.post("/scans/{scan_id}/false-positives")
@@ -272,15 +381,27 @@ async def false_positives(
     await _own_scan(db, scan_id, current_user.id)
     provider = await _build_provider(db, body.provider, body.model)
     findings = await _load_findings(db, scan_id, include_false_positives=False)
-    result = await _run_assist(
-        test_false_positives(provider, findings, max_tokens=get_settings().ai_max_tokens)
-    )
-    return {
+    result = await _run_assist(test_false_positives(provider, findings, max_tokens=get_settings().ai_max_tokens))
+    response = {
         "scan_id": scan_id,
         "items": result.items,
+        "methodology": result.methodology,
         "assessed_count": result.assessed_count,
         "flagged_count": len(result.items),
         "provider": result.provider,
         "model": result.model,
         "usage": _usage_dict(result.usage),
     }
+    try:
+        response["saved_id"] = await _save_result(
+            db,
+            scan_id,
+            "false_positives",
+            result.provider,
+            result.model,
+            {"items": result.items, "methodology": result.methodology},
+            _usage_dict(result.usage),
+        )
+    except Exception:
+        logger.warning("Failed to persist FP result for scan %s", scan_id)
+    return response

@@ -1,3 +1,4 @@
+from .ai_result import AiResult
 from .api_key import APIKey
 from .base import Base, TimestampMixin
 from .credential import Credential, CredentialType
@@ -50,6 +51,7 @@ __all__ = [
     "ReportFormat",
     "Schedule",
     "Screenshot",
+    "AiResult",
     "APIKey",
     "Webhook",
     "Exclusion",

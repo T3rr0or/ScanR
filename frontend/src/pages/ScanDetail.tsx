@@ -84,7 +84,9 @@ export default function ScanDetail({ scanId, onBack }: Props) {
 	const [tab, setTab] = useState<Tab>("console");
 	const [highlightHostIp, setHighlightHostIp] = useState<string | null>(null);
 	const [showDelta, setShowDelta] = useState(false);
-	const [topoSelectedHost, setTopoSelectedHost] = useState<HostRead | null>(null);
+	const [topoSelectedHost, setTopoSelectedHost] = useState<HostRead | null>(
+		null,
+	);
 	const qc = useQueryClient();
 
 	function goToHost(ip: string) {
@@ -458,22 +460,25 @@ export default function ScanDetail({ scanId, onBack }: Props) {
 								onSelectHost={(h) => {
 									// Look up full ScannedHost to get service/version data —
 									// HostNode only carries {number, state}, stripping service info.
-									const full = hosts.find(host => host.id === h.id)
-									if (!full) return
+									const full = hosts.find((host) => host.id === h.id);
+									if (!full) return;
 									setTopoSelectedHost({
 										id: full.id,
 										ip: full.ip,
 										hostname: full.hostname,
 										os_name: full.os_name,
 										status: full.status,
-										ports: (full.ports ?? []).map(p => ({
+										ports: (full.ports ?? []).map((p) => ({
 											number: p.number,
 											protocol: p.protocol,
 											state: p.state,
 											service: p.service?.name,
-											version: [p.service?.product, p.service?.version].filter(Boolean).join(' ') || undefined,
+											version:
+												[p.service?.product, p.service?.version]
+													.filter(Boolean)
+													.join(" ") || undefined,
 										})),
-									})
+									});
 								}}
 							/>
 						)}
@@ -484,48 +489,77 @@ export default function ScanDetail({ scanId, onBack }: Props) {
 				{tab === "chains" && <ChainsPanel chains={chains} />}
 				{tab === "ai" && <AiTab scanId={scanId} findings={findings} />}
 
-			{/* Topology host modal */}
-			{topoSelectedHost && (
-				<HostDetail
-					host={topoSelectedHost}
-					scanId={scanId}
-					findings={findings.filter(f => f.host_ip === topoSelectedHost.ip)}
-					onClose={() => setTopoSelectedHost(null)}
-				/>
-			)}
+				{/* Topology host modal */}
+				{topoSelectedHost && (
+					<HostDetail
+						host={topoSelectedHost}
+						scanId={scanId}
+						findings={findings.filter((f) => f.host_ip === topoSelectedHost.ip)}
+						onClose={() => setTopoSelectedHost(null)}
+					/>
+				)}
 			</div>
 		</div>
 	);
 }
 
 function AiTab({ scanId, findings }: { scanId: string; findings: Finding[] }) {
+	const qc = useQueryClient();
 	const { data: status } = useQuery({
 		queryKey: ["ai-status"],
 		queryFn: () => api.get("/ai/status").then((r) => r.data),
 	});
 
+	// Load saved results on page load
+	const { data: savedResults = [] } = useQuery({
+		queryKey: ["ai-results", scanId],
+		queryFn: () => api.get(`/ai/scans/${scanId}/results`).then((r) => r.data),
+		enabled:
+			["completed", "failed"].includes(status?.enabled ? "completed" : "") ||
+			true,
+	});
+
 	const summaryMut = useMutation({
-		mutationFn: () => api.post(`/ai/scans/${scanId}/summary`).then((r) => r.data),
+		mutationFn: () =>
+			api.post(`/ai/scans/${scanId}/summary`).then((r) => r.data),
+		onSuccess: () => qc.invalidateQueries({ queryKey: ["ai-results", scanId] }),
 	});
 	const reportMut = useMutation({
-		mutationFn: () => api.post(`/ai/scans/${scanId}/report`).then((r) => r.data),
+		mutationFn: () =>
+			api.post(`/ai/scans/${scanId}/report`).then((r) => r.data),
+		onSuccess: () => qc.invalidateQueries({ queryKey: ["ai-results", scanId] }),
 	});
 	const fpMut = useMutation({
-		mutationFn: () => api.post(`/ai/scans/${scanId}/false-positives`).then((r) => r.data),
+		mutationFn: () =>
+			api.post(`/ai/scans/${scanId}/false-positives`).then((r) => r.data),
+		onSuccess: () => qc.invalidateQueries({ queryKey: ["ai-results", scanId] }),
 	});
 
 	const enabled = status?.enabled ?? false;
-	const pending = summaryMut.isPending || reportMut.isPending || fpMut.isPending;
+	const pending =
+		summaryMut.isPending || reportMut.isPending || fpMut.isPending;
 	const errOf = (m: { error: unknown }): string | null => {
-		const e = m.error as { response?: { data?: { detail?: string } }; message?: string } | null;
+		const e = m.error as {
+			response?: { data?: { detail?: string } };
+			message?: string;
+		} | null;
 		if (!e) return null;
 		return e.response?.data?.detail ?? e.message ?? "Request failed";
 	};
 
-	const findingTitle = (id: string) => findings.find((f) => f.id === id)?.title ?? id;
+	const findingTitle = (id: string) =>
+		findings.find((f) => f.id === id)?.title ?? id;
+
+	// Merge fresh + saved results, preferring fresh
+	const hasFreshSummary = !!summaryMut.data;
+	const hasFreshReport = !!reportMut.data;
+	const hasFreshFp = !!fpMut.data;
 
 	return (
-		<div className="page-pad" style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+		<div
+			className="page-pad"
+			style={{ display: "flex", flexDirection: "column", gap: 14 }}
+		>
 			{!enabled && (
 				<div
 					style={{
@@ -538,8 +572,8 @@ function AiTab({ scanId, findings }: { scanId: string; findings: Finding[] }) {
 					}}
 				>
 					No AI provider is configured. Add an API key in{" "}
-					<strong>Settings → AI</strong> to enable summaries, report narrative, and
-					false-positive testing.
+					<strong>Settings → AI</strong> to enable summaries, report narrative,
+					and false-positive testing.
 				</div>
 			)}
 
@@ -575,6 +609,7 @@ function AiTab({ scanId, findings }: { scanId: string; findings: Finding[] }) {
 				) : null,
 			)}
 
+			{/* Fresh + saved summaries */}
 			{summaryMut.data && (
 				<AiResultPanel
 					title="Summary"
@@ -582,6 +617,36 @@ function AiTab({ scanId, findings }: { scanId: string; findings: Finding[] }) {
 					text={summaryMut.data.summary}
 				/>
 			)}
+			{!hasFreshSummary &&
+				savedResults
+					.filter((r: { type: string }) => r.type === "summary")
+					.slice(0, 1)
+					.map(
+						(r: {
+							id: string;
+							content: { text: string };
+							provider: string;
+							model: string;
+							token_usage: {
+								input_tokens: number;
+								output_tokens: number;
+							} | null;
+							created_at: string;
+						}) => (
+							<AiResultPanel
+								key={r.id}
+								title={`Summary (saved ${new Date(r.created_at).toLocaleString()})`}
+								meta={{
+									provider: r.provider,
+									model: r.model,
+									usage: r.token_usage ?? undefined,
+								}}
+								text={r.content.text}
+							/>
+						),
+					)}
+
+			{/* Fresh + saved reports */}
 			{reportMut.data && (
 				<AiResultPanel
 					title="Report narrative"
@@ -589,36 +654,258 @@ function AiTab({ scanId, findings }: { scanId: string; findings: Finding[] }) {
 					text={reportMut.data.report}
 				/>
 			)}
+			{!hasFreshReport &&
+				savedResults
+					.filter((r: { type: string }) => r.type === "report")
+					.slice(0, 1)
+					.map(
+						(r: {
+							id: string;
+							content: { text: string };
+							provider: string;
+							model: string;
+							token_usage: {
+								input_tokens: number;
+								output_tokens: number;
+							} | null;
+							created_at: string;
+						}) => (
+							<AiResultPanel
+								key={r.id}
+								title={`Report (saved ${new Date(r.created_at).toLocaleString()})`}
+								meta={{
+									provider: r.provider,
+									model: r.model,
+									usage: r.token_usage ?? undefined,
+								}}
+								text={r.content.text}
+							/>
+						),
+					)}
+
+			{/* Fresh + saved FP results */}
 			{fpMut.data && (
-				<div className="panel">
-					<div className="panel-head">
-						<span className="panel-title">
-							Likely false positives — {fpMut.data.flagged_count} of{" "}
-							{fpMut.data.assessed_count} assessed
-						</span>
-					</div>
-					<div style={{ padding: 14 }}>
-						{fpMut.data.items.length === 0 ? (
-							<div style={{ fontSize: 12.5, color: "var(--text-2)" }}>
-								No findings were flagged as likely false positives.
-							</div>
-						) : (
-							<ul style={{ margin: 0, paddingLeft: 18, display: "flex", flexDirection: "column", gap: 8 }}>
-								{fpMut.data.items.map((it: { id: string; confidence: string; reason: string }) => (
-									<li key={it.id} style={{ fontSize: 12.5, color: "var(--text-1)" }}>
-										<span style={{ fontWeight: 600 }}>{findingTitle(it.id)}</span>{" "}
-										<span className="pill pill-pending">{it.confidence}</span>
-										<div style={{ color: "var(--text-2)", marginTop: 2 }}>{it.reason}</div>
-									</li>
-								))}
-							</ul>
-						)}
-						<div style={{ fontSize: 11, color: "var(--text-3)", marginTop: 10 }}>
-							Advisory only — review before marking anything as a false positive.
+				<FalsePositivePanel data={fpMut.data} findingTitle={findingTitle} />
+			)}
+			{!hasFreshFp &&
+				savedResults
+					.filter((r: { type: string }) => r.type === "false_positives")
+					.slice(0, 1)
+					.map(
+						(r: {
+							id: string;
+							content: {
+								items: {
+									id: string;
+									confidence: string;
+									reason: string;
+									verification?: string;
+								}[];
+								methodology?: string;
+							};
+							provider: string;
+							model: string;
+							token_usage: {
+								input_tokens: number;
+								output_tokens: number;
+							} | null;
+							created_at: string;
+						}) => (
+							<FalsePositivePanel
+								key={r.id}
+								data={{
+									items: r.content.items,
+									methodology: r.content.methodology ?? "",
+									assessed_count: r.content.items?.length ?? 0,
+									flagged_count: r.content.items?.length ?? 0,
+									provider: r.provider,
+									model: r.model,
+									usage: r.token_usage,
+								}}
+								findingTitle={findingTitle}
+								savedDate={new Date(r.created_at).toLocaleString()}
+							/>
+						),
+					)}
+		</div>
+	);
+}
+
+function FalsePositivePanel({
+	data,
+	findingTitle,
+	savedDate,
+}: {
+	data: {
+		items: {
+			id: string;
+			confidence: string;
+			reason: string;
+			verification?: string;
+		}[];
+		methodology?: string;
+		assessed_count: number;
+		flagged_count: number;
+		provider: string;
+		model: string;
+		usage?: { input_tokens: number; output_tokens: number } | null;
+	};
+	findingTitle: (id: string) => string;
+	savedDate?: string;
+}) {
+	return (
+		<div className="panel">
+			<div
+				className="panel-head"
+				style={{
+					display: "flex",
+					justifyContent: "space-between",
+					alignItems: "center",
+				}}
+			>
+				<span className="panel-title">
+					{savedDate
+						? `False Positive Test (saved ${savedDate})`
+						: "Likely false positives"}{" "}
+					— {data.flagged_count} of {data.assessed_count} assessed
+				</span>
+				<span style={{ fontSize: 11, color: "var(--text-3)" }}>
+					{data.provider} · {data.model}
+					{data.usage
+						? ` · ${data.usage.input_tokens + data.usage.output_tokens} tok`
+						: ""}
+				</span>
+			</div>
+			<div style={{ padding: 14 }}>
+				{/* Methodology */}
+				{data.methodology && (
+					<div
+						style={{
+							marginBottom: 14,
+							padding: "10px 12px",
+							background: "var(--bg-1)",
+							borderRadius: 6,
+							border: "1px solid var(--border)",
+							borderLeft: "3px solid var(--accent)",
+						}}
+					>
+						<div
+							style={{
+								fontSize: 10,
+								fontWeight: 600,
+								color: "var(--text-3)",
+								marginBottom: 6,
+								textTransform: "uppercase",
+								letterSpacing: "0.05em",
+							}}
+						>
+							Assessment Methodology
+						</div>
+						<div
+							style={{ fontSize: 12, color: "var(--text-1)", lineHeight: 1.55 }}
+						>
+							{data.methodology}
 						</div>
 					</div>
+				)}
+
+				{data.items.length === 0 ? (
+					<div style={{ fontSize: 12.5, color: "var(--text-2)" }}>
+						No findings were flagged as likely false positives.
+					</div>
+				) : (
+					<div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+						{data.items.map((it) => (
+							<div
+								key={it.id}
+								style={{
+									padding: "10px 12px",
+									background: "var(--bg-1)",
+									borderRadius: 6,
+									border: "1px solid var(--border)",
+								}}
+							>
+								<div
+									style={{
+										display: "flex",
+										alignItems: "center",
+										gap: 8,
+										marginBottom: 6,
+									}}
+								>
+									<span
+										style={{
+											fontWeight: 600,
+											fontSize: 12.5,
+											color: "var(--text-0)",
+										}}
+									>
+										{findingTitle(it.id)}
+									</span>
+									<span
+										className={`pill ${
+											it.confidence === "high"
+												? "pill-cancelled"
+												: it.confidence === "medium"
+													? "pill-pending"
+													: "pill"
+										}`}
+									>
+										{it.confidence}
+									</span>
+								</div>
+								<div
+									style={{
+										fontSize: 12,
+										color: "var(--text-2)",
+										marginBottom: it.verification ? 8 : 0,
+									}}
+								>
+									{it.reason}
+								</div>
+								{it.verification && (
+									<div
+										style={{
+											padding: "8px 10px",
+											background: "var(--bg-0)",
+											borderRadius: 4,
+											border: "1px solid var(--border)",
+										}}
+									>
+										<div
+											style={{
+												fontSize: 10,
+												fontWeight: 600,
+												color: "var(--text-3)",
+												marginBottom: 4,
+												textTransform: "uppercase",
+												letterSpacing: "0.05em",
+											}}
+										>
+											Verification Steps
+										</div>
+										<pre
+											style={{
+												margin: 0,
+												fontSize: 11,
+												color: "var(--text-1)",
+												whiteSpace: "pre-wrap",
+												fontFamily: "var(--font-mono)",
+												lineHeight: 1.5,
+											}}
+										>
+											{it.verification}
+										</pre>
+									</div>
+								)}
+							</div>
+						))}
+					</div>
+				)}
+				<div style={{ fontSize: 11, color: "var(--text-3)", marginTop: 10 }}>
+					Advisory only — review before marking anything as a false positive.
 				</div>
-			)}
+			</div>
 		</div>
 	);
 }
@@ -630,15 +917,28 @@ function AiResultPanel({
 }: {
 	title: string;
 	text: string;
-	meta: { provider: string; model: string; usage?: { input_tokens: number; output_tokens: number } };
+	meta: {
+		provider: string;
+		model: string;
+		usage?: { input_tokens: number; output_tokens: number };
+	};
 }) {
 	return (
 		<div className="panel">
-			<div className="panel-head" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+			<div
+				className="panel-head"
+				style={{
+					display: "flex",
+					justifyContent: "space-between",
+					alignItems: "center",
+				}}
+			>
 				<span className="panel-title">{title}</span>
 				<span style={{ fontSize: 11, color: "var(--text-3)" }}>
 					{meta.provider} · {meta.model}
-					{meta.usage ? ` · ${meta.usage.input_tokens + meta.usage.output_tokens} tok` : ""}
+					{meta.usage
+						? ` · ${meta.usage.input_tokens + meta.usage.output_tokens} tok`
+						: ""}
 				</span>
 			</div>
 			<div
@@ -1665,7 +1965,7 @@ function HostsTab({
 				<HostDetail
 					host={selectedHost}
 					scanId={scanId}
-					findings={findings.filter(f => f.host_ip === selectedHost.ip)}
+					findings={findings.filter((f) => f.host_ip === selectedHost.ip)}
 					onClose={() => setSelectedHost(null)}
 				/>
 			)}
