@@ -88,15 +88,19 @@ const AI_PROVIDERS: { id: string; label: string; hint: string }[] = [
 interface AiStatus {
   enabled: boolean
   default_provider: string
-  default_model: string | null
   providers: string[]
   key_sources: Record<string, 'stored' | 'env' | null>
   configured: Record<string, boolean>
+  model_overrides: Record<string, string | null>
+  default_models: Record<string, string>
+  effective_models: Record<string, string>
 }
 
 function AiSection() {
   const qc = useQueryClient()
   const [inputs, setInputs] = useState<Record<string, string>>({})
+  // Model inputs are seeded from status once loaded; undefined = not yet edited.
+  const [models, setModels] = useState<Record<string, string>>({})
   const [showModes, setShowModes] = useState(false)
 
   const { data: status } = useQuery<AiStatus>({
@@ -118,6 +122,10 @@ function AiSection() {
     mutationFn: (p: string) => api.put('/ai/config', { provider: p }),
     onSuccess: invalidate,
   })
+  const saveModel = useMutation({
+    mutationFn: (p: string) => api.put(`/ai/models/${p}`, { model: (models[p] ?? '').trim() }),
+    onSuccess: (_d, p) => { setModels(s => { const n = { ...s }; delete n[p]; return n }); invalidate() },
+  })
 
   const sourceChip = (src: 'stored' | 'env' | null) => {
     if (src === 'stored') return <span className="pill pill-completed">Stored</span>
@@ -136,9 +144,10 @@ function AiSection() {
         </div>
         <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 8 }}>
           <p style={{ fontSize: 12.5, color: 'var(--text-2)', lineHeight: 1.55, margin: '0 0 6px' }}>
-            Add a provider API key to enable AI features (findings summaries today; report
-            narrative, false-positive testing, and autonomous pentest modes are on the roadmap).
-            Keys are encrypted at rest and never shown again after saving.
+            Add a provider API key to enable AI features (findings summaries, report narrative,
+            and false-positive testing today; autonomous pentest modes are on the roadmap).
+            Optionally override the model per provider. Keys are encrypted at rest and never
+            shown again after saving.
           </p>
 
           {AI_PROVIDERS.map(({ id, label, hint }) => {
@@ -189,6 +198,31 @@ function AiSection() {
                     A key is set via environment variable. Saving here overrides it.
                   </div>
                 )}
+
+                {/* Model override */}
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 8 }}>
+                  <span style={{ fontSize: 11, color: 'var(--text-3)', minWidth: 44 }}>Model</span>
+                  <input
+                    className="input"
+                    autoComplete="off"
+                    placeholder={`Default: ${status?.default_models?.[id] ?? ''}`}
+                    value={models[id] ?? status?.model_overrides?.[id] ?? ''}
+                    onChange={e => setModels(s => ({ ...s, [id]: e.target.value }))}
+                    style={{ flex: 1, minWidth: 220 }}
+                  />
+                  <button
+                    className="btn btn-ghost btn-sm"
+                    disabled={models[id] === undefined || saveModel.isPending}
+                    onClick={() => saveModel.mutate(id)}
+                    title="Leave blank and save to use the provider default"
+                  >
+                    Save model
+                  </button>
+                </div>
+                <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 4 }}>
+                  Using: <code>{status?.effective_models?.[id] ?? '—'}</code>
+                  {status?.model_overrides?.[id] ? ' (custom)' : ' (default)'}
+                </div>
               </div>
             )
           })}

@@ -15,6 +15,7 @@ from scanr.ai.llm.factory import (
     SUPPORTED_PROVIDERS,
     AIProviderError,
     build_provider,
+    default_model,
 )
 from scanr.config import get_settings
 from scanr.core.limiter import limiter
@@ -47,8 +48,12 @@ class ApiKeyBody(BaseModel):
 
 
 class AIConfigBody(BaseModel):
-    provider: str | None = None
-    model: str | None = Field(default=None, max_length=128)
+    provider: str
+
+
+class ModelBody(BaseModel):
+    # empty string clears the override (revert to the provider's built-in default)
+    model: str = Field(default="", max_length=128)
 
 
 @router.get("/status")
@@ -59,14 +64,19 @@ async def ai_status(
     """Report which providers have a key configured (and from where) so the UI
     can gate AI features. Never returns the keys themselves."""
     sources = await store.key_sources(db)
+    overrides = await store.models(db)
     return {
         "enabled": any(v is not None for v in sources.values()),
         "default_provider": await store.get_default_provider(db),
-        "default_model": (await store.get_default_model(db)) or None,
         "providers": list(SUPPORTED_PROVIDERS),
         # provider -> "stored" | "env" | null
         "key_sources": sources,
         "configured": {p: (s is not None) for p, s in sources.items()},
+        # per provider: the operator's model override (or null), and the
+        # effective model (override, else the built-in default)
+        "model_overrides": overrides,
+        "default_models": {p: default_model(p) for p in SUPPORTED_PROVIDERS},
+        "effective_models": {p: (overrides[p] or default_model(p)) for p in SUPPORTED_PROVIDERS},
     }
 
 
@@ -107,10 +117,21 @@ async def set_config(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_admin),
 ):
-    """Set the default AI provider/model (admin only)."""
-    if body.provider is not None:
-        _check_provider(body.provider)
-    await store.set_defaults(db, body.provider, body.model)
+    """Set the default AI provider (admin only)."""
+    _check_provider(body.provider)
+    await store.set_default_provider(db, body.provider)
+
+
+@router.put("/models/{provider}", status_code=204)
+async def set_model(
+    provider: str,
+    body: ModelBody,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_admin),
+):
+    """Set (or clear, with an empty model) the model used for a provider (admin)."""
+    _check_provider(provider)
+    await store.set_model(db, provider, body.model)
 
 
 async def _own_scan(db: AsyncSession, scan_id: str, user_id: str) -> Scan:
@@ -124,9 +145,9 @@ async def _own_scan(db: AsyncSession, scan_id: str, user_id: str) -> Scan:
 async def _build_provider(db: AsyncSession, provider: str | None, model: str | None):
     """Resolve provider/model/key and construct the provider, or raise HTTPException."""
     provider_name = provider or await store.get_default_provider(db)
-    chosen_model = model or (await store.get_default_model(db)) or None
     if provider_name not in SUPPORTED_PROVIDERS:
         raise HTTPException(status_code=400, detail=f"Unknown provider {provider_name!r}.")
+    chosen_model = model or (await store.get_model(db, provider_name)) or None
     api_key = await store.resolve_api_key(db, provider_name)
     try:
         return build_provider(provider_name, chosen_model, api_key=api_key)

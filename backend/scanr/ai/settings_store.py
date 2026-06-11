@@ -17,7 +17,7 @@ SUPPORTED_PROVIDERS = ("anthropic", "openai", "deepseek")
 
 _KEY_PREFIX = "ai.api_key."
 _PROVIDER_KEY = "ai.provider"
-_MODEL_KEY = "ai.model"
+_MODEL_PREFIX = "ai.model."  # per-provider model override, e.g. ai.model.anthropic
 
 
 async def _get_raw(db: AsyncSession, key: str) -> str | None:
@@ -93,12 +93,27 @@ async def get_default_provider(db: AsyncSession) -> str:
     return (await _get_raw(db, _PROVIDER_KEY)) or get_settings().ai_provider
 
 
-async def get_default_model(db: AsyncSession) -> str:
-    return (await _get_raw(db, _MODEL_KEY)) or get_settings().ai_model
+async def set_default_provider(db: AsyncSession, provider: str) -> None:
+    await _set_raw(db, _PROVIDER_KEY, provider)
 
 
-async def set_defaults(db: AsyncSession, provider: str | None, model: str | None) -> None:
-    if provider is not None:
-        await _set_raw(db, _PROVIDER_KEY, provider)
-    if model is not None:
-        await _set_raw(db, _MODEL_KEY, model)
+async def get_model(db: AsyncSession, provider: str) -> str | None:
+    """Stored per-provider model override, or the global AI_MODEL env, else None
+    (None means: let the factory use the provider's built-in default)."""
+    stored = await _get_raw(db, _MODEL_PREFIX + provider)
+    if stored:
+        return stored
+    return get_settings().ai_model or None
+
+
+async def set_model(db: AsyncSession, provider: str, model: str) -> None:
+    """Set (or, with an empty string, clear) the model override for a provider."""
+    if model.strip():
+        await _set_raw(db, _MODEL_PREFIX + provider, model.strip())
+    else:
+        await _delete_raw(db, _MODEL_PREFIX + provider)
+
+
+async def models(db: AsyncSession) -> dict[str, str | None]:
+    """For each provider, its stored model override (None if using the default)."""
+    return {p: await _get_raw(db, _MODEL_PREFIX + p) for p in SUPPORTED_PROVIDERS}

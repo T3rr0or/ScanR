@@ -23,6 +23,11 @@ _DEFAULT_MODEL = {
 _DEEPSEEK_BASE_URL = "https://api.deepseek.com"
 
 
+def default_model(provider: str) -> str:
+    """The built-in default model id for a provider (used when none is set)."""
+    return _DEFAULT_MODEL.get(provider, "")
+
+
 class AIProviderError(Exception):
     """Raised when an AI provider is misconfigured (unknown provider / missing key)."""
 

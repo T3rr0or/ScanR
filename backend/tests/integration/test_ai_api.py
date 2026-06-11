@@ -52,6 +52,35 @@ async def test_ai_config_default_provider(client, auth_headers):
 
 
 @pytest.mark.asyncio
+async def test_ai_model_override_and_clear(client, auth_headers):
+    # Default (no override) — effective model is the provider's built-in default
+    s0 = (await client.get("/api/v1/ai/status", headers=auth_headers)).json()
+    assert s0["model_overrides"]["anthropic"] is None
+    assert s0["effective_models"]["anthropic"] == s0["default_models"]["anthropic"]
+
+    # Set an override
+    r = await client.put(
+        "/api/v1/ai/models/anthropic", headers=auth_headers, json={"model": "claude-sonnet-4-6"}
+    )
+    assert r.status_code == 204
+    s1 = (await client.get("/api/v1/ai/status", headers=auth_headers)).json()
+    assert s1["model_overrides"]["anthropic"] == "claude-sonnet-4-6"
+    assert s1["effective_models"]["anthropic"] == "claude-sonnet-4-6"
+
+    # Clear it (empty string) — reverts to default
+    r2 = await client.put("/api/v1/ai/models/anthropic", headers=auth_headers, json={"model": ""})
+    assert r2.status_code == 204
+    s2 = (await client.get("/api/v1/ai/status", headers=auth_headers)).json()
+    assert s2["model_overrides"]["anthropic"] is None
+
+
+@pytest.mark.asyncio
+async def test_ai_model_invalid_provider(client, auth_headers):
+    r = await client.put("/api/v1/ai/models/bogus", headers=auth_headers, json={"model": "x"})
+    assert r.status_code == 400
+
+
+@pytest.mark.asyncio
 async def test_ai_summary_without_key_returns_400(client, auth_headers):
     scan = await client.post(
         "/api/v1/scans",
