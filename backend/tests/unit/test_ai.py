@@ -95,32 +95,38 @@ async def test_report_calls_provider():
     assert "untrusted data" in call["system"].lower()
 
 
-def test_fp_parse_items_tolerant():
-    from scanr.ai.assist.false_positive import _parse_items
+def test_fp_parse_response_tolerant():
+    from scanr.ai.assist.false_positive import _parse_response
     valid = {"a", "b"}
-    # fenced + prose around the array, an invented id, a bad confidence
+    # fenced + prose around the object, an invented id, a bad confidence
     text = (
         "Here you go:\n```json\n"
-        '[{"id":"a","confidence":"high","reason":"weak match"},'
+        '{"methodology":"weighed evidence strength",'
+        '"items":[{"id":"a","confidence":"high","reason":"weak match","verification":"curl ..."},'
         '{"id":"zzz","confidence":"high","reason":"invented"},'
-        '{"id":"b","confidence":"bogus","reason":"x"}]\n```'
+        '{"id":"b","confidence":"bogus","reason":"x"}]}\n```'
     )
-    items = _parse_items(text, valid)
+    methodology, items = _parse_response(text, valid)
+    assert "weighed evidence" in methodology
     ids = {i["id"] for i in items}
     assert ids == {"a", "b"}  # invented id dropped
     b = next(i for i in items if i["id"] == "b")
     assert b["confidence"] == "low"  # invalid confidence normalized
+    a = next(i for i in items if i["id"] == "a")
+    assert "curl" in a["verification"]
 
 
-def test_fp_parse_items_garbage():
-    from scanr.ai.assist.false_positive import _parse_items
-    assert _parse_items("no json here", {"a"}) == []
+def test_fp_parse_response_garbage():
+    from scanr.ai.assist.false_positive import _parse_response
+    assert _parse_response("no json here", {"a"}) == ("", [])
 
 
 @pytest.mark.asyncio
 async def test_false_positives_flags_and_filters():
     from scanr.ai.assist.false_positive import test_false_positives
-    provider = FakeProvider(reply='[{"id":"f1","confidence":"high","reason":"generic banner match"}]')
+    provider = FakeProvider(
+        reply='{"methodology":"checked evidence","items":[{"id":"f1","confidence":"high","reason":"generic banner match","verification":"nmap -sV"}]}'
+    )
     findings = [
         {"id": "f1", "severity": "medium", "title": "Maybe", "host_ip": "192.0.2.1", "evidence": "weak"},
         {"id": "f2", "severity": "low", "title": "Already FP", "host_ip": "192.0.2.1", "false_positive": True},
@@ -128,6 +134,7 @@ async def test_false_positives_flags_and_filters():
     result = await test_false_positives(provider, findings)
     assert result.assessed_count == 1  # f2 skipped (already FP)
     assert [i["id"] for i in result.items] == ["f1"]
+    assert result.methodology == "checked evidence"
     # already-FP findings are not even sent to the model
     assert "Already FP" not in provider.calls[0]["messages"][0].content
 

@@ -7,8 +7,8 @@ to avoid spamming provider APIs on dropdown opens.
 
 from __future__ import annotations
 
+import asyncio
 import time
-from dataclasses import dataclass, field
 
 logger = __import__("logging").getLogger(__name__)
 
@@ -30,7 +30,6 @@ def _cached_get(cache_key: str, fetcher):
 
 async def list_anthropic_models(api_key: str) -> list[dict]:
     """Fetch available Claude models from Anthropic API."""
-    import asyncio
 
     def _fetch():
         try:
@@ -46,7 +45,7 @@ async def list_anthropic_models(api_key: str) -> list[dict]:
         models.sort(key=lambda x: x["id"], reverse=True)
         return models
 
-    return _cached_get(f"anthropic:{api_key[:12]}", _fetch)
+    return await asyncio.to_thread(_cached_get, f"anthropic:{api_key[:12]}", _fetch)
 
 
 async def list_openai_models(api_key: str) -> list[dict]:
@@ -68,7 +67,7 @@ async def list_openai_models(api_key: str) -> list[dict]:
         models.sort(key=lambda x: x["id"], reverse=True)
         return models
 
-    return _cached_get(f"openai:{api_key[:12]}", _fetch)
+    return await asyncio.to_thread(_cached_get, f"openai:{api_key[:12]}", _fetch)
 
 
 async def list_deepseek_models(api_key: str) -> list[dict]:
@@ -87,7 +86,7 @@ async def list_deepseek_models(api_key: str) -> list[dict]:
         models.sort(key=lambda x: x["id"], reverse=True)
         return models
 
-    return _cached_get(f"deepseek:{api_key[:12]}", _fetch)
+    return await asyncio.to_thread(_cached_get, f"deepseek:{api_key[:12]}", _fetch)
 
 
 FETCHERS = {
