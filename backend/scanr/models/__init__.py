@@ -1,3 +1,4 @@
+from .ai_agent_run import AiAgentRun
 from .ai_result import AiResult
 from .api_key import APIKey
 from .base import Base, TimestampMixin
@@ -52,6 +53,7 @@ __all__ = [
     "Schedule",
     "Screenshot",
     "AiResult",
+    "AiAgentRun",
     "APIKey",
     "Webhook",
     "Exclusion",

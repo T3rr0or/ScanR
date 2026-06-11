@@ -110,6 +110,60 @@ def read_only_tools() -> list[Tool]:
     ]
 
 
+async def _fetch_url(ctx: AgentContext, args: dict) -> str:
+    url = str(args.get("url", "")).strip()
+    if not url:
+        raise ToolError("url is required")
+    if not url.startswith(("http://", "https://")):
+        raise ToolError("url must start with http:// or https://")
+    import httpx
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0, follow_redirects=False, verify=False) as client:
+            resp = await client.get(url)
+    except Exception as exc:  # noqa: BLE001 - report any fetch failure to the model
+        raise ToolError(f"request failed: {exc}")
+    interesting = {
+        k: v for k, v in resp.headers.items()
+        if k.lower() in ("server", "content-type", "location", "x-powered-by", "www-authenticate", "set-cookie")
+    }
+    body = resp.text[:4000]
+    return json.dumps({
+        "status": resp.status_code,
+        "headers": interesting,
+        "body_snippet": body,
+        "truncated": len(resp.text) > 4000,
+    })
+
+
+def web_tools() -> list[Tool]:
+    """Active but non-intrusive tools (GET requests). Scope-checked on the host."""
+    return [
+        Tool(
+            ToolDef(
+                name="fetch_url",
+                description=(
+                    "HTTP GET a URL on a discovered host and return status, key headers, and a "
+                    "body snippet. Use to inspect web responses. In scope only; non-intrusive."
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {"url": {"type": "string", "description": "Absolute http(s) URL"}},
+                    "required": ["url"],
+                    "additionalProperties": False,
+                },
+            ),
+            _fetch_url,
+            target_args=("url",),
+        ),
+    ]
+
+
+def default_registry() -> "ToolRegistry":
+    """The tool set for a guided/autonomous run: read-only + non-intrusive web."""
+    return ToolRegistry(read_only_tools() + web_tools())
+
+
 class ToolRegistry:
     """Holds the tools available for a run and exposes the gated dispatch."""
 

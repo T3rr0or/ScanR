@@ -98,3 +98,51 @@ async def test_ai_summary_without_key_returns_400(client, auth_headers):
     )
     assert r.status_code == 400
     assert "api key" in r.json()["detail"].lower()
+
+
+@pytest.mark.asyncio
+async def test_agent_launch_without_key_returns_400(client, auth_headers):
+    scan = await client.post(
+        "/api/v1/scans",
+        headers=auth_headers,
+        json={"name": "agent test", "targets": ["192.0.2.20"], "profile": "quick"},
+    )
+    scan_id = scan.json()["id"]
+    r = await client.post(
+        f"/api/v1/ai/scans/{scan_id}/agent",
+        headers=auth_headers,
+        json={"mode": "guided", "provider": "openai"},
+    )
+    assert r.status_code == 400
+    assert "api key" in r.json()["detail"].lower()
+
+
+@pytest.mark.asyncio
+async def test_agent_runs_list_empty_and_run_not_found(client, auth_headers):
+    scan = await client.post(
+        "/api/v1/scans",
+        headers=auth_headers,
+        json={"name": "agent test 2", "targets": ["192.0.2.21"], "profile": "quick"},
+    )
+    scan_id = scan.json()["id"]
+    runs = await client.get(f"/api/v1/ai/scans/{scan_id}/agent/runs", headers=auth_headers)
+    assert runs.status_code == 200 and runs.json() == []
+
+    nf = await client.get("/api/v1/ai/agent/runs/does-not-exist", headers=auth_headers)
+    assert nf.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_agent_launch_invalid_mode_rejected(client, auth_headers):
+    scan = await client.post(
+        "/api/v1/scans",
+        headers=auth_headers,
+        json={"name": "agent test 3", "targets": ["192.0.2.22"], "profile": "quick"},
+    )
+    scan_id = scan.json()["id"]
+    r = await client.post(
+        f"/api/v1/ai/scans/{scan_id}/agent",
+        headers=auth_headers,
+        json={"mode": "rampage"},
+    )
+    assert r.status_code == 422  # pydantic pattern rejects unknown mode

@@ -148,6 +148,21 @@ async def test_guided_intrusive_requires_approval():
     assert ctx3.approvals == []
 
 
+@pytest.mark.asyncio
+async def test_default_registry_fetch_url_scope_gated():
+    from scanr.ai.agent.tools import default_registry
+    reg = default_registry()
+    assert "fetch_url" in reg.names()
+    ctx = FakeContext(AgentPolicy(mode=AutonomyMode.autonomous))
+    # forbidden targets are denied BEFORE any network call happens
+    for url in ("http://127.0.0.1/", "http://169.254.169.254/latest/meta-data/", "http://postgres:5432/"):
+        out = await reg.dispatch(ctx, "fetch_url", {"url": url})
+        assert out.startswith("DENIED")
+    # a non-http argument is rejected by the handler's own validation
+    bad = await reg.dispatch(ctx, "fetch_url", {"url": "ftp://192.0.2.10/"})
+    assert bad.startswith("ERROR")
+
+
 # ── loop ─────────────────────────────────────────────────────────────────────
 
 @pytest.mark.asyncio

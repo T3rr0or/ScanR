@@ -22,7 +22,8 @@ from scanr.config import get_settings
 from scanr.core.limiter import limiter
 from scanr.db import get_db
 from scanr.deps import get_current_user, require_admin, require_scope
-from scanr.models import Finding, Host, Scan
+from scanr.models import AiAgentRun, Finding, Host, Scan
+from scanr.models.base import new_uuid
 from scanr.models.user import User
 from scanr.utils.exceptions import VaultError
 
@@ -405,3 +406,106 @@ async def false_positives(
     except Exception:
         logger.warning("Failed to persist FP result for scan %s", scan_id)
     return response
+
+
+# ── guided / autonomous agent ───────────────────────────────────────────────
+
+class AgentRunRequest(BaseModel):
+    mode: str = Field(default="guided", pattern="^(guided|autonomous)$")
+    objective: str = Field(default="", max_length=2000)
+    provider: str | None = None
+    model: str | None = None
+
+
+def _agent_run_dict(run: AiAgentRun) -> dict:
+    import json as _json
+    return {
+        "id": run.id,
+        "scan_id": run.scan_id,
+        "status": run.status,
+        "mode": run.mode,
+        "objective": run.objective,
+        "provider": run.provider,
+        "model": run.model,
+        "stop_reason": run.stop_reason,
+        "final_text": run.final_text,
+        "actions": _json.loads(run.actions) if run.actions else [],
+        "token_usage": _json.loads(run.token_usage) if run.token_usage else None,
+        "error": run.error,
+        "created_at": run.created_at.isoformat() if run.created_at else None,
+    }
+
+
+@router.post("/scans/{scan_id}/agent", status_code=202)
+@limiter.limit("5/minute")
+async def launch_agent(
+    request: Request,
+    scan_id: str,
+    body: AgentRunRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_scope("scans:write")),
+):
+    """Launch a guided/autonomous AI agent run against a completed scan."""
+    await _own_scan(db, scan_id, current_user.id)
+
+    # Validate provider + key up front so the user gets an immediate, clear error
+    # instead of a failed background run.
+    provider_name = body.provider or await store.get_default_provider(db)
+    if provider_name not in SUPPORTED_PROVIDERS:
+        raise HTTPException(status_code=400, detail=f"Unknown provider {provider_name!r}.")
+    if not await store.resolve_api_key(db, provider_name):
+        raise HTTPException(
+            status_code=400,
+            detail=f"No API key configured for provider {provider_name!r}. Add one in Settings → AI.",
+        )
+
+    objective = body.objective.strip() or (
+        "Investigate this scan's findings and hosts. Identify the most serious, "
+        "exploitable issues, corroborate them with the available tools, and write "
+        "a prioritized assessment with concrete next steps."
+    )
+    run = AiAgentRun(
+        id=new_uuid(),
+        scan_id=scan_id,
+        status="queued",
+        mode=body.mode,
+        objective=objective,
+        provider=provider_name,
+        model=body.model,
+    )
+    db.add(run)
+    await db.commit()
+
+    from scanr.tasks.agent_tasks import run_ai_agent_task
+    run_ai_agent_task.delay(run.id)
+    return _agent_run_dict(run)
+
+
+@router.get("/scans/{scan_id}/agent/runs")
+async def list_agent_runs(
+    scan_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_scope("findings:read")),
+):
+    """List AI agent runs for a scan, newest first."""
+    await _own_scan(db, scan_id, current_user.id)
+    rows = (
+        (await db.execute(
+            select(AiAgentRun).where(AiAgentRun.scan_id == scan_id).order_by(AiAgentRun.created_at.desc())
+        )).scalars().all()
+    )
+    return [_agent_run_dict(r) for r in rows]
+
+
+@router.get("/agent/runs/{run_id}")
+async def get_agent_run(
+    run_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_scope("findings:read")),
+):
+    """Get a single AI agent run (ownership enforced via its scan)."""
+    run = await db.get(AiAgentRun, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Agent run not found")
+    await _own_scan(db, run.scan_id, current_user.id)
+    return _agent_run_dict(run)
