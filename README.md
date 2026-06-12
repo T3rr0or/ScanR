@@ -308,8 +308,12 @@ Safety is enforced in code, not by the model: every tool call is scope-checked
 (`is_forbidden_target` blocks loopback / link-local / metadata / scanner infra),
 aggressive capabilities each require their own opt-in, the run has a token +
 iteration budget, and every action is streamed to the scan console and persisted.
-Today the agent has non-intrusive tools only (read scan data + HTTP GET);
-active/aggressive tools are gated and added incrementally.
+
+Tools available to the agent today: read the scan's hosts/findings/evidence,
+`fetch_url` (HTTP GET, non-intrusive), `list_plugins`, and `run_plugin` (run a
+ScanR plugin against a discovered host — intrusive, so approval-gated in guided
+mode; destructive plugins additionally require the exploitation capability).
+Port-scan and aggressive credential/exploitation tools are added incrementally.
 
 `POST /api/v1/ai/scans/{scan_id}/agent` launches a run;
 `GET /api/v1/ai/scans/{scan_id}/agent/runs` and `GET /api/v1/ai/agent/runs/{id}`

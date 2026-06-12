@@ -122,3 +122,49 @@ class DbAgentContext(AgentContext):
             phase="ai_agent",
         )
         return False
+
+    async def run_plugin(self, plugin_id: str, host_ip: str) -> dict:
+        from scanr.core import plugin_manager
+        from scanr.core.context import ScanContext
+        from scanr.models import Scan
+
+        classes = plugin_manager.get_all_plugin_classes()
+        plugin_cls = classes.get(plugin_id)
+        if plugin_cls is None:
+            raise ValueError(f"unknown plugin {plugin_id!r}")
+
+        # Destructive plugins (write/exploit) need the exploitation capability.
+        if getattr(plugin_cls, "destructive", False) and not self.policy.allows_capability("allow_exploitation"):
+            return {
+                "denied": True,
+                "reason": f"{plugin_id} is destructive and requires the 'allow_exploitation' capability.",
+            }
+
+        host = (
+            await self._db.execute(
+                select(Host)
+                .where(Host.scan_id == self.scan_id, Host.ip == host_ip)
+                .options(selectinload(Host.ports).selectinload(Port.service))
+            )
+        ).scalar_one_or_none()
+        if host is None:
+            raise ValueError(f"host {host_ip!r} not found in this scan")
+
+        scan = await self._db.get(Scan, self.scan_id)
+        if scan is None:
+            raise ValueError("scan not found")
+        ctx = ScanContext(scan_id=self.scan_id, scan=scan, db=self._db, profile=scan.profile, log=self._log)
+
+        plugin = plugin_cls()
+        await self._log.info(f"agent running plugin {plugin_id} on {host_ip}", phase="ai_agent")
+        findings = await plugin.check(ctx, host)
+        items = [
+            {
+                "severity": f.severity.value if hasattr(f.severity, "value") else str(f.severity),
+                "title": f.title,
+                "description": (f.description or "")[:600],
+                "evidence": (f.evidence or "")[:600],
+            }
+            for f in (findings or [])
+        ]
+        return {"plugin": plugin_id, "host": host_ip, "count": len(items), "findings": items}

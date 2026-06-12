@@ -159,9 +159,80 @@ def web_tools() -> list[Tool]:
     ]
 
 
+async def _list_plugins(ctx: AgentContext, args: dict) -> str:
+    from scanr.core import plugin_manager
+
+    classes = plugin_manager.get_all_plugin_classes()
+    out = [
+        {
+            "id": pid,
+            "name": getattr(cls, "name", pid),
+            "category": getattr(getattr(cls, "category", None), "value", str(getattr(cls, "category", ""))),
+            "destructive": bool(getattr(cls, "destructive", False)),
+            "requires_auth": bool(getattr(cls, "requires_auth", False)),
+        }
+        for pid, cls in classes.items()
+    ]
+    return json.dumps(out)[:12000]
+
+
+async def _run_plugin(ctx: AgentContext, args: dict) -> str:
+    plugin_id = str(args.get("plugin_id", "")).strip()
+    host_ip = str(args.get("host_ip", "")).strip()
+    if not plugin_id or not host_ip:
+        raise ToolError("plugin_id and host_ip are required")
+    try:
+        result = await ctx.run_plugin(plugin_id, host_ip)
+    except ValueError as exc:
+        raise ToolError(str(exc))
+    if result.get("denied"):
+        return f"DENIED: {result.get('reason', 'not permitted')}"
+    return json.dumps(result)[:8000]
+
+
+def plugin_tools() -> list[Tool]:
+    """Active tools that run ScanR plugins against a host (intrusive)."""
+    return [
+        Tool(
+            ToolDef(
+                name="list_plugins",
+                description="List available ScanR plugins (id, category, whether destructive) to choose from.",
+                parameters={"type": "object", "properties": {}, "additionalProperties": False},
+            ),
+            _list_plugins,
+        ),
+        Tool(
+            ToolDef(
+                name="run_plugin",
+                description=(
+                    "Run a ScanR plugin against a discovered host to actively check it. "
+                    "Intrusive: in guided mode this requires operator approval. Destructive "
+                    "plugins additionally require the exploitation capability."
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "plugin_id": {"type": "string"},
+                        "host_ip": {"type": "string"},
+                    },
+                    "required": ["plugin_id", "host_ip"],
+                    "additionalProperties": False,
+                },
+            ),
+            _run_plugin,
+            intrusive=True,
+            target_args=("host_ip",),
+        ),
+    ]
+
+
 def default_registry() -> "ToolRegistry":
-    """The tool set for a guided/autonomous run: read-only + non-intrusive web."""
-    return ToolRegistry(read_only_tools() + web_tools())
+    """The tool set for a guided/autonomous run: read-only + web + plugins.
+
+    list_plugins is read-only; run_plugin is intrusive (approval-gated in
+    guided mode, destructive plugins gated on the exploitation capability).
+    """
+    return ToolRegistry(read_only_tools() + web_tools() + plugin_tools())
 
 
 class ToolRegistry:

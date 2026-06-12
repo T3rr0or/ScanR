@@ -38,6 +38,12 @@ class FakeContext(AgentContext):
         self.approvals.append((tool, args))
         return self._approve
 
+    async def run_plugin(self, plugin_id, host_ip):
+        self.plugin_runs = getattr(self, "plugin_runs", [])
+        self.plugin_runs.append((plugin_id, host_ip))
+        return {"plugin": plugin_id, "host": host_ip, "count": 1,
+                "findings": [{"severity": "high", "title": "found by plugin"}]}
+
 
 class ScriptedProvider(LLMProvider):
     """Returns a pre-scripted sequence of completions, one per call."""
@@ -161,6 +167,31 @@ async def test_default_registry_fetch_url_scope_gated():
     # a non-http argument is rejected by the handler's own validation
     bad = await reg.dispatch(ctx, "fetch_url", {"url": "ftp://192.0.2.10/"})
     assert bad.startswith("ERROR")
+
+
+@pytest.mark.asyncio
+async def test_run_plugin_intrusive_gating():
+    from scanr.ai.agent.tools import default_registry
+    reg = default_registry()
+    assert "run_plugin" in reg.names() and "list_plugins" in reg.names()
+
+    # guided + no approval -> denied, plugin never runs
+    ctx = FakeContext(AgentPolicy(mode=AutonomyMode.guided), approve=False)
+    out = await reg.dispatch(ctx, "run_plugin", {"plugin_id": "web.cors", "host_ip": "192.0.2.10"})
+    assert out.startswith("DENIED")
+    assert getattr(ctx, "plugin_runs", []) == []
+
+    # autonomous -> runs, returns the plugin findings
+    ctx2 = FakeContext(AgentPolicy(mode=AutonomyMode.autonomous))
+    out2 = await reg.dispatch(ctx2, "run_plugin", {"plugin_id": "web.cors", "host_ip": "192.0.2.10"})
+    assert "found by plugin" in out2
+    assert ctx2.plugin_runs == [("web.cors", "192.0.2.10")]
+
+    # scope still enforced: a forbidden host is denied before the plugin runs
+    ctx3 = FakeContext(AgentPolicy(mode=AutonomyMode.autonomous))
+    out3 = await reg.dispatch(ctx3, "run_plugin", {"plugin_id": "web.cors", "host_ip": "127.0.0.1"})
+    assert out3.startswith("DENIED")
+    assert getattr(ctx3, "plugin_runs", []) == []
 
 
 # ── loop ─────────────────────────────────────────────────────────────────────

@@ -44,3 +44,9 @@ class AgentContext(ABC):
         In autonomous mode this is not called; in guided mode the real impl
         blocks on operator input via the API/WebSocket.
         """
+
+    @abstractmethod
+    async def run_plugin(self, plugin_id: str, host_ip: str) -> dict:
+        """Run one ScanR plugin against a discovered host and return a result
+        dict (findings, count). Destructive plugins are additionally gated on
+        the exploitation capability by the implementation. Raises on bad input."""
