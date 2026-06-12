@@ -41,7 +41,7 @@ class FakeContext(AgentContext):
     async def run_plugin(self, plugin_id, host_ip):
         self.plugin_runs = getattr(self, "plugin_runs", [])
         self.plugin_runs.append((plugin_id, host_ip))
-        return {"plugin": plugin_id, "host": host_ip, "count": 1,
+        return {"plugin": plugin_id, "host": host_ip, "count": 1, "recorded": 1,
                 "findings": [{"severity": "high", "title": "found by plugin"}]}
 
 

@@ -11,10 +11,14 @@ the non-intrusive tool set without needing it.
 from __future__ import annotations
 
 import json
+from typing import TYPE_CHECKING
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
+
+if TYPE_CHECKING:
+    from scanr.core.result_collector import ResultCollector
 
 from scanr.ai.agent.context import AgentContext
 from scanr.ai.agent.policy import AgentPolicy, Budget
@@ -39,6 +43,7 @@ class DbAgentContext(AgentContext):
         self.denylist = denylist
         self._db = db
         self._log = logger
+        self._collector: "ResultCollector | None" = None  # lazily built; persists agent findings
 
     async def list_hosts(self) -> list[dict]:
         rows = await self._db.execute(
@@ -158,6 +163,9 @@ class DbAgentContext(AgentContext):
         plugin = plugin_cls()
         await self._log.info(f"agent running plugin {plugin_id} on {host_ip}", phase="ai_agent")
         findings = await plugin.check(ctx, host)
+
+        recorded = await self._persist_findings(scan, host.id, findings or [])
+
         items = [
             {
                 "severity": f.severity.value if hasattr(f.severity, "value") else str(f.severity),
@@ -167,4 +175,30 @@ class DbAgentContext(AgentContext):
             }
             for f in (findings or [])
         ]
-        return {"plugin": plugin_id, "host": host_ip, "count": len(items), "findings": items}
+        return {
+            "plugin": plugin_id,
+            "host": host_ip,
+            "count": len(items),
+            "recorded": recorded,
+            "findings": items,
+        }
+
+    async def _persist_findings(self, scan, host_id: str, findings: list) -> int:
+        """Route plugin findings through ResultCollector so agent discoveries
+        become first-class findings (deduped, counted, shown in the UI)."""
+        if not findings:
+            return 0
+        from scanr.core.result_collector import ResultCollector
+
+        if self._collector is None:
+            self._collector = ResultCollector(
+                self.scan_id, self._db, scan_log=self._log, user_id=getattr(scan, "user_id", None)
+            )
+        recorded = 0
+        for f in findings:
+            try:
+                await self._collector.add_finding(host_id, f)
+                recorded += 1
+            except Exception as exc:  # noqa: BLE001 - never let persistence break the run
+                await self._log.warn(f"could not record agent finding: {exc}", phase="ai_agent")
+        return recorded
