@@ -432,6 +432,7 @@ def _agent_run_dict(run: AiAgentRun) -> dict:
         "actions": _json.loads(run.actions) if run.actions else [],
         "token_usage": _json.loads(run.token_usage) if run.token_usage else None,
         "error": run.error,
+        "pending_approval": _json.loads(run.pending_approval) if run.pending_approval else None,
         "created_at": run.created_at.isoformat() if run.created_at else None,
     }
 
@@ -509,3 +510,40 @@ async def get_agent_run(
         raise HTTPException(status_code=404, detail="Agent run not found")
     await _own_scan(db, run.scan_id, current_user.id)
     return _agent_run_dict(run)
+
+
+class ApprovalBody(BaseModel):
+    approval_id: str
+    decision: str = Field(pattern="^(allow|deny)$")
+
+
+@router.post("/agent/runs/{run_id}/approval")
+async def decide_agent_approval(
+    run_id: str,
+    body: ApprovalBody,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_scope("scans:write")),
+):
+    """Operator allow/deny for an intrusive action a guided run is paused on.
+
+    Signals the waiting agent (running in the worker) via Redis. The agent
+    clears pending_approval itself once it reads the decision.
+    """
+    run = await db.get(AiAgentRun, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Agent run not found")
+    await _own_scan(db, run.scan_id, current_user.id)
+
+    import json as _json
+    pending = _json.loads(run.pending_approval) if run.pending_approval else None
+    if not pending or pending.get("approval_id") != body.approval_id:
+        raise HTTPException(status_code=409, detail="No matching pending approval for this run")
+
+    try:
+        from scanr.db.redis import get_redis
+        r = get_redis()
+        await r.setex(f"scanr:ai:approval:{body.approval_id}", 600, body.decision)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Could not signal decision: {exc}")
+    logger.info("agent approval %s for run %s by %s", body.decision, run_id, current_user.email)
+    return {"ok": True, "decision": body.decision}

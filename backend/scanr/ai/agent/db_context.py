@@ -36,6 +36,8 @@ class DbAgentContext(AgentContext):
         budget: Budget,
         denylist: set[str],
         logger: ScanLogger,
+        run_id: str | None = None,
+        approval_timeout: int = 300,
     ):
         self.scan_id = scan_id
         self.policy = policy
@@ -43,6 +45,8 @@ class DbAgentContext(AgentContext):
         self.denylist = denylist
         self._db = db
         self._log = logger
+        self._run_id = run_id
+        self._approval_timeout = approval_timeout
         self._collector: "ResultCollector | None" = None  # lazily built; persists agent findings
 
     async def list_hosts(self) -> list[dict]:
@@ -119,14 +123,55 @@ class DbAgentContext(AgentContext):
         await self._log.info(message, phase="ai_agent")
 
     async def request_approval(self, tool: str, args: dict, reason: str) -> bool:
-        # Interactive approval is not wired yet — deny so guided-mode intrusive
-        # actions are safely skipped rather than blocking the run forever.
+        """Pause the run, surface the pending action on the run row, and wait for
+        an operator allow/deny (signalled via Redis). Times out to deny (safe)."""
+        from scanr.models import AiAgentRun
+        from scanr.models.base import new_uuid
+
+        if not self._run_id:
+            # No run to attach a decision to (e.g. ad-hoc use) — deny safely.
+            return False
+
+        approval_id = new_uuid()
+        run = await self._db.get(AiAgentRun, self._run_id)
+        if run is not None:
+            run.pending_approval = json.dumps(
+                {"approval_id": approval_id, "tool": tool, "args": args, "reason": reason}
+            )
+            await self._db.commit()
         await self._log.warn(
-            f"approval required for {tool}({json.dumps(args)[:120]}) — denied "
-            "(operator approval channel not yet available)",
-            phase="ai_agent",
+            f"⏸ awaiting approval for {tool}({json.dumps(args)[:120]})", phase="ai_agent"
         )
-        return False
+
+        decision = await self._await_decision(approval_id)
+
+        if run is not None:
+            run.pending_approval = None
+            await self._db.commit()
+        await self._log.info(f"approval for {tool}: {decision}", phase="ai_agent")
+        return decision == "allow"
+
+    async def _await_decision(self, approval_id: str) -> str:
+        import asyncio
+
+        import redis.asyncio as aioredis
+
+        from scanr.config import get_settings
+
+        r = aioredis.from_url(get_settings().redis_url, decode_responses=True)
+        key = f"scanr:ai:approval:{approval_id}"
+        try:
+            waited = 0
+            while waited < self._approval_timeout:
+                val = await r.get(key)
+                if val in ("allow", "deny"):
+                    await r.delete(key)
+                    return val
+                await asyncio.sleep(2)
+                waited += 2
+            return "deny"  # timeout — fail closed
+        finally:
+            await r.aclose()
 
     async def run_plugin(self, plugin_id: str, host_ip: str) -> dict:
         from scanr.core import plugin_manager

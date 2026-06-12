@@ -301,7 +301,8 @@ scan: it drives a bounded, gated tool set, reasons about what it finds, and
 writes a prioritized assessment. Launch it with an optional objective and a mode:
 
 - **Guided** — investigates and pauses for operator approval before any
-  intrusive action.
+  intrusive action; the run surfaces the pending action with Approve / Deny in
+  the AI tab (decision signalled to the running agent, which times out to deny).
 - **Autonomous** — runs hands-off within scope, capability, and budget limits.
 
 Safety is enforced in code, not by the model: every tool call is scope-checked

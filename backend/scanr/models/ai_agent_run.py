@@ -26,3 +26,6 @@ class AiAgentRun(Base, TimestampMixin):
     actions: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON list of actions
     token_usage: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # When set (JSON {approval_id, tool, args, reason}), the run is paused in
+    # guided mode awaiting an operator allow/deny decision.
+    pending_approval: Mapped[str | None] = mapped_column(Text, nullable=True)

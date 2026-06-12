@@ -146,3 +146,13 @@ async def test_agent_launch_invalid_mode_rejected(client, auth_headers):
         json={"mode": "rampage"},
     )
     assert r.status_code == 422  # pydantic pattern rejects unknown mode
+
+
+@pytest.mark.asyncio
+async def test_agent_approval_run_not_found(client, auth_headers):
+    r = await client.post(
+        "/api/v1/ai/agent/runs/nope/approval",
+        headers=auth_headers,
+        json={"approval_id": "x", "decision": "allow"},
+    )
+    assert r.status_code == 404

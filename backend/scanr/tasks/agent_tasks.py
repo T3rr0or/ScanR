@@ -60,6 +60,7 @@ async def _run_agent_async(run_id: str) -> dict:
                     budget=budget,
                     denylist=settings.scan_denylist,
                     logger=slog,
+                    run_id=run.id,
                 )
                 await slog.info(f"AI agent started ({run.mode}, {provider.name}/{provider.model})", phase="ai_agent")
 

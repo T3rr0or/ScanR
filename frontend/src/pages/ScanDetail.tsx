@@ -505,6 +505,7 @@ export default function ScanDetail({ scanId, onBack }: Props) {
 
 interface AgentRun {
 	id: string;
+	scan_id: string;
 	status: string;
 	mode: string;
 	objective: string;
@@ -515,6 +516,7 @@ interface AgentRun {
 	actions: { tool: string; arguments: Record<string, unknown>; result: string }[];
 	token_usage?: { input_tokens: number; output_tokens: number } | null;
 	error?: string | null;
+	pending_approval?: { approval_id: string; tool: string; args: Record<string, unknown>; reason: string } | null;
 	created_at?: string | null;
 }
 
@@ -601,6 +603,15 @@ function AgentPanel({ scanId, enabled }: { scanId: string; enabled: boolean }) {
 
 function AgentRunCard({ run }: { run: AgentRun }) {
 	const [open, setOpen] = useState(false);
+	const qc = useQueryClient();
+	const decide = useMutation({
+		mutationFn: (decision: "allow" | "deny") =>
+			api.post(`/ai/agent/runs/${run.id}/approval`, {
+				approval_id: run.pending_approval?.approval_id,
+				decision,
+			}),
+		onSuccess: () => qc.invalidateQueries({ queryKey: ["ai-agent-runs", run.scan_id] }),
+	});
 	return (
 		<div style={{ border: "1px solid var(--border)", borderRadius: 8, padding: "10px 12px" }}>
 			<div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
@@ -624,6 +635,40 @@ function AgentRunCard({ run }: { run: AgentRun }) {
 				)}
 			</div>
 			<div style={{ fontSize: 11.5, color: "var(--text-2)", marginTop: 4 }}>{run.objective}</div>
+			{run.pending_approval && (
+				<div
+					style={{
+						marginTop: 8,
+						padding: "8px 10px",
+						borderRadius: 6,
+						background: "var(--bg-2)",
+						border: "1px solid var(--sev-medium)",
+					}}
+				>
+					<div style={{ fontSize: 12, color: "var(--text-1)", fontWeight: 600 }}>
+						Approval required — intrusive action
+					</div>
+					<div style={{ fontSize: 11.5, fontFamily: "var(--font-mono)", color: "var(--text-2)", marginTop: 4 }}>
+						{run.pending_approval.tool}({JSON.stringify(run.pending_approval.args)})
+					</div>
+					<div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+						<button
+							className="btn btn-primary btn-sm"
+							disabled={decide.isPending}
+							onClick={() => decide.mutate("allow")}
+						>
+							Approve
+						</button>
+						<button
+							className="btn btn-ghost btn-sm"
+							disabled={decide.isPending}
+							onClick={() => decide.mutate("deny")}
+						>
+							Deny
+						</button>
+					</div>
+				</div>
+			)}
 			{run.error && <div style={{ color: "var(--sev-high)", fontSize: 12, marginTop: 6 }}>{run.error}</div>}
 			{run.final_text && (
 				<div style={{ whiteSpace: "pre-wrap", fontSize: 13, lineHeight: 1.6, color: "var(--text-1)", marginTop: 8 }}>
