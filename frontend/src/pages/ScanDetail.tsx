@@ -503,6 +503,149 @@ export default function ScanDetail({ scanId, onBack }: Props) {
 	);
 }
 
+interface AgentRun {
+	id: string;
+	status: string;
+	mode: string;
+	objective: string;
+	provider?: string | null;
+	model?: string | null;
+	stop_reason?: string | null;
+	final_text?: string | null;
+	actions: { tool: string; arguments: Record<string, unknown>; result: string }[];
+	token_usage?: { input_tokens: number; output_tokens: number } | null;
+	error?: string | null;
+	created_at?: string | null;
+}
+
+function AgentPanel({ scanId, enabled }: { scanId: string; enabled: boolean }) {
+	const qc = useQueryClient();
+	const [objective, setObjective] = useState("");
+	const [mode, setMode] = useState<"guided" | "autonomous">("guided");
+
+	const { data: runs = [] } = useQuery<AgentRun[]>({
+		queryKey: ["ai-agent-runs", scanId],
+		queryFn: () => api.get(`/ai/scans/${scanId}/agent/runs`).then((r) => r.data),
+		// poll while a run is active so status/result update live
+		refetchInterval: (q) =>
+			(q.state.data ?? []).some((r) => ["queued", "running"].includes(r.status))
+				? 4000
+				: false,
+	});
+
+	const launch = useMutation({
+		mutationFn: () =>
+			api
+				.post(`/ai/scans/${scanId}/agent`, { mode, objective: objective.trim() })
+				.then((r) => r.data),
+		onSuccess: () => {
+			setObjective("");
+			qc.invalidateQueries({ queryKey: ["ai-agent-runs", scanId] });
+		},
+	});
+
+	const launchErr = (() => {
+		const e = launch.error as { response?: { data?: { detail?: string } } } | null;
+		return e?.response?.data?.detail ?? null;
+	})();
+
+	const active = runs.some((r) => ["queued", "running"].includes(r.status));
+
+	return (
+		<div className="panel">
+			<div className="panel-head" style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+				<span className="panel-title">AI agent (investigates this scan)</span>
+				<span style={{ fontSize: 11, color: "var(--text-3)" }}>guided asks before intrusive steps · autonomous runs hands-off</span>
+			</div>
+			<div style={{ padding: 14, display: "flex", flexDirection: "column", gap: 10 }}>
+				<textarea
+					className="input"
+					placeholder="Objective (optional) — e.g. 'focus on the web services and find the most exploitable issue'"
+					value={objective}
+					onChange={(e) => setObjective(e.target.value)}
+					rows={2}
+					style={{ resize: "vertical", fontFamily: "inherit" }}
+				/>
+				<div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+					<select
+						className="input"
+						value={mode}
+						onChange={(e) => setMode(e.target.value as "guided" | "autonomous")}
+						style={{ width: "auto" }}
+					>
+						<option value="guided">Guided</option>
+						<option value="autonomous">Autonomous</option>
+					</select>
+					<button
+						className="btn btn-primary btn-sm"
+						disabled={!enabled || launch.isPending || active}
+						onClick={() => launch.mutate()}
+					>
+						{launch.isPending ? "Starting…" : active ? "Run in progress…" : "Run AI agent"}
+					</button>
+					{!enabled && (
+						<span style={{ fontSize: 11.5, color: "var(--text-3)" }}>
+							Configure a provider key in Settings → AI first.
+						</span>
+					)}
+				</div>
+				{launchErr && <div style={{ color: "var(--sev-high)", fontSize: 12 }}>{launchErr}</div>}
+
+				{runs.map((run) => (
+					<AgentRunCard key={run.id} run={run} />
+				))}
+			</div>
+		</div>
+	);
+}
+
+function AgentRunCard({ run }: { run: AgentRun }) {
+	const [open, setOpen] = useState(false);
+	return (
+		<div style={{ border: "1px solid var(--border)", borderRadius: 8, padding: "10px 12px" }}>
+			<div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+				<StatusPill status={run.status} />
+				<span style={{ fontSize: 11, color: "var(--text-3)" }}>{run.mode}</span>
+				{run.provider && (
+					<span style={{ fontSize: 11, color: "var(--text-3)" }}>
+						{run.provider}/{run.model}
+					</span>
+				)}
+				{run.token_usage && (
+					<span style={{ fontSize: 11, color: "var(--text-3)" }}>
+						{run.token_usage.input_tokens + run.token_usage.output_tokens} tok
+					</span>
+				)}
+				<span style={{ flex: 1 }} />
+				{run.actions.length > 0 && (
+					<button className="btn btn-ghost btn-sm" onClick={() => setOpen((o) => !o)}>
+						{open ? "Hide" : `${run.actions.length} action(s)`}
+					</button>
+				)}
+			</div>
+			<div style={{ fontSize: 11.5, color: "var(--text-2)", marginTop: 4 }}>{run.objective}</div>
+			{run.error && <div style={{ color: "var(--sev-high)", fontSize: 12, marginTop: 6 }}>{run.error}</div>}
+			{run.final_text && (
+				<div style={{ whiteSpace: "pre-wrap", fontSize: 13, lineHeight: 1.6, color: "var(--text-1)", marginTop: 8 }}>
+					{run.final_text}
+				</div>
+			)}
+			{open && (
+				<div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 6 }}>
+					{run.actions.map((a, i) => (
+						<div key={i} style={{ fontSize: 11.5, fontFamily: "var(--font-mono)", color: "var(--text-2)" }}>
+							<div style={{ color: "var(--accent)" }}>
+								→ {a.tool}({JSON.stringify(a.arguments)})
+							</div>
+							<div style={{ whiteSpace: "pre-wrap", color: "var(--text-3)" }}>{a.result.slice(0, 1200)}</div>
+						</div>
+					))}
+				</div>
+			)}
+		</div>
+	);
+}
+
 function AiTab({ scanId, findings }: { scanId: string; findings: Finding[] }) {
 	const qc = useQueryClient();
 	const { data: status } = useQuery({
@@ -577,6 +720,11 @@ function AiTab({ scanId, findings }: { scanId: string; findings: Finding[] }) {
 				</div>
 			)}
 
+			<AgentPanel scanId={scanId} enabled={enabled} />
+
+			<div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-2)", marginTop: 4 }}>
+				Assist (read-only analysis)
+			</div>
 			<div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
 				<button
 					className="btn btn-primary btn-sm"

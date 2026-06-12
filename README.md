@@ -294,10 +294,30 @@ Assist mode only reasons over results ScanR already collected — it never sends
 new traffic to your targets, and finding text is passed to the model as fenced,
 untrusted data (never as instructions).
 
-**Planned (opt-in, gated):** an **autonomous pentest mode** that drives ScanR's
-own plugins and adapts in real time. The autonomy levels (`off → assist →
-guided → autonomous → autonomous + aggressive`) and the full safety model are
-documented in [`docs/ai-pentest-design.md`](docs/ai-pentest-design.md).
+### AI agent (guided / autonomous)
+
+The scan's **AI** tab can also run an **agent** that actively investigates the
+scan: it drives a bounded, gated tool set, reasons about what it finds, and
+writes a prioritized assessment. Launch it with an optional objective and a mode:
+
+- **Guided** — investigates and pauses for operator approval before any
+  intrusive action.
+- **Autonomous** — runs hands-off within scope, capability, and budget limits.
+
+Safety is enforced in code, not by the model: every tool call is scope-checked
+(`is_forbidden_target` blocks loopback / link-local / metadata / scanner infra),
+aggressive capabilities each require their own opt-in, the run has a token +
+iteration budget, and every action is streamed to the scan console and persisted.
+Today the agent has non-intrusive tools only (read scan data + HTTP GET);
+active/aggressive tools are gated and added incrementally.
+
+`POST /api/v1/ai/scans/{scan_id}/agent` launches a run;
+`GET /api/v1/ai/scans/{scan_id}/agent/runs` and `GET /api/v1/ai/agent/runs/{id}`
+read them.
+
+The autonomy levels (`off → assist → guided → autonomous → autonomous +
+aggressive`) and the full safety model are documented in
+[`docs/ai-pentest-design.md`](docs/ai-pentest-design.md).
 
 Providers are swappable per request (ChatGPT/OpenAI, DeepSeek, Anthropic), so
 you can run a cheap model for high-volume work and a stronger one for analysis.
