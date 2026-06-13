@@ -190,9 +190,43 @@ async def _run_plugin(ctx: AgentContext, args: dict) -> str:
     return json.dumps(result)[:8000]
 
 
+async def _run_port_scan(ctx: AgentContext, args: dict) -> str:
+    host_ip = str(args.get("host_ip", "")).strip()
+    if not host_ip:
+        raise ToolError("host_ip is required")
+    ports = args.get("ports")
+    try:
+        result = await ctx.run_port_scan(host_ip, str(ports) if ports else None)
+    except ValueError as exc:
+        raise ToolError(str(exc))
+    return json.dumps(result)[:8000]
+
+
 def plugin_tools() -> list[Tool]:
-    """Active tools that run ScanR plugins against a host (intrusive)."""
+    """Active tools that run ScanR plugins / scans against a host (intrusive)."""
     return [
+        Tool(
+            ToolDef(
+                name="run_port_scan",
+                description=(
+                    "Nmap-scan a discovered host (optionally a port spec like '80,443' or "
+                    "'1-1024'; max 2000 ports). Persists newly found ports/services. "
+                    "Intrusive: approval-gated in guided mode."
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "host_ip": {"type": "string"},
+                        "ports": {"type": "string", "description": "Optional port spec, e.g. '80,443,8000-8010'"},
+                    },
+                    "required": ["host_ip"],
+                    "additionalProperties": False,
+                },
+            ),
+            _run_port_scan,
+            intrusive=True,
+            target_args=("host_ip",),
+        ),
         Tool(
             ToolDef(
                 name="list_plugins",

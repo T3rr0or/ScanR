@@ -50,3 +50,9 @@ class AgentContext(ABC):
         """Run one ScanR plugin against a discovered host and return a result
         dict (findings, count). Destructive plugins are additionally gated on
         the exploitation capability by the implementation. Raises on bad input."""
+
+    @abstractmethod
+    async def run_port_scan(self, host_ip: str, ports: str | None = None) -> dict:
+        """Nmap-scan a host (optionally a port spec like '80,443' or '1-1024'),
+        persist newly discovered ports/services, and return the open ports.
+        Raises ValueError on bad input."""

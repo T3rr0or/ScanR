@@ -228,6 +228,65 @@ class DbAgentContext(AgentContext):
             "findings": items,
         }
 
+    async def run_port_scan(self, host_ip: str, ports: str | None = None) -> dict:
+        from scanr.core.context import ScanContext
+        from scanr.models import Scan, Service
+        from scanr.models.base import new_uuid
+        from scanr.scanner.port_scanner.nmap_wrapper import NmapWrapper
+
+        known_ports = _parse_ports(ports) if ports else None
+
+        host = (
+            await self._db.execute(
+                select(Host).where(Host.scan_id == self.scan_id, Host.ip == host_ip).options(selectinload(Host.ports))
+            )
+        ).scalar_one_or_none()
+        if host is None:
+            raise ValueError(f"host {host_ip!r} not found in this scan")
+
+        scan = await self._db.get(Scan, self.scan_id)
+        if scan is None:
+            raise ValueError("scan not found")
+        ctx = ScanContext(scan_id=self.scan_id, scan=scan, db=self._db, profile=scan.profile, log=self._log)
+
+        await self._log.info(
+            f"agent port-scanning {host_ip}" + (f" ({ports})" if ports else ""), phase="ai_agent"
+        )
+        data = await NmapWrapper().scan_host(host_ip, ctx, known_ports=known_ports)
+        scanned = (data or {}).get("ports", []) if data else []
+
+        existing = {(p.number, p.protocol) for p in host.ports}
+        added = 0
+        for p in scanned:
+            key = (p["number"], p["protocol"])
+            if key in existing:
+                continue
+            existing.add(key)
+            port = Port(
+                id=new_uuid(), host_id=host.id, number=p["number"], protocol=p["protocol"],
+                state=p["state"], reason=p.get("reason"), banner=p.get("banner"),
+            )
+            self._db.add(port)
+            await self._db.flush()
+            svc = p.get("service")
+            if svc:
+                self._db.add(Service(
+                    id=new_uuid(), port_id=port.id, name=svc.get("name"), product=svc.get("product"),
+                    version=svc.get("version"), extra_info=svc.get("extra_info"), cpe=svc.get("cpe"),
+                    tunnel=svc.get("tunnel"),
+                ))
+            added += 1
+        await self._db.commit()
+
+        return {
+            "host": host_ip,
+            "open_ports": [
+                {"number": p["number"], "protocol": p["protocol"], "service": (p.get("service") or {}).get("name")}
+                for p in scanned
+            ],
+            "added": added,
+        }
+
     async def _persist_findings(self, scan, host_id: str, findings: list) -> int:
         """Route plugin findings through ResultCollector so agent discoveries
         become first-class findings (deduped, counted, shown in the UI)."""
@@ -247,3 +306,26 @@ class DbAgentContext(AgentContext):
             except Exception as exc:  # noqa: BLE001 - never let persistence break the run
                 await self._log.warn(f"could not record agent finding: {exc}", phase="ai_agent")
         return recorded
+
+
+def _parse_ports(spec: str) -> list[int]:
+    """Parse a port spec like '80,443,8000-8010' into a bounded list of ints."""
+    out: list[int] = []
+    for part in spec.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        if "-" in part:
+            a, b = part.split("-", 1)
+            lo, hi = int(a), int(b)
+            if lo < 1 or hi > 65535 or lo > hi:
+                raise ValueError(f"invalid port range {part!r}")
+            out.extend(range(lo, hi + 1))
+        else:
+            n = int(part)
+            if n < 1 or n > 65535:
+                raise ValueError(f"invalid port {part!r}")
+            out.append(n)
+        if len(out) > 2000:
+            raise ValueError("too many ports (max 2000)")
+    return sorted(set(out))

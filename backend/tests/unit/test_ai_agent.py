@@ -44,6 +44,11 @@ class FakeContext(AgentContext):
         return {"plugin": plugin_id, "host": host_ip, "count": 1, "recorded": 1,
                 "findings": [{"severity": "high", "title": "found by plugin"}]}
 
+    async def run_port_scan(self, host_ip, ports=None):
+        self.port_scans = getattr(self, "port_scans", [])
+        self.port_scans.append((host_ip, ports))
+        return {"host": host_ip, "open_ports": [{"number": 80, "protocol": "tcp", "service": "http"}], "added": 1}
+
 
 class ScriptedProvider(LLMProvider):
     """Returns a pre-scripted sequence of completions, one per call."""
@@ -192,6 +197,43 @@ async def test_run_plugin_intrusive_gating():
     out3 = await reg.dispatch(ctx3, "run_plugin", {"plugin_id": "web.cors", "host_ip": "127.0.0.1"})
     assert out3.startswith("DENIED")
     assert getattr(ctx3, "plugin_runs", []) == []
+
+
+@pytest.mark.asyncio
+async def test_run_port_scan_intrusive_gating():
+    from scanr.ai.agent.tools import default_registry
+    reg = default_registry()
+    assert "run_port_scan" in reg.names()
+
+    # guided + no approval -> denied, scan never runs
+    ctx = FakeContext(AgentPolicy(mode=AutonomyMode.guided), approve=False)
+    out = await reg.dispatch(ctx, "run_port_scan", {"host_ip": "192.0.2.10", "ports": "80,443"})
+    assert out.startswith("DENIED")
+    assert getattr(ctx, "port_scans", []) == []
+
+    # autonomous -> runs
+    ctx2 = FakeContext(AgentPolicy(mode=AutonomyMode.autonomous))
+    out2 = await reg.dispatch(ctx2, "run_port_scan", {"host_ip": "192.0.2.10", "ports": "80,443"})
+    assert "open_ports" in out2
+    assert ctx2.port_scans == [("192.0.2.10", "80,443")]
+
+    # scope enforced before the scan runs
+    ctx3 = FakeContext(AgentPolicy(mode=AutonomyMode.autonomous))
+    out3 = await reg.dispatch(ctx3, "run_port_scan", {"host_ip": "169.254.169.254"})
+    assert out3.startswith("DENIED")
+    assert getattr(ctx3, "port_scans", []) == []
+
+
+def test_parse_ports():
+    from scanr.ai.agent.db_context import _parse_ports
+    assert _parse_ports("80,443") == [80, 443]
+    assert _parse_ports("80,8000-8002") == [80, 8000, 8001, 8002]
+    with pytest.raises(ValueError):
+        _parse_ports("0-10")  # 0 invalid
+    with pytest.raises(ValueError):
+        _parse_ports("1-70000")  # out of range
+    with pytest.raises(ValueError):
+        _parse_ports("1-3000")  # >2000 ports
 
 
 # ── loop ─────────────────────────────────────────────────────────────────────
