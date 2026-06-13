@@ -156,3 +156,35 @@ async def test_agent_approval_run_not_found(client, auth_headers):
         json={"approval_id": "x", "decision": "allow"},
     )
     assert r.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_agent_aggressive_requires_admin(client, auth_headers):
+    # Create a non-admin (analyst) user and log in as them
+    import uuid
+    email = f"analyst-{uuid.uuid4().hex[:8]}@scanr.local"
+    create = await client.post(
+        "/api/v1/users",
+        headers=auth_headers,
+        json={"email": email, "password": "analystpass123", "role": "analyst"},
+    )
+    assert create.status_code == 201
+    login = await client.post("/api/v1/auth/login", json={"email": email, "password": "analystpass123"})
+    assert login.status_code == 200
+    analyst_headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+
+    scan = await client.post(
+        "/api/v1/scans",
+        headers=analyst_headers,
+        json={"name": "aggr test", "targets": ["192.0.2.30"], "profile": "quick"},
+    )
+    scan_id = scan.json()["id"]
+
+    # Aggressive opt-in as a non-admin -> 403 (checked before the key check)
+    r = await client.post(
+        f"/api/v1/ai/scans/{scan_id}/agent",
+        headers=analyst_headers,
+        json={"mode": "autonomous", "allow_exploitation": True},
+    )
+    assert r.status_code == 403
+    assert "admin" in r.json()["detail"].lower()

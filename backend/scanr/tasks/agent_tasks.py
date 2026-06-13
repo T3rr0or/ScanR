@@ -51,7 +51,13 @@ async def _run_agent_async(run_id: str) -> dict:
                 api_key = await store.resolve_api_key(db, provider_name)
                 provider = build_provider(provider_name, model, api_key=api_key)
 
-                policy = AgentPolicy(mode=AutonomyMode(run.mode))
+                caps = json.loads(run.capabilities) if run.capabilities else {}
+                policy = AgentPolicy(
+                    mode=AutonomyMode(run.mode),
+                    aggressive=bool(caps.get("aggressive")),
+                    allow_privilege_escalation=bool(caps.get("allow_privilege_escalation")),
+                    allow_exploitation=bool(caps.get("allow_exploitation")),
+                )
                 budget = Budget(max_tokens=max(settings.ai_max_tokens * 20, 100_000))
                 ctx = DbAgentContext(
                     scan_id=run.scan_id,

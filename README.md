@@ -311,10 +311,16 @@ aggressive capabilities each require their own opt-in, the run has a token +
 iteration budget, and every action is streamed to the scan console and persisted.
 
 Tools available to the agent today: read the scan's hosts/findings/evidence,
-`fetch_url` (HTTP GET, non-intrusive), `list_plugins`, and `run_plugin` (run a
-ScanR plugin against a discovered host — intrusive, so approval-gated in guided
-mode; destructive plugins additionally require the exploitation capability).
-Port-scan and aggressive credential/exploitation tools are added incrementally.
+`fetch_url` (HTTP GET, non-intrusive), `list_plugins`, `run_plugin` (run a ScanR
+plugin against a discovered host), and `run_port_scan` (nmap a host). Active
+tools are intrusive, so they are approval-gated in guided mode.
+
+**Aggressive capabilities** (admin-only opt-in at launch): enabling *aggressive*
+unlocks intrusive/destructive actions; *allow exploitation* lets the agent run
+destructive plugins via `run_plugin`, and *allow privilege escalation* is a
+further opt-in. Each takes effect only with aggressive enabled, requires an
+admin user, and is recorded on the run. Only use against systems you are
+authorized to actively exploit.
 
 `POST /api/v1/ai/scans/{scan_id}/agent` launches a run;
 `GET /api/v1/ai/scans/{scan_id}/agent/runs` and `GET /api/v1/ai/agent/runs/{id}`

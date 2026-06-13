@@ -27,6 +27,7 @@ import {
 import { scansApi } from "@/api/scans";
 import { findingsApi, type Finding } from "@/api/findings";
 import api from "@/api/client";
+import { useAuthStore } from "@/store/auth";
 import ScanConsole from "@/components/ScanConsole";
 import ScreenshotGallery from "@/components/ScreenshotGallery";
 import ScanDelta from "@/pages/ScanDelta";
@@ -522,8 +523,18 @@ interface AgentRun {
 
 function AgentPanel({ scanId, enabled }: { scanId: string; enabled: boolean }) {
 	const qc = useQueryClient();
+	const token = useAuthStore((s) => s.token);
+	let isAdmin = false;
+	try {
+		isAdmin = JSON.parse(atob(token!.split(".")[1])).role === "admin";
+	} catch {
+		/* not admin */
+	}
 	const [objective, setObjective] = useState("");
 	const [mode, setMode] = useState<"guided" | "autonomous">("guided");
+	const [aggressive, setAggressive] = useState(false);
+	const [allowExploit, setAllowExploit] = useState(false);
+	const [allowPrivesc, setAllowPrivesc] = useState(false);
 
 	const { data: runs = [] } = useQuery<AgentRun[]>({
 		queryKey: ["ai-agent-runs", scanId],
@@ -538,7 +549,13 @@ function AgentPanel({ scanId, enabled }: { scanId: string; enabled: boolean }) {
 	const launch = useMutation({
 		mutationFn: () =>
 			api
-				.post(`/ai/scans/${scanId}/agent`, { mode, objective: objective.trim() })
+				.post(`/ai/scans/${scanId}/agent`, {
+					mode,
+					objective: objective.trim(),
+					aggressive: isAdmin && aggressive,
+					allow_exploitation: isAdmin && aggressive && allowExploit,
+					allow_privilege_escalation: isAdmin && aggressive && allowPrivesc,
+				})
 				.then((r) => r.data),
 		onSuccess: () => {
 			setObjective("");
@@ -591,6 +608,29 @@ function AgentPanel({ scanId, enabled }: { scanId: string; enabled: boolean }) {
 						</span>
 					)}
 				</div>
+				{isAdmin && (
+					<div style={{ borderTop: "1px solid var(--border)", paddingTop: 8, display: "flex", flexDirection: "column", gap: 4 }}>
+						<label style={{ fontSize: 12, color: "var(--text-1)", display: "flex", alignItems: "center", gap: 6 }}>
+							<input type="checkbox" checked={aggressive} onChange={(e) => setAggressive(e.target.checked)} />
+							Aggressive mode (admin) — allow intrusive/destructive actions
+						</label>
+						{aggressive && (
+							<div style={{ paddingLeft: 22, display: "flex", flexDirection: "column", gap: 4 }}>
+								<label style={{ fontSize: 11.5, color: "var(--text-2)", display: "flex", alignItems: "center", gap: 6 }}>
+									<input type="checkbox" checked={allowExploit} onChange={(e) => setAllowExploit(e.target.checked)} />
+									Allow exploitation (run destructive plugins)
+								</label>
+								<label style={{ fontSize: 11.5, color: "var(--text-2)", display: "flex", alignItems: "center", gap: 6 }}>
+									<input type="checkbox" checked={allowPrivesc} onChange={(e) => setAllowPrivesc(e.target.checked)} />
+									Allow privilege escalation
+								</label>
+								<div style={{ fontSize: 11, color: "var(--sev-high)" }}>
+									⚠ Only against systems you are authorized to actively exploit.
+								</div>
+							</div>
+						)}
+					</div>
+				)}
 				{launchErr && <div style={{ color: "var(--sev-high)", fontSize: 12 }}>{launchErr}</div>}
 
 				{runs.map((run) => (

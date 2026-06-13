@@ -415,6 +415,13 @@ class AgentRunRequest(BaseModel):
     objective: str = Field(default="", max_length=2000)
     provider: str | None = None
     model: str | None = None
+    # Aggressive opt-ins — each gated; only take effect with aggressive=True.
+    aggressive: bool = False
+    allow_privilege_escalation: bool = False
+    allow_exploitation: bool = False
+
+    def aggressive_requested(self) -> bool:
+        return self.aggressive or self.allow_privilege_escalation or self.allow_exploitation
 
 
 def _agent_run_dict(run: AiAgentRun) -> dict:
@@ -428,6 +435,7 @@ def _agent_run_dict(run: AiAgentRun) -> dict:
         "provider": run.provider,
         "model": run.model,
         "stop_reason": run.stop_reason,
+        "capabilities": _json.loads(run.capabilities) if run.capabilities else None,
         "final_text": run.final_text,
         "actions": _json.loads(run.actions) if run.actions else [],
         "token_usage": _json.loads(run.token_usage) if run.token_usage else None,
@@ -449,6 +457,14 @@ async def launch_agent(
     """Launch a guided/autonomous AI agent run against a completed scan."""
     await _own_scan(db, scan_id, current_user.id)
 
+    # Aggressive capabilities (exploitation / privilege escalation) are admin-only
+    # and unlock active, potentially-destructive actions — require an admin.
+    if body.aggressive_requested() and getattr(current_user, "role", None) != "admin":
+        raise HTTPException(
+            status_code=403,
+            detail="Aggressive capabilities require an admin user.",
+        )
+
     # Validate provider + key up front so the user gets an immediate, clear error
     # instead of a failed background run.
     provider_name = body.provider or await store.get_default_provider(db)
@@ -465,6 +481,13 @@ async def launch_agent(
         "exploitable issues, corroborate them with the available tools, and write "
         "a prioritized assessment with concrete next steps."
     )
+    # If any aggressive sub-capability is requested, aggressive is implied on.
+    import json as _json
+    caps = {
+        "aggressive": body.aggressive or body.allow_privilege_escalation or body.allow_exploitation,
+        "allow_privilege_escalation": body.allow_privilege_escalation,
+        "allow_exploitation": body.allow_exploitation,
+    }
     run = AiAgentRun(
         id=new_uuid(),
         scan_id=scan_id,
@@ -473,6 +496,7 @@ async def launch_agent(
         objective=objective,
         provider=provider_name,
         model=body.model,
+        capabilities=_json.dumps(caps) if caps["aggressive"] else None,
     )
     db.add(run)
     await db.commit()
