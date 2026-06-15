@@ -389,6 +389,7 @@ async def false_positives(
         "methodology": result.methodology,
         "assessed_count": result.assessed_count,
         "flagged_count": len(result.items),
+        "truncated": result.truncated,
         "provider": result.provider,
         "model": result.model,
         "usage": _usage_dict(result.usage),

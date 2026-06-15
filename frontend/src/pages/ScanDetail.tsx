@@ -979,6 +979,7 @@ function FalsePositivePanel({
 		methodology?: string;
 		assessed_count: number;
 		flagged_count: number;
+		truncated?: boolean;
 		provider: string;
 		model: string;
 		usage?: { input_tokens: number; output_tokens: number } | null;
@@ -1010,6 +1011,12 @@ function FalsePositivePanel({
 				</span>
 			</div>
 			<div style={{ padding: 14 }}>
+				{data.truncated && (
+					<div style={{ fontSize: 11.5, color: "var(--sev-high)", marginBottom: 8 }}>
+						⚠ The model's response was truncated (too many findings) — results may be
+						incomplete. Re-run on a smaller scan or filter first.
+					</div>
+				)}
 				{/* Methodology */}
 				{data.methodology && (
 					<div

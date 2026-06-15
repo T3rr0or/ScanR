@@ -46,6 +46,9 @@ class FalsePositiveResult:
     usage: Usage = field(default_factory=Usage)
     provider: str = ""
     model: str = ""
+    # True when the model's output hit the token ceiling and was cut off — the
+    # JSON may be incomplete, so an empty result is NOT a reliable "no FPs".
+    truncated: bool = False
 
 
 def _parse_response(text: str, valid_ids: set[str]) -> tuple[str, list[dict]]:
@@ -99,12 +102,23 @@ async def test_false_positives(
     block, shown = fenced_block(candidates, include_id=True, include_evidence=True, max_findings=_MAX_FINDINGS)
     valid_ids = {str(f.get("id")) for f in candidates}
 
+    # Scale the output budget with the number of findings assessed — a fixed
+    # floor truncated the JSON mid-stream on large scans, which silently looked
+    # like "no false positives". Cap so we never request an absurd amount.
+    out_tokens = min(8192, max(max_tokens, 3072, shown * 160 + 600))
+
     completion = await provider.complete(
         system=_SYSTEM_PROMPT,
         messages=[Msg(role="user", content=block)],
-        max_tokens=max(max_tokens, 3072),
+        max_tokens=out_tokens,
     )
     methodology, items = _parse_response(completion.text, valid_ids)
+    truncated = completion.stop_reason == "length"
+    if truncated:
+        logger.warning(
+            "FP assessment output truncated at %d tokens (assessed %d findings) — "
+            "result may be incomplete", out_tokens, shown,
+        )
     return FalsePositiveResult(
         items=items,
         methodology=methodology,
@@ -112,4 +126,5 @@ async def test_false_positives(
         usage=completion.usage,
         provider=provider.name,
         model=provider.model,
+        truncated=truncated,
     )
