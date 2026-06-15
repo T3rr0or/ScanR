@@ -70,12 +70,22 @@ async def _run_agent_async(run_id: str) -> dict:
                 )
                 await slog.info(f"AI agent started ({run.mode}, {provider.name}/{provider.model})", phase="ai_agent")
 
+                # Persist the transcript live so the UI shows progress mid-run,
+                # not only at the end.
+                acc: list[dict] = []
+
+                async def _on_action(a):
+                    acc.append({"tool": a.tool, "arguments": a.arguments, "result": a.result[:4000]})
+                    run.actions = json.dumps(acc)
+                    await db.commit()
+
                 result = await run_agent(
                     provider,
                     ctx,
                     default_registry(),
                     objective=run.objective,
                     scan_summary=_scan_summary(scan),
+                    on_action=_on_action,
                 )
 
                 run.status = "completed"
@@ -116,8 +126,14 @@ async def _run_agent_async(run_id: str) -> dict:
 def _scan_summary(scan) -> str:
     if scan is None:
         return ""
-    return (
-        f"Scan '{scan.name}' — hosts up {scan.hosts_up}/{scan.hosts_total}; "
+    summary = (
+        f"Scan '{scan.name}' — status {scan.status}; hosts up {scan.hosts_up}/{scan.hosts_total}; "
         f"findings: {scan.findings_critical} critical, {scan.findings_high} high, "
         f"{scan.findings_medium} medium, {scan.findings_low} low, {scan.findings_info} info."
     )
+    if str(scan.status) == "running":
+        summary += (
+            " NOTE: this scan is STILL RUNNING — results are partial and more hosts/findings "
+            "will appear. Prioritize guiding the live engagement; re-check the data as it grows."
+        )
+    return summary

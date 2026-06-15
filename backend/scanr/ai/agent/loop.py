@@ -8,6 +8,7 @@ cancellation by the caller.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Awaitable, Callable
 
 from scanr.ai.agent.context import AgentContext
 from scanr.ai.agent.prompts import build_system_prompt
@@ -39,7 +40,10 @@ async def run_agent(
     objective: str,
     scan_summary: str = "",
     max_tokens_per_call: int = 4096,
+    on_action: "Callable[[AgentAction], Awaitable[None]] | None" = None,
 ) -> AgentRun:
+    """Drive the agent loop. ``on_action`` (if given) is awaited after each tool
+    action so callers can persist the transcript live (e.g. for the UI)."""
     system = build_system_prompt(ctx.policy, scan_summary)
     messages: list[Msg] = [Msg(role="user", content=objective)]
     tool_defs = registry.definitions()
@@ -80,7 +84,10 @@ async def run_agent(
         for call in completion.tool_calls:
             await ctx.log(f"→ {call.name}({_short_args(call.arguments)})")
             result = await registry.dispatch(ctx, call.name, call.arguments)
-            run.actions.append(AgentAction(tool=call.name, arguments=call.arguments, result=result))
+            action = AgentAction(tool=call.name, arguments=call.arguments, result=result)
+            run.actions.append(action)
+            if on_action is not None:
+                await on_action(action)
             messages.append(Msg(role="tool", content=result, tool_call_id=call.id, name=call.name))
 
     return run

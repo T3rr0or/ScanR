@@ -642,7 +642,8 @@ function AgentPanel({ scanId, enabled }: { scanId: string; enabled: boolean }) {
 }
 
 function AgentRunCard({ run }: { run: AgentRun }) {
-	const [open, setOpen] = useState(false);
+	const running = ["queued", "running"].includes(run.status);
+	const [open, setOpen] = useState(running);
 	const qc = useQueryClient();
 	const decide = useMutation({
 		mutationFn: (decision: "allow" | "deny") =>
