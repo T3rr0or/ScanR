@@ -135,7 +135,7 @@ export default function Vulnerabilities() {
                 {vulns.map(v => {
                   const isSelected = selected?.plugin_id === v.plugin_id
                   return (
-                    <tr key={v.plugin_id} onClick={() => setSelected(isSelected ? null : v)} className={isSelected ? 'selected' : ''}>
+                    <tr key={`${v.plugin_id}-${v.severity}-${v.title}`} onClick={() => setSelected(isSelected ? null : v)} className={isSelected ? 'selected' : ''}>
                       <td><SevTag severity={v.severity as any} /></td>
                       <td style={{ maxWidth: 300 }}>
                         <div style={{ fontSize: 12.5, fontWeight: 500, color: 'var(--text-0)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{v.title}</div>
