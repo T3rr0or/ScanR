@@ -1,0 +1,11 @@
+(^|\.)pypi\.org$
+(^|\.)pythonhosted\.org$
+(^|\.)files\.pythonhosted\.org$
+(^|\.)debian\.org$
+(^|\.)ubuntu\.com$
+(^|\.)archive\.ubuntu\.com$
+(^|\.)security\.ubuntu\.com$
+(^|\.)deb\.debian\.org$
+(^|\.)github\.com$
+(^|\.)githubusercontent\.com$
+(^|\.)kali\.org$

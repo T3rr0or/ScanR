@@ -1,0 +1,22 @@
+# ScanR AI sandbox toolkit image.
+# The disposable container the agent gets a shell into. Contains a pentest
+# toolkit and can install more at runtime (egress is restricted to the scan's
+# targets + allowlisted package mirrors by the runner/proxy). Holds NO ScanR
+# code or secrets. Runs as a non-root user.
+FROM debian:stable-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates curl wget dnsutils iputils-ping netcat-openbsd \
+    nmap python3 python3-pip python3-venv git jq openssl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Best-effort: a couple of common web tools. Failures here don't break the build;
+# the agent can install what it needs at runtime via the allowlisted proxy.
+RUN pip3 install --no-cache-dir --break-system-packages httpx requests || true
+
+# Non-root user the runner executes commands as (matches --user 1000:1000).
+RUN useradd -m -u 1000 -s /bin/bash sbx
+USER sbx
+WORKDIR /work
+
+CMD ["/bin/bash"]
