@@ -57,6 +57,7 @@ async def _run_agent_async(run_id: str) -> dict:
                     aggressive=bool(caps.get("aggressive")),
                     allow_privilege_escalation=bool(caps.get("allow_privilege_escalation")),
                     allow_exploitation=bool(caps.get("allow_exploitation")),
+                    allow_command_exec=bool(caps.get("allow_command_exec")),
                 )
                 budget = Budget(max_tokens=max(settings.ai_max_tokens * 20, 100_000))
                 ctx = DbAgentContext(
@@ -82,7 +83,7 @@ async def _run_agent_async(run_id: str) -> dict:
                 result = await run_agent(
                     provider,
                     ctx,
-                    default_registry(),
+                    default_registry(policy),
                     objective=run.objective,
                     scan_summary=_scan_summary(scan),
                     on_action=_on_action,

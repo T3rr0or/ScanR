@@ -56,3 +56,9 @@ class AgentContext(ABC):
         """Nmap-scan a host (optionally a port spec like '80,443' or '1-1024'),
         persist newly discovered ports/services, and return the open ports.
         Raises ValueError on bad input."""
+
+    @abstractmethod
+    async def run_command(self, command: str) -> dict:
+        """Run a shell command in the isolated sandbox (egress scoped to the
+        scan's targets + package mirrors). Returns a result dict, or
+        {"denied": True, "reason": ...} when the sandbox is unavailable/disabled."""

@@ -535,6 +535,7 @@ function AgentPanel({ scanId, enabled }: { scanId: string; enabled: boolean }) {
 	const [aggressive, setAggressive] = useState(false);
 	const [allowExploit, setAllowExploit] = useState(false);
 	const [allowPrivesc, setAllowPrivesc] = useState(false);
+	const [allowCmd, setAllowCmd] = useState(false);
 
 	const { data: runs = [] } = useQuery<AgentRun[]>({
 		queryKey: ["ai-agent-runs", scanId],
@@ -555,6 +556,7 @@ function AgentPanel({ scanId, enabled }: { scanId: string; enabled: boolean }) {
 					aggressive: isAdmin && aggressive,
 					allow_exploitation: isAdmin && aggressive && allowExploit,
 					allow_privilege_escalation: isAdmin && aggressive && allowPrivesc,
+					allow_command_exec: isAdmin && aggressive && allowCmd,
 				})
 				.then((r) => r.data),
 		onSuccess: () => {
@@ -623,6 +625,10 @@ function AgentPanel({ scanId, enabled }: { scanId: string; enabled: boolean }) {
 								<label style={{ fontSize: 11.5, color: "var(--text-2)", display: "flex", alignItems: "center", gap: 6 }}>
 									<input type="checkbox" checked={allowPrivesc} onChange={(e) => setAllowPrivesc(e.target.checked)} />
 									Allow privilege escalation
+								</label>
+								<label style={{ fontSize: 11.5, color: "var(--text-2)", display: "flex", alignItems: "center", gap: 6 }}>
+									<input type="checkbox" checked={allowCmd} onChange={(e) => setAllowCmd(e.target.checked)} />
+									Allow command execution (sandboxed shell)
 								</label>
 								<div style={{ fontSize: 11, color: "var(--sev-high)" }}>
 									⚠ Only against systems you are authorized to actively exploit.

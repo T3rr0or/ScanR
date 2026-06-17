@@ -420,9 +420,15 @@ class AgentRunRequest(BaseModel):
     aggressive: bool = False
     allow_privilege_escalation: bool = False
     allow_exploitation: bool = False
+    allow_command_exec: bool = False
 
     def aggressive_requested(self) -> bool:
-        return self.aggressive or self.allow_privilege_escalation or self.allow_exploitation
+        return (
+            self.aggressive
+            or self.allow_privilege_escalation
+            or self.allow_exploitation
+            or self.allow_command_exec
+        )
 
 
 def _agent_run_dict(run: AiAgentRun) -> dict:
@@ -485,9 +491,10 @@ async def launch_agent(
     # If any aggressive sub-capability is requested, aggressive is implied on.
     import json as _json
     caps = {
-        "aggressive": body.aggressive or body.allow_privilege_escalation or body.allow_exploitation,
+        "aggressive": body.aggressive_requested(),
         "allow_privilege_escalation": body.allow_privilege_escalation,
         "allow_exploitation": body.allow_exploitation,
+        "allow_command_exec": body.allow_command_exec,
     }
     run = AiAgentRun(
         id=new_uuid(),

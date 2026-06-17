@@ -49,6 +49,11 @@ class FakeContext(AgentContext):
         self.port_scans.append((host_ip, ports))
         return {"host": host_ip, "open_ports": [{"number": 80, "protocol": "tcp", "service": "http"}], "added": 1}
 
+    async def run_command(self, command):
+        self.commands = getattr(self, "commands", [])
+        self.commands.append(command)
+        return {"exit_code": 0, "stdout": f"ran: {command}", "stderr": "", "truncated": False, "timed_out": False}
+
 
 class ScriptedProvider(LLMProvider):
     """Returns a pre-scripted sequence of completions, one per call."""
@@ -222,6 +227,46 @@ async def test_run_port_scan_intrusive_gating():
     out3 = await reg.dispatch(ctx3, "run_port_scan", {"host_ip": "169.254.169.254"})
     assert out3.startswith("DENIED")
     assert getattr(ctx3, "port_scans", []) == []
+
+
+@pytest.mark.asyncio
+async def test_run_command_only_exposed_with_capability():
+    from scanr.ai.agent.tools import default_registry
+
+    # No capability -> the tool isn't even in the registry the model sees
+    reg_off = default_registry(AgentPolicy(mode=AutonomyMode.autonomous, aggressive=True))
+    assert "run_command" not in reg_off.names()
+
+    # With allow_command_exec (and aggressive) -> exposed
+    pol = AgentPolicy(mode=AutonomyMode.autonomous, aggressive=True, allow_command_exec=True)
+    reg_on = default_registry(pol)
+    assert "run_command" in reg_on.names()
+
+
+@pytest.mark.asyncio
+async def test_run_command_capability_and_approval_gating():
+    from scanr.ai.agent.tools import command_tools
+
+    cmd_tool = command_tools()[0]
+
+    # aggressive but capability off -> denied (defense in depth even if exposed)
+    ctx_off = FakeContext(AgentPolicy(mode=AutonomyMode.autonomous, aggressive=True))
+    out = await _reg_with(cmd_tool).dispatch(ctx_off, "run_command", {"command": "id"})
+    assert out.startswith("DENIED") and "allow_command_exec" in out
+
+    # capability on, autonomous -> runs
+    ctx_on = FakeContext(AgentPolicy(mode=AutonomyMode.autonomous, aggressive=True, allow_command_exec=True))
+    out2 = await _reg_with(cmd_tool).dispatch(ctx_on, "run_command", {"command": "id"})
+    assert "ran: id" in out2
+    assert ctx_on.commands == ["id"]
+
+    # guided + capability on but no approval -> denied, command not run
+    ctx_guided = FakeContext(
+        AgentPolicy(mode=AutonomyMode.guided, aggressive=True, allow_command_exec=True), approve=False
+    )
+    out3 = await _reg_with(cmd_tool).dispatch(ctx_guided, "run_command", {"command": "id"})
+    assert out3.startswith("DENIED")
+    assert getattr(ctx_guided, "commands", []) == []
 
 
 def test_parse_ports():

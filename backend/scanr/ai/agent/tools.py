@@ -260,13 +260,55 @@ def plugin_tools() -> list[Tool]:
     ]
 
 
-def default_registry() -> "ToolRegistry":
-    """The tool set for a guided/autonomous run: read-only + web + plugins.
+async def _run_command(ctx: AgentContext, args: dict) -> str:
+    command = str(args.get("command", "")).strip()
+    if not command:
+        raise ToolError("command is required")
+    result = await ctx.run_command(command)
+    if result.get("denied"):
+        return f"DENIED: {result.get('reason', 'not permitted')}"
+    return json.dumps(result)[:8000]
 
-    list_plugins is read-only; run_plugin is intrusive (approval-gated in
-    guided mode, destructive plugins gated on the exploitation capability).
+
+def command_tools() -> list[Tool]:
+    """Arbitrary shell in the isolated sandbox — the highest-risk tool. Requires
+    the allow_command_exec capability (admin + aggressive opt-in)."""
+    return [
+        Tool(
+            ToolDef(
+                name="run_command",
+                description=(
+                    "Run a shell command in an isolated sandbox container that has a pentest "
+                    "toolkit (nmap, nuclei, curl, python/pip, etc.) and can install more tools. "
+                    "Network egress is restricted to the scan's authorized targets plus package "
+                    "mirrors. Use for checks no built-in tool covers."
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {"command": {"type": "string", "description": "Shell command to run"}},
+                    "required": ["command"],
+                    "additionalProperties": False,
+                },
+            ),
+            _run_command,
+            intrusive=True,
+            required_capability="allow_command_exec",
+        ),
+    ]
+
+
+def default_registry(policy=None) -> "ToolRegistry":
+    """The tool set for a guided/autonomous run: read-only + web + plugins, and
+    the sandbox shell only when the policy unlocks allow_command_exec (so the
+    model isn't even shown a tool it can't use).
+
+    list_plugins is read-only; run_plugin/run_port_scan are intrusive
+    (approval-gated in guided mode; destructive plugins gated on exploitation).
     """
-    return ToolRegistry(read_only_tools() + web_tools() + plugin_tools())
+    tools = read_only_tools() + web_tools() + plugin_tools()
+    if policy is not None and policy.allows_capability("allow_command_exec"):
+        tools += command_tools()
+    return ToolRegistry(tools)
 
 
 class ToolRegistry:

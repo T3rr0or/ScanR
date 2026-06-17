@@ -287,6 +287,44 @@ class DbAgentContext(AgentContext):
             "added": added,
         }
 
+    async def run_command(self, command: str) -> dict:
+        from scanr.sandbox.client import SandboxClient, SandboxUnavailable
+
+        client = SandboxClient.from_settings()
+        if client is None:
+            return {"denied": True, "reason": "command sandbox not configured (SANDBOX_RUNNER_URL unset)."}
+
+        scope = await self._scope_cidrs()
+        if not scope:
+            return {"denied": True, "reason": "no in-scope targets to constrain the sandbox to."}
+
+        await self._log.warn(f"agent running command in sandbox: {command[:160]}", phase="ai_agent")
+        try:
+            result = await client.run(command=command, scope=scope, run_id=self._run_id or "")
+        except SandboxUnavailable as exc:
+            await self._log.error(f"sandbox unavailable: {exc}", phase="ai_agent")
+            return {"denied": True, "reason": f"sandbox unavailable: {exc}"}
+        return {
+            "exit_code": result.exit_code,
+            "stdout": result.stdout,
+            "stderr": result.stderr,
+            "truncated": result.truncated,
+            "timed_out": result.timed_out,
+        }
+
+    async def _scope_cidrs(self) -> list[str]:
+        """The scan's authorized targets (filtered through is_forbidden_target),
+        used to constrain the sandbox's egress. Falls back to discovered host IPs."""
+        from scanr.models import Target
+        from scanr.utils.ip_utils import is_forbidden_target
+
+        rows = await self._db.execute(select(Target.value).where(Target.scan_id == self.scan_id))
+        targets = [str(t) for t in rows.scalars().all()]
+        if not targets:
+            hrows = await self._db.execute(select(Host.ip).where(Host.scan_id == self.scan_id))
+            targets = [str(ip) for ip in hrows.scalars().all()]
+        return [t for t in targets if t and not is_forbidden_target(t, self.denylist)]
+
     async def _persist_findings(self, scan, host_id: str, findings: list) -> int:
         """Route plugin findings through ResultCollector so agent discoveries
         become first-class findings (deduped, counted, shown in the UI)."""

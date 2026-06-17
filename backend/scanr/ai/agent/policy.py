@@ -28,6 +28,8 @@ class AgentPolicy:
     aggressive: bool = False
     allow_privilege_escalation: bool = False
     allow_exploitation: bool = False
+    # Run arbitrary shell commands in the isolated sandbox (highest-risk capability).
+    allow_command_exec: bool = False
 
     @property
     def runs_agent(self) -> bool:

@@ -78,6 +78,15 @@ class Settings(BaseSettings):
     deepseek_api_key: str = ""
     anthropic_api_key: str = ""
 
+    # ── AI command-execution sandbox (see docs/ai-sandbox-design.md) ──────────
+    # Empty SANDBOX_RUNNER_URL = command execution disabled (fail-closed). The
+    # runner is a dedicated, socket-isolated service; the worker talks to it over
+    # the internal network and never touches Docker itself.
+    sandbox_runner_url: str = ""
+    sandbox_token: str = ""
+    sandbox_image: str = "scanr-sandbox:latest"
+    sandbox_cmd_timeout: int = 120  # per-command wall-clock seconds
+
     # Reports output directory
     reports_dir: Path = Path("./reports")
 
