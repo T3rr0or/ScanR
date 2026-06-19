@@ -333,6 +333,35 @@ aggressive`) and the full safety model are documented in
 Providers are swappable per request (ChatGPT/OpenAI, DeepSeek, Anthropic), so
 you can run a cheap model for high-volume work and a stronger one for analysis.
 
+### AI command-execution sandbox (optional)
+
+By default the agent is limited to ScanR's built-in tools. You can optionally
+give it a real shell — `run_command` — that runs inside an isolated, disposable
+container so it can use the full pentest toolkit and adapt like an operator.
+This is **off** unless you opt in with the sandbox Compose overlay.
+
+```bash
+# 1. Generate a shared token for the worker ↔ runner channel
+export SANDBOX_TOKEN=$(openssl rand -hex 32)
+
+# 2. Build the toolkit image (fat, pre-baked — one-time cost)
+docker build -t scanr-sandbox:latest -f backend/sandbox/Dockerfile.sandbox backend
+
+# 3. Start ScanR with the sandbox overlay
+docker compose -f docker-compose.yml -f docker-compose.sandbox.yml up -d --build
+```
+
+Isolation model: only a dedicated **sandbox-runner** holds the Docker socket and
+it carries **no ScanR secrets**; the secret-holding worker can't touch the
+socket. The agent gets **one persistent, hardened container per run** (state
+persists across commands) that is non-root, read-only-rootfs, `cap-drop ALL`,
+and resource/time-limited. Egress is restricted to the scan's authorized targets
+plus allowlisted package mirrors, and the path is **fail-closed** — if the runner
+is unavailable, command execution is denied. `run_command` requires admin +
+the aggressive `allow_command_exec` opt-in. Strict per-target L3 egress requires
+a host firewall and must be validated on your deployment. Full architecture:
+[`docs/ai-sandbox-design.md`](docs/ai-sandbox-design.md).
+
 ---
 
 ## Scheduled Scans
@@ -393,6 +422,9 @@ API docs are available at **http://localhost:8000/docs**.
 | `ANTHROPIC_API_KEY` | empty | Key for the Anthropic provider (enables AI when set) |
 | `OPENAI_API_KEY` | empty | Key for the OpenAI/ChatGPT provider |
 | `DEEPSEEK_API_KEY` | empty | Key for the DeepSeek provider |
+| `SANDBOX_RUNNER_URL` | empty | URL of the sandbox-runner; enables the agent's `run_command` shell when set (fail-closed if unset) |
+| `SANDBOX_TOKEN` | empty | Shared token authenticating the worker to the sandbox-runner |
+| `SANDBOX_IMAGE` | `scanr-sandbox:latest` | Toolkit image the sandbox runs |
 | `DATABASE_URL` | compose-managed | SQLAlchemy database URL |
 | `REDIS_URL` | compose-managed | Redis URL |
 | `CELERY_BROKER_URL` | compose-managed | Celery broker URL |

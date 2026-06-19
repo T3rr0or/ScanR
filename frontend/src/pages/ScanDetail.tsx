@@ -759,11 +759,6 @@ function AiTab({ scanId, findings }: { scanId: string; findings: Finding[] }) {
 			api.post(`/ai/scans/${scanId}/summary`).then((r) => r.data),
 		onSuccess: () => qc.invalidateQueries({ queryKey: ["ai-results", scanId] }),
 	});
-	const reportMut = useMutation({
-		mutationFn: () =>
-			api.post(`/ai/scans/${scanId}/report`).then((r) => r.data),
-		onSuccess: () => qc.invalidateQueries({ queryKey: ["ai-results", scanId] }),
-	});
 	const fpMut = useMutation({
 		mutationFn: () =>
 			api.post(`/ai/scans/${scanId}/false-positives`).then((r) => r.data),
@@ -771,8 +766,7 @@ function AiTab({ scanId, findings }: { scanId: string; findings: Finding[] }) {
 	});
 
 	const enabled = status?.enabled ?? false;
-	const pending =
-		summaryMut.isPending || reportMut.isPending || fpMut.isPending;
+	const pending = summaryMut.isPending || fpMut.isPending;
 	const errOf = (m: { error: unknown }): string | null => {
 		const e = m.error as {
 			response?: { data?: { detail?: string } };
@@ -787,7 +781,6 @@ function AiTab({ scanId, findings }: { scanId: string; findings: Finding[] }) {
 
 	// Merge fresh + saved results, preferring fresh
 	const hasFreshSummary = !!summaryMut.data;
-	const hasFreshReport = !!reportMut.data;
 	const hasFreshFp = !!fpMut.data;
 
 	return (
@@ -807,8 +800,8 @@ function AiTab({ scanId, findings }: { scanId: string; findings: Finding[] }) {
 					}}
 				>
 					No AI provider is configured. Add an API key in{" "}
-					<strong>Settings → AI</strong> to enable summaries, report narrative,
-					and false-positive testing.
+					<strong>Settings → AI</strong> to enable summaries and
+					false-positive testing.
 				</div>
 			)}
 
@@ -828,20 +821,13 @@ function AiTab({ scanId, findings }: { scanId: string; findings: Finding[] }) {
 				<button
 					className="btn btn-ghost btn-sm"
 					disabled={!enabled || pending}
-					onClick={() => reportMut.mutate()}
-				>
-					{reportMut.isPending ? "Generating…" : "Generate report narrative"}
-				</button>
-				<button
-					className="btn btn-ghost btn-sm"
-					disabled={!enabled || pending}
 					onClick={() => fpMut.mutate()}
 				>
 					{fpMut.isPending ? "Testing…" : "Test false positives"}
 				</button>
 			</div>
 
-			{[summaryMut, reportMut, fpMut].map((m, i) =>
+			{[summaryMut, fpMut].map((m, i) =>
 				errOf(m) ? (
 					<div key={i} style={{ color: "var(--sev-high)", fontSize: 12 }}>
 						{errOf(m)}
@@ -855,6 +841,7 @@ function AiTab({ scanId, findings }: { scanId: string; findings: Finding[] }) {
 					title="Summary"
 					meta={summaryMut.data}
 					text={summaryMut.data.summary}
+					truncated={summaryMut.data.truncated}
 				/>
 			)}
 			{!hasFreshSummary &&
@@ -876,43 +863,6 @@ function AiTab({ scanId, findings }: { scanId: string; findings: Finding[] }) {
 							<AiResultPanel
 								key={r.id}
 								title={`Summary (saved ${new Date(r.created_at).toLocaleString()})`}
-								meta={{
-									provider: r.provider,
-									model: r.model,
-									usage: r.token_usage ?? undefined,
-								}}
-								text={r.content.text}
-							/>
-						),
-					)}
-
-			{/* Fresh + saved reports */}
-			{reportMut.data && (
-				<AiResultPanel
-					title="Report narrative"
-					meta={reportMut.data}
-					text={reportMut.data.report}
-				/>
-			)}
-			{!hasFreshReport &&
-				savedResults
-					.filter((r: { type: string }) => r.type === "report")
-					.slice(0, 1)
-					.map(
-						(r: {
-							id: string;
-							content: { text: string };
-							provider: string;
-							model: string;
-							token_usage: {
-								input_tokens: number;
-								output_tokens: number;
-							} | null;
-							created_at: string;
-						}) => (
-							<AiResultPanel
-								key={r.id}
-								title={`Report (saved ${new Date(r.created_at).toLocaleString()})`}
 								meta={{
 									provider: r.provider,
 									model: r.model,
@@ -1161,6 +1111,7 @@ function AiResultPanel({
 	title,
 	text,
 	meta,
+	truncated,
 }: {
 	title: string;
 	text: string;
@@ -1169,6 +1120,7 @@ function AiResultPanel({
 		model: string;
 		usage?: { input_tokens: number; output_tokens: number };
 	};
+	truncated?: boolean;
 }) {
 	return (
 		<div className="panel">
@@ -1197,6 +1149,12 @@ function AiResultPanel({
 					color: "var(--text-1)",
 				}}
 			>
+				{truncated && (
+					<div style={{ fontSize: 11.5, color: "var(--sev-high)", marginBottom: 8 }}>
+						⚠ The model's response was truncated (too many findings) — results may be
+						incomplete. Re-run on a smaller scan or filter first.
+					</div>
+				)}
 				{text}
 			</div>
 		</div>

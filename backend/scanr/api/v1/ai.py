@@ -272,13 +272,16 @@ async def summarize_scan(
     await _own_scan(db, scan_id, current_user.id)
     provider = await _build_provider(db, body.provider, body.model)
     findings = await _load_findings(db, scan_id, include_false_positives=body.include_false_positives)
-    result = await _run_assist(summarize_findings(provider, findings, max_tokens=get_settings().ai_max_tokens))
+    result = await _run_assist(
+        summarize_findings(provider, findings, max_tokens=max(get_settings().ai_max_tokens, 3072))
+    )
     response = {
         "scan_id": scan_id,
         "summary": result.text,
         "provider": result.provider,
         "model": result.model,
         "finding_count": result.finding_count,
+        "truncated": result.truncated,
         "usage": _usage_dict(result.usage),
     }
     try:
@@ -351,6 +354,7 @@ async def report_narrative(
         "provider": result.provider,
         "model": result.model,
         "finding_count": result.finding_count,
+        "truncated": result.truncated,
         "usage": _usage_dict(result.usage),
     }
     try:

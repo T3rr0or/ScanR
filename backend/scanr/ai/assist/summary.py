@@ -9,10 +9,13 @@ untrusted input, never as instructions.
 """
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 
 from scanr.ai.assist._common import fenced_block
 from scanr.ai.llm.base import LLMProvider, Msg, Usage
+
+logger = logging.getLogger(__name__)
 
 _SYSTEM_PROMPT = (
     "You are a penetration-testing report assistant. You are given a list of "
@@ -36,6 +39,7 @@ class SummaryResult:
     provider: str
     model: str
     finding_count: int
+    truncated: bool = False
 
 
 def build_messages(findings: list[dict]) -> list[Msg]:
@@ -64,10 +68,17 @@ async def summarize_findings(
         messages=build_messages(findings),
         max_tokens=max_tokens,
     )
+    truncated = completion.stop_reason == "length"
+    if truncated:
+        logger.warning(
+            "Summary output truncated at %d tokens (summarized %d findings) — "
+            "result may be incomplete", max_tokens, len(findings),
+        )
     return SummaryResult(
         text=completion.text,
         usage=completion.usage,
         provider=provider.name,
         model=provider.model,
         finding_count=len(findings),
+        truncated=truncated,
     )

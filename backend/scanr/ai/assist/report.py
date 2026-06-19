@@ -5,10 +5,13 @@ collected. Read-only: never sends new traffic to targets.
 """
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 
 from scanr.ai.assist._common import fenced_block
 from scanr.ai.llm.base import LLMProvider, Msg, Usage
+
+logger = logging.getLogger(__name__)
 
 _SYSTEM_PROMPT = (
     "You are a senior penetration tester writing the narrative for an authorized "
@@ -36,6 +39,7 @@ class ReportNarrative:
     provider: str
     model: str
     finding_count: int
+    truncated: bool = False
 
 
 def build_messages(findings: list[dict], scan_name: str | None) -> list[Msg]:
@@ -64,10 +68,17 @@ async def generate_report_narrative(
         messages=build_messages(findings, scan_name),
         max_tokens=max_tokens,
     )
+    truncated = completion.stop_reason == "length"
+    if truncated:
+        logger.warning(
+            "Report narrative truncated at %d tokens (%d findings) — "
+            "result may be incomplete", max_tokens, len(findings),
+        )
     return ReportNarrative(
         text=completion.text,
         usage=completion.usage,
         provider=provider.name,
         model=provider.model,
         finding_count=len(findings),
+        truncated=truncated,
     )
