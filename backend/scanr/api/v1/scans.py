@@ -191,6 +191,51 @@ async def _verify_credential_owner(
         )
 
 
+async def _resolve_ai_agent_fields(ai_agent, current_user: User, db: AsyncSession) -> dict:
+    """Validate the opt-in AI agent config and map it to Scan columns.
+
+    Returns the ai_agent_* kwargs for the Scan model. Aggressive capabilities are
+    admin-only; the provider must have an API key configured so we fail fast at
+    creation time rather than during the background run.
+    """
+    from scanr.schemas.scan import ScanAiAgentConfig
+
+    if not isinstance(ai_agent, ScanAiAgentConfig) or not ai_agent.enabled:
+        return {}
+
+    if ai_agent.aggressive_requested() and getattr(current_user, "role", None) != "admin":
+        raise HTTPException(
+            status_code=403, detail="Aggressive AI capabilities require an admin user."
+        )
+
+    from scanr.ai import settings_store as store
+    from scanr.ai.llm.factory import SUPPORTED_PROVIDERS
+
+    provider_name = ai_agent.provider or await store.get_default_provider(db)
+    if provider_name not in SUPPORTED_PROVIDERS:
+        raise HTTPException(status_code=400, detail=f"Unknown AI provider {provider_name!r}.")
+    if not await store.resolve_api_key(db, provider_name):
+        raise HTTPException(
+            status_code=400,
+            detail=f"No API key configured for provider {provider_name!r}. Add one in Settings → AI.",
+        )
+
+    caps = {
+        "aggressive": ai_agent.aggressive_requested(),
+        "allow_privilege_escalation": ai_agent.allow_privilege_escalation,
+        "allow_exploitation": ai_agent.allow_exploitation,
+        "allow_command_exec": ai_agent.allow_command_exec,
+    }
+    return {
+        "ai_agent_enabled": True,
+        "ai_agent_mode": ai_agent.mode,
+        "ai_agent_objective": ai_agent.objective.strip() or None,
+        "ai_agent_provider": provider_name,
+        "ai_agent_model": ai_agent.model,
+        "ai_agent_capabilities": json.dumps(caps) if caps["aggressive"] else None,
+    }
+
+
 async def _transition_status(
     scan_id: str,
     user_id: str,
@@ -265,6 +310,8 @@ async def create_scan(
     # before binding it to the scan (prevents using another user's credential).
     await _verify_credential_owner(body.credential_id, current_user.id, db)
 
+    ai_fields = await _resolve_ai_agent_fields(body.ai_agent, current_user, db)
+
     scan = Scan(
         id=new_uuid(),
         name=body.name,
@@ -274,6 +321,7 @@ async def create_scan(
         profile_json=body.profile_json,
         credential_id=body.credential_id,
         user_id=current_user.id,
+        **ai_fields,
     )
     db.add(scan)
 

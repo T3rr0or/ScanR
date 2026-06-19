@@ -23,12 +23,25 @@ export interface ScanCredentialIn {
   vault_name?: string
 }
 
+export interface ScanAiAgentConfig {
+  enabled: boolean
+  mode: 'guided' | 'autonomous'
+  objective?: string
+  provider?: string | null
+  model?: string | null
+  aggressive?: boolean
+  allow_privilege_escalation?: boolean
+  allow_exploitation?: boolean
+  allow_command_exec?: boolean
+}
+
 export interface ScanCreate {
   name: string; targets: string[]; profile: string
   description?: string; credential_id?: string
   profile_json?: string
   credentials?: ScanCredentialIn[]
   exclusions?: string[]
+  ai_agent?: ScanAiAgentConfig
 }
 
 export const scansApi = {

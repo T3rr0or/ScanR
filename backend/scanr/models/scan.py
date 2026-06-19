@@ -55,6 +55,15 @@ class Scan(Base, TimestampMixin):
     webhook_sent: Mapped[bool] = mapped_column(default=False)
     agent_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("scan_agents.id"), nullable=True)
 
+    # AI agent auto-run: when enabled at creation, the worker launches an AI
+    # agent run concurrently as the scan starts (see scanr.ai.agent.autostart).
+    ai_agent_enabled: Mapped[bool] = mapped_column(default=False, nullable=False)
+    ai_agent_mode: Mapped[str | None] = mapped_column(String(20), nullable=True)  # guided | autonomous
+    ai_agent_objective: Mapped[str | None] = mapped_column(Text, nullable=True)
+    ai_agent_provider: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    ai_agent_model: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    ai_agent_capabilities: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON: aggressive opt-ins
+
     # stats (denormalized for dashboard speed)
     hosts_total: Mapped[int] = mapped_column(default=0)
     hosts_up: Mapped[int] = mapped_column(default=0)

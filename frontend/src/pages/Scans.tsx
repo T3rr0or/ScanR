@@ -9,6 +9,7 @@ import {
 import { scansApi, type ScanCreate, type ScanCredentialIn } from '@/api/scans'
 import { templatesApi, type ScanTemplate } from '@/api/templates'
 import { wordlistsApi } from '@/api/wordlists'
+import { useAuthStore } from '@/store/auth'
 import { ALL_CATEGORIES, PORT_RANGES, configToJson, defaultProfileConfig, jsonToConfig, type ProfileConfig } from '@/components/ProfileEditor'
 import ScanDelta from './ScanDelta'
 import { StatusPill, SeverityBar, CHML, Meter, fmtDuration, relTime } from '@/components/ui'
@@ -718,6 +719,20 @@ function NewScanModal({
     stop_on_success: false,
   })
 
+  // Opt-in AI agent that runs concurrently while the scan executes.
+  const authToken = useAuthStore(s => s.token)
+  let isAdmin = false
+  try { isAdmin = JSON.parse(atob(authToken!.split('.')[1])).role === 'admin' } catch { /* not admin */ }
+  const [ai, setAi] = useState({
+    enabled: false,
+    mode: 'guided' as 'guided' | 'autonomous',
+    objective: '',
+    aggressive: false,
+    allowExploit: false,
+    allowPrivesc: false,
+    allowCmd: false,
+  })
+
   const { data: apiTemplates = [] } = useQuery({
     queryKey: ['templates'],
     queryFn: templatesApi.list,
@@ -891,6 +906,17 @@ function NewScanModal({
       profile_json: JSON.stringify(pj),
       credentials: credPayload.length > 0 ? credPayload : undefined,
       exclusions: exclusions.split('\n').map(t => t.trim()).filter(Boolean),
+      ai_agent: ai.enabled
+        ? {
+            enabled: true,
+            mode: ai.mode,
+            objective: ai.objective.trim() || undefined,
+            aggressive: isAdmin && ai.aggressive,
+            allow_exploitation: isAdmin && ai.aggressive && ai.allowExploit,
+            allow_privilege_escalation: isAdmin && ai.aggressive && ai.allowPrivesc,
+            allow_command_exec: isAdmin && ai.aggressive && ai.allowCmd,
+          }
+        : undefined,
     }
   }
 
@@ -1064,6 +1090,61 @@ function NewScanModal({
                   <CredentialCard key={cred.id} cred={cred} onChange={patch => updateCredential(cred.id, patch)} onRemove={() => removeCredential(cred.id)} />
                 ))}
               </div>
+
+              <div style={{ borderTop: '1px solid var(--border)', paddingTop: 12 }}>
+                <label style={{ fontSize: 12.5, color: 'var(--text-1)', display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <input type="checkbox" checked={ai.enabled} onChange={e => setAi(a => ({ ...a, enabled: e.target.checked }))} />
+                  <Zap size={12} color="var(--accent)" /> Use AI during this scan
+                </label>
+                <p className="mono" style={{ margin: '4px 0 0 22px', fontSize: 10.5, color: 'var(--text-3)' }}>
+                  Launches an AI agent that investigates concurrently while the scan runs (requires a provider key in Settings → AI).
+                </p>
+                {ai.enabled && (
+                  <div style={{ paddingLeft: 22, marginTop: 8, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                      <span style={{ fontSize: 12, color: 'var(--text-2)' }}>Mode</span>
+                      <select className="select-field" style={{ width: 'auto' }} value={ai.mode} onChange={e => setAi(a => ({ ...a, mode: e.target.value as 'guided' | 'autonomous' }))}>
+                        <option value="guided">Guided — asks before intrusive steps</option>
+                        <option value="autonomous">Autonomous — runs hands-off</option>
+                      </select>
+                    </div>
+                    <textarea
+                      className="textarea"
+                      rows={2}
+                      value={ai.objective}
+                      onChange={e => setAi(a => ({ ...a, objective: e.target.value }))}
+                      placeholder="Objective (optional) — e.g. 'focus on the web services and find the most exploitable issue'"
+                    />
+                    {isAdmin && (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                        <label style={{ fontSize: 12, color: 'var(--text-1)', display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <input type="checkbox" checked={ai.aggressive} onChange={e => setAi(a => ({ ...a, aggressive: e.target.checked }))} />
+                          Aggressive mode (admin) — allow intrusive/destructive actions
+                        </label>
+                        {ai.aggressive && (
+                          <div style={{ paddingLeft: 22, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                            <label style={{ fontSize: 11.5, color: 'var(--text-2)', display: 'flex', alignItems: 'center', gap: 6 }}>
+                              <input type="checkbox" checked={ai.allowExploit} onChange={e => setAi(a => ({ ...a, allowExploit: e.target.checked }))} />
+                              Allow exploitation (run destructive plugins)
+                            </label>
+                            <label style={{ fontSize: 11.5, color: 'var(--text-2)', display: 'flex', alignItems: 'center', gap: 6 }}>
+                              <input type="checkbox" checked={ai.allowPrivesc} onChange={e => setAi(a => ({ ...a, allowPrivesc: e.target.checked }))} />
+                              Allow privilege escalation
+                            </label>
+                            <label style={{ fontSize: 11.5, color: 'var(--text-2)', display: 'flex', alignItems: 'center', gap: 6 }}>
+                              <input type="checkbox" checked={ai.allowCmd} onChange={e => setAi(a => ({ ...a, allowCmd: e.target.checked }))} />
+                              Allow command execution (sandboxed shell)
+                            </label>
+                            <div style={{ fontSize: 11, color: 'var(--sev-high)' }}>
+                              ⚠ Only against systems you are authorized to actively exploit.
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
             </>
           )}
 
@@ -1223,6 +1304,9 @@ function NewScanModal({
               targetPreview={targetPreview}
               credentialCount={credentials.length}
               bruteForce={bruteForce}
+              aiSummary={ai.enabled
+                ? `${ai.mode}${isAdmin && ai.aggressive ? ' · aggressive' : ''} — runs during the scan`
+                : 'disabled'}
             />
           )}
 
@@ -1331,6 +1415,7 @@ function ReviewStep({
   targetPreview,
   credentialCount,
   bruteForce,
+  aiSummary,
 }: {
   name: string
   targets: string
@@ -1346,6 +1431,7 @@ function ReviewStep({
     delay_ms: number
     stop_on_success: boolean
   }
+  aiSummary: string
 }) {
   const portLabel = PORT_RANGES.find(p => p.value === profileConfig.port_range)?.label ?? profileConfig.port_range
   const targetLines = targets.split('\n').map(t => t.trim()).filter(Boolean)
@@ -1389,6 +1475,7 @@ function ReviewStep({
         <ReviewRow label="Safety / depth" value={`${profileConfig.safety_level} / ${profileConfig.depth_level}`} />
         <ReviewRow label="Performance" value={profileConfig.performance_profile} />
         <ReviewRow label="Credentials" value={`${credentialCount} known credential set${credentialCount === 1 ? '' : 's'} · brute force ${bruteForce.enabled ? 'enabled' : 'disabled'}`} />
+        <ReviewRow label="AI agent" value={aiSummary} />
       </CapabilityGroup>
 
       <CapabilityGroup title="What this scan will do">

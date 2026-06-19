@@ -33,6 +33,33 @@ class ScanCredentialIn(BaseModel):
         return v
 
 
+class ScanAiAgentConfig(BaseModel):
+    """Opt-in AI agent configuration set at scan-creation time.
+
+    When ``enabled``, the worker launches an AI agent run concurrently as the
+    scan starts, so the AI investigates while the scan is in progress.
+    """
+
+    enabled: bool = False
+    mode: str = Field(default="guided", pattern="^(guided|autonomous)$")
+    objective: str = Field(default="", max_length=2000)
+    provider: str | None = None
+    model: str | None = None
+    # Aggressive opt-ins — admin-only, each only takes effect with aggressive.
+    aggressive: bool = False
+    allow_privilege_escalation: bool = False
+    allow_exploitation: bool = False
+    allow_command_exec: bool = False
+
+    def aggressive_requested(self) -> bool:
+        return (
+            self.aggressive
+            or self.allow_privilege_escalation
+            or self.allow_exploitation
+            or self.allow_command_exec
+        )
+
+
 class ScanCreate(BaseModel):
     name: str
     description: str | None = None
@@ -42,6 +69,7 @@ class ScanCreate(BaseModel):
     credential_id: str | None = None          # keep for backward compat
     credentials: list[ScanCredentialIn] = []  # new: inline credentials
     exclusions: list[str] = []                # IPs/CIDRs/hosts to skip
+    ai_agent: ScanAiAgentConfig | None = None  # opt-in AI agent auto-run
 
 
 class ScanCredentialRead(BaseModel):
@@ -74,6 +102,8 @@ class ScanSummary(BaseModel):
     error_message: str | None = None
     profile_json: str | None = None
     targets: list[str] = []
+    ai_agent_enabled: bool = False
+    ai_agent_mode: str | None = None
 
     model_config = {"from_attributes": True}
 
