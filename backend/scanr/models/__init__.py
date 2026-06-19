@@ -1,3 +1,5 @@
+from .ai_agent_run import AiAgentRun
+from .ai_result import AiResult
 from .api_key import APIKey
 from .base import Base, TimestampMixin
 from .credential import Credential, CredentialType
@@ -15,6 +17,7 @@ from .scan_template import ScanTemplate
 from .schedule import Schedule
 from .screenshot import Screenshot
 from .service import Service
+from .setting import AppSetting
 from .target import Target, TargetType
 from .user import User, UserRole
 from .webhook import Webhook
@@ -49,8 +52,11 @@ __all__ = [
     "ReportFormat",
     "Schedule",
     "Screenshot",
+    "AiResult",
+    "AiAgentRun",
     "APIKey",
     "Webhook",
     "Exclusion",
     "Wordlist",
+    "AppSetting",
 ]

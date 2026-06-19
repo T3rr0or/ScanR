@@ -60,6 +60,12 @@ services:
       # admin-only deployments. The base compose file does NOT mount them.
       SELF_UPDATE_ENABLED: ${SELF_UPDATE_ENABLED:-false}
       WORDLIST_DIR: /app/wordlists
+      AI_PROVIDER: ${AI_PROVIDER:-anthropic}
+      AI_MODEL: ${AI_MODEL:-}
+      AI_MAX_TOKENS: ${AI_MAX_TOKENS:-2048}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
     volumes:
       - reports_data:/app/reports
       - nvd_data:/app/nvd_cache
@@ -90,6 +96,12 @@ services:
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:?ADMIN_PASSWORD must be set in .env}
       WORDLIST_DIR: /app/wordlists
       PROXY_URL: ${PROXY_URL:-}
+      AI_PROVIDER: ${AI_PROVIDER:-anthropic}
+      AI_MODEL: ${AI_MODEL:-}
+      AI_MAX_TOKENS: ${AI_MAX_TOKENS:-2048}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
     cap_add:
       - NET_RAW
     volumes:

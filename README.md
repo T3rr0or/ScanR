@@ -24,6 +24,7 @@ ScanR is a self-hosted vulnerability scanner for authorized internal and externa
 - **Templates and schedules** - save reusable scan profiles and run them on a schedule.
 - **Reports** - export executive and technical reports in multiple formats.
 - **API keys, webhooks, and agents** - integrate ScanR into automated workflows and scan from different network vantage points.
+- **AI assist (optional)** - LLM-generated findings summaries today, with report narrative, false-positive testing, and autonomous modes on the roadmap. Bring your own ChatGPT, DeepSeek, or Anthropic key.
 
 ## Screenshots
 
@@ -259,6 +260,81 @@ Supported exports include HTML, PDF, JSON, CSV, and SARIF where configured.
 
 ---
 
+## AI features
+
+ScanR can use an LLM to augment a scan. AI is **off unless you configure a
+provider key**. Enter a key two ways:
+
+- **In the web app** (recommended): **Settings → AI** — paste a key for
+  Anthropic, OpenAI, or DeepSeek and pick the default provider. Keys are
+  encrypted at rest (Fernet, requires `VAULT_KEY`) and never shown again.
+- **Via environment**: set `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, or
+  `DEEPSEEK_API_KEY` and `AI_PROVIDER`. A key entered in the web app overrides
+  the environment value.
+
+The Docker image bundles the provider SDKs; for a source install add the AI
+extra (`pip install -e "backend[ai]"`). The base install runs fine without them.
+
+**Available now (assist mode — read-only):** open a scan and use the **AI** tab,
+or call the API directly.
+
+- **Findings summary** - executive + technical narrative of a scan's findings:
+  `POST /api/v1/scans/{scan_id}/summary`.
+- **Report narrative** - structured engagement-report sections (executive
+  summary, risk assessment, key findings, prioritized remediation):
+  `POST /api/v1/scans/{scan_id}/report`.
+- **False-positive testing** - the model reviews each finding's evidence and
+  flags the ones likely to be false positives, with confidence and a reason, for
+  analyst review (nothing is auto-hidden):
+  `POST /api/v1/scans/{scan_id}/false-positives`.
+
+`GET /api/v1/ai/status` reports which providers are configured.
+
+Assist mode only reasons over results ScanR already collected — it never sends
+new traffic to your targets, and finding text is passed to the model as fenced,
+untrusted data (never as instructions).
+
+### AI agent (guided / autonomous)
+
+The scan's **AI** tab can also run an **agent** that actively investigates the
+scan: it drives a bounded, gated tool set, reasons about what it finds, and
+writes a prioritized assessment. Launch it with an optional objective and a mode:
+
+- **Guided** — investigates and pauses for operator approval before any
+  intrusive action; the run surfaces the pending action with Approve / Deny in
+  the AI tab (decision signalled to the running agent, which times out to deny).
+- **Autonomous** — runs hands-off within scope, capability, and budget limits.
+
+Safety is enforced in code, not by the model: every tool call is scope-checked
+(`is_forbidden_target` blocks loopback / link-local / metadata / scanner infra),
+aggressive capabilities each require their own opt-in, the run has a token +
+iteration budget, and every action is streamed to the scan console and persisted.
+
+Tools available to the agent today: read the scan's hosts/findings/evidence,
+`fetch_url` (HTTP GET, non-intrusive), `list_plugins`, `run_plugin` (run a ScanR
+plugin against a discovered host), and `run_port_scan` (nmap a host). Active
+tools are intrusive, so they are approval-gated in guided mode.
+
+**Aggressive capabilities** (admin-only opt-in at launch): enabling *aggressive*
+unlocks intrusive/destructive actions; *allow exploitation* lets the agent run
+destructive plugins via `run_plugin`, and *allow privilege escalation* is a
+further opt-in. Each takes effect only with aggressive enabled, requires an
+admin user, and is recorded on the run. Only use against systems you are
+authorized to actively exploit.
+
+`POST /api/v1/ai/scans/{scan_id}/agent` launches a run;
+`GET /api/v1/ai/scans/{scan_id}/agent/runs` and `GET /api/v1/ai/agent/runs/{id}`
+read them.
+
+The autonomy levels (`off → assist → guided → autonomous → autonomous +
+aggressive`) and the full safety model are documented in
+[`docs/ai-pentest-design.md`](docs/ai-pentest-design.md).
+
+Providers are swappable per request (ChatGPT/OpenAI, DeepSeek, Anthropic), so
+you can run a cheap model for high-volume work and a stronger one for analysis.
+
+---
+
 ## Scheduled Scans
 
 Use **Schedules** to run recurring scans from saved templates. Schedules use cron syntax, for example:
@@ -311,6 +387,12 @@ API docs are available at **http://localhost:8000/docs**.
 | `TRUSTED_PROXIES` | empty | Comma-separated proxy IPs/CIDRs allowed to set `X-Forwarded-For` for rate limiting |
 | `SCAN_TARGET_DENYLIST` | infra defaults | Hostnames/IPs that can never be scanned (merged with built-in loopback/link-local/metadata denylist) |
 | `SCAN_HEARTBEAT_TIMEOUT` | `300` | Seconds before a heartbeat-stale running scan is auto-failed |
+| `AI_PROVIDER` | `anthropic` | Default AI provider: `anthropic`, `openai`, or `deepseek` |
+| `AI_MODEL` | provider default | Override the model id used for AI features |
+| `AI_MAX_TOKENS` | `2048` | Max output tokens per AI request |
+| `ANTHROPIC_API_KEY` | empty | Key for the Anthropic provider (enables AI when set) |
+| `OPENAI_API_KEY` | empty | Key for the OpenAI/ChatGPT provider |
+| `DEEPSEEK_API_KEY` | empty | Key for the DeepSeek provider |
 | `DATABASE_URL` | compose-managed | SQLAlchemy database URL |
 | `REDIS_URL` | compose-managed | Redis URL |
 | `CELERY_BROKER_URL` | compose-managed | Celery broker URL |

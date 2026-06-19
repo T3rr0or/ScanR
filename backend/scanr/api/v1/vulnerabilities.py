@@ -36,12 +36,22 @@ async def list_vulnerabilities(
     current_user: User = Depends(get_current_user),
 ):
     """Vulnerability-centric view — groups findings by plugin_id across all scans."""
+    # Filter conditions applied consistently to BOTH the host-count subquery and
+    # the main query, so the displayed counts always reflect the active filter.
+    filters = [Scan.user_id == current_user.id, Finding.false_positive == False]
+    if severity:
+        filters.append(Finding.severity == severity)
+    if search:
+        like = f"%{search}%"
+        # ilike → case-insensitive (LIKE is case-sensitive on PostgreSQL)
+        filters.append(Finding.plugin_id.ilike(like) | Finding.title.ilike(like))
+
     # Subquery: distinct host count per plugin
     host_subq = (
         select(Finding.plugin_id, func.count(Host.ip.distinct()).label("host_count"))
         .join(Scan, Finding.scan_id == Scan.id)
         .outerjoin(Host, Finding.host_id == Host.id)
-        .where(Scan.user_id == current_user.id, Finding.false_positive == False)
+        .where(*filters)
         .group_by(Finding.plugin_id)
         .subquery()
     )
@@ -61,17 +71,12 @@ async def list_vulnerabilities(
         )
         .join(Scan, Finding.scan_id == Scan.id)
         .join(host_subq, host_subq.c.plugin_id == Finding.plugin_id)
-        .where(Scan.user_id == current_user.id, Finding.false_positive == False)
+        .where(*filters)
         .group_by(Finding.plugin_id, Finding.title, Finding.severity, host_subq.c.host_count)
         .order_by(func.max(Finding.vpr_score).desc().nulls_last(), func.count(Finding.id).desc())
         .limit(limit)
         .offset(offset)
     )
-
-    if severity:
-        q = q.where(Finding.severity == severity)
-    if search:
-        q = q.where((Finding.plugin_id.contains(search)) | (Finding.title.contains(search)))
 
     result = await db.execute(q)
     rows = result.all()

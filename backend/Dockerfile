@@ -43,9 +43,11 @@ WORKDIR /app
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
 # Install Python deps after copying package source. Editable installs need scanr/ present.
+# Include the [ai] extra so the AI provider SDKs ship in the image; AI features
+# stay disabled at runtime until a provider API key is configured.
 COPY pyproject.toml .
 COPY scanr/ ./scanr/
-RUN pip install --no-cache-dir -e .
+RUN pip install --no-cache-dir -e ".[ai]"
 
 # Install Playwright + Chromium (separate layer so code changes don't re-download browser)
 RUN playwright install --with-deps chromium

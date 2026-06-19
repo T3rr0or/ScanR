@@ -22,10 +22,12 @@ import {
 	Copy,
 	Link2,
 	RotateCcw,
+	Sparkles,
 } from "lucide-react";
 import { scansApi } from "@/api/scans";
 import { findingsApi, type Finding } from "@/api/findings";
 import api from "@/api/client";
+import { useAuthStore } from "@/store/auth";
 import ScanConsole from "@/components/ScanConsole";
 import ScreenshotGallery from "@/components/ScreenshotGallery";
 import ScanDelta from "@/pages/ScanDelta";
@@ -54,7 +56,8 @@ type Tab =
 	| "topology"
 	| "screenshots"
 	| "exclusions"
-	| "chains";
+	| "chains"
+	| "ai";
 
 interface ScannedPort {
 	id: string;
@@ -82,7 +85,9 @@ export default function ScanDetail({ scanId, onBack }: Props) {
 	const [tab, setTab] = useState<Tab>("console");
 	const [highlightHostIp, setHighlightHostIp] = useState<string | null>(null);
 	const [showDelta, setShowDelta] = useState(false);
-	const [topoSelectedHost, setTopoSelectedHost] = useState<HostRead | null>(null);
+	const [topoSelectedHost, setTopoSelectedHost] = useState<HostRead | null>(
+		null,
+	);
 	const qc = useQueryClient();
 
 	function goToHost(ip: string) {
@@ -353,6 +358,12 @@ export default function ScanDetail({ scanId, onBack }: Props) {
 					icon={<Camera size={12} />}
 					label="Screenshots"
 				/>
+				<TabBtn
+					active={tab === "ai"}
+					onClick={() => setTab("ai")}
+					icon={<Sparkles size={12} />}
+					label="AI"
+				/>
 				{isPending && (
 					<TabBtn
 						active={tab === "exclusions"}
@@ -450,22 +461,25 @@ export default function ScanDetail({ scanId, onBack }: Props) {
 								onSelectHost={(h) => {
 									// Look up full ScannedHost to get service/version data —
 									// HostNode only carries {number, state}, stripping service info.
-									const full = hosts.find(host => host.id === h.id)
-									if (!full) return
+									const full = hosts.find((host) => host.id === h.id);
+									if (!full) return;
 									setTopoSelectedHost({
 										id: full.id,
 										ip: full.ip,
 										hostname: full.hostname,
 										os_name: full.os_name,
 										status: full.status,
-										ports: (full.ports ?? []).map(p => ({
+										ports: (full.ports ?? []).map((p) => ({
 											number: p.number,
 											protocol: p.protocol,
 											state: p.state,
 											service: p.service?.name,
-											version: [p.service?.product, p.service?.version].filter(Boolean).join(' ') || undefined,
+											version:
+												[p.service?.product, p.service?.version]
+													.filter(Boolean)
+													.join(" ") || undefined,
 										})),
-									})
+									});
 								}}
 							/>
 						)}
@@ -474,16 +488,710 @@ export default function ScanDetail({ scanId, onBack }: Props) {
 				{tab === "screenshots" && <ScreenshotGallery scanId={scanId} />}
 				{tab === "exclusions" && <ExclusionsPanel scanId={scanId} />}
 				{tab === "chains" && <ChainsPanel chains={chains} />}
+				{tab === "ai" && <AiTab scanId={scanId} findings={findings} />}
 
-			{/* Topology host modal */}
-			{topoSelectedHost && (
-				<HostDetail
-					host={topoSelectedHost}
-					scanId={scanId}
-					findings={findings.filter(f => f.host_ip === topoSelectedHost.ip)}
-					onClose={() => setTopoSelectedHost(null)}
+				{/* Topology host modal */}
+				{topoSelectedHost && (
+					<HostDetail
+						host={topoSelectedHost}
+						scanId={scanId}
+						findings={findings.filter((f) => f.host_ip === topoSelectedHost.ip)}
+						onClose={() => setTopoSelectedHost(null)}
+					/>
+				)}
+			</div>
+		</div>
+	);
+}
+
+interface AgentRun {
+	id: string;
+	scan_id: string;
+	status: string;
+	mode: string;
+	objective: string;
+	provider?: string | null;
+	model?: string | null;
+	stop_reason?: string | null;
+	final_text?: string | null;
+	actions: { tool: string; arguments: Record<string, unknown>; result: string }[];
+	token_usage?: { input_tokens: number; output_tokens: number } | null;
+	error?: string | null;
+	pending_approval?: { approval_id: string; tool: string; args: Record<string, unknown>; reason: string } | null;
+	created_at?: string | null;
+}
+
+function AgentPanel({ scanId, enabled }: { scanId: string; enabled: boolean }) {
+	const qc = useQueryClient();
+	const token = useAuthStore((s) => s.token);
+	let isAdmin = false;
+	try {
+		isAdmin = JSON.parse(atob(token!.split(".")[1])).role === "admin";
+	} catch {
+		/* not admin */
+	}
+	const [objective, setObjective] = useState("");
+	const [mode, setMode] = useState<"guided" | "autonomous">("guided");
+	const [aggressive, setAggressive] = useState(false);
+	const [allowExploit, setAllowExploit] = useState(false);
+	const [allowPrivesc, setAllowPrivesc] = useState(false);
+
+	const { data: runs = [] } = useQuery<AgentRun[]>({
+		queryKey: ["ai-agent-runs", scanId],
+		queryFn: () => api.get(`/ai/scans/${scanId}/agent/runs`).then((r) => r.data),
+		// poll while a run is active so status/result update live
+		refetchInterval: (q) =>
+			(q.state.data ?? []).some((r) => ["queued", "running"].includes(r.status))
+				? 4000
+				: false,
+	});
+
+	const launch = useMutation({
+		mutationFn: () =>
+			api
+				.post(`/ai/scans/${scanId}/agent`, {
+					mode,
+					objective: objective.trim(),
+					aggressive: isAdmin && aggressive,
+					allow_exploitation: isAdmin && aggressive && allowExploit,
+					allow_privilege_escalation: isAdmin && aggressive && allowPrivesc,
+				})
+				.then((r) => r.data),
+		onSuccess: () => {
+			setObjective("");
+			qc.invalidateQueries({ queryKey: ["ai-agent-runs", scanId] });
+		},
+	});
+
+	const launchErr = (() => {
+		const e = launch.error as { response?: { data?: { detail?: string } } } | null;
+		return e?.response?.data?.detail ?? null;
+	})();
+
+	const active = runs.some((r) => ["queued", "running"].includes(r.status));
+
+	return (
+		<div className="panel">
+			<div className="panel-head" style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+				<span className="panel-title">AI agent (investigates this scan)</span>
+				<span style={{ fontSize: 11, color: "var(--text-3)" }}>guided asks before intrusive steps · autonomous runs hands-off</span>
+			</div>
+			<div style={{ padding: 14, display: "flex", flexDirection: "column", gap: 10 }}>
+				<textarea
+					className="input"
+					placeholder="Objective (optional) — e.g. 'focus on the web services and find the most exploitable issue'"
+					value={objective}
+					onChange={(e) => setObjective(e.target.value)}
+					rows={2}
+					style={{ resize: "vertical", fontFamily: "inherit" }}
+				/>
+				<div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+					<select
+						className="input"
+						value={mode}
+						onChange={(e) => setMode(e.target.value as "guided" | "autonomous")}
+						style={{ width: "auto" }}
+					>
+						<option value="guided">Guided</option>
+						<option value="autonomous">Autonomous</option>
+					</select>
+					<button
+						className="btn btn-primary btn-sm"
+						disabled={!enabled || launch.isPending || active}
+						onClick={() => launch.mutate()}
+					>
+						{launch.isPending ? "Starting…" : active ? "Run in progress…" : "Run AI agent"}
+					</button>
+					{!enabled && (
+						<span style={{ fontSize: 11.5, color: "var(--text-3)" }}>
+							Configure a provider key in Settings → AI first.
+						</span>
+					)}
+				</div>
+				{isAdmin && (
+					<div style={{ borderTop: "1px solid var(--border)", paddingTop: 8, display: "flex", flexDirection: "column", gap: 4 }}>
+						<label style={{ fontSize: 12, color: "var(--text-1)", display: "flex", alignItems: "center", gap: 6 }}>
+							<input type="checkbox" checked={aggressive} onChange={(e) => setAggressive(e.target.checked)} />
+							Aggressive mode (admin) — allow intrusive/destructive actions
+						</label>
+						{aggressive && (
+							<div style={{ paddingLeft: 22, display: "flex", flexDirection: "column", gap: 4 }}>
+								<label style={{ fontSize: 11.5, color: "var(--text-2)", display: "flex", alignItems: "center", gap: 6 }}>
+									<input type="checkbox" checked={allowExploit} onChange={(e) => setAllowExploit(e.target.checked)} />
+									Allow exploitation (run destructive plugins)
+								</label>
+								<label style={{ fontSize: 11.5, color: "var(--text-2)", display: "flex", alignItems: "center", gap: 6 }}>
+									<input type="checkbox" checked={allowPrivesc} onChange={(e) => setAllowPrivesc(e.target.checked)} />
+									Allow privilege escalation
+								</label>
+								<div style={{ fontSize: 11, color: "var(--sev-high)" }}>
+									⚠ Only against systems you are authorized to actively exploit.
+								</div>
+							</div>
+						)}
+					</div>
+				)}
+				{launchErr && <div style={{ color: "var(--sev-high)", fontSize: 12 }}>{launchErr}</div>}
+
+				{runs.map((run) => (
+					<AgentRunCard key={run.id} run={run} />
+				))}
+			</div>
+		</div>
+	);
+}
+
+function AgentRunCard({ run }: { run: AgentRun }) {
+	const running = ["queued", "running"].includes(run.status);
+	const [open, setOpen] = useState(running);
+	const qc = useQueryClient();
+	const decide = useMutation({
+		mutationFn: (decision: "allow" | "deny") =>
+			api.post(`/ai/agent/runs/${run.id}/approval`, {
+				approval_id: run.pending_approval?.approval_id,
+				decision,
+			}),
+		onSuccess: () => qc.invalidateQueries({ queryKey: ["ai-agent-runs", run.scan_id] }),
+	});
+	return (
+		<div style={{ border: "1px solid var(--border)", borderRadius: 8, padding: "10px 12px" }}>
+			<div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+				<StatusPill status={run.status} />
+				<span style={{ fontSize: 11, color: "var(--text-3)" }}>{run.mode}</span>
+				{run.provider && (
+					<span style={{ fontSize: 11, color: "var(--text-3)" }}>
+						{run.provider}/{run.model}
+					</span>
+				)}
+				{run.token_usage && (
+					<span style={{ fontSize: 11, color: "var(--text-3)" }}>
+						{run.token_usage.input_tokens + run.token_usage.output_tokens} tok
+					</span>
+				)}
+				<span style={{ flex: 1 }} />
+				{run.actions.length > 0 && (
+					<button className="btn btn-ghost btn-sm" onClick={() => setOpen((o) => !o)}>
+						{open ? "Hide" : `${run.actions.length} action(s)`}
+					</button>
+				)}
+			</div>
+			<div style={{ fontSize: 11.5, color: "var(--text-2)", marginTop: 4 }}>{run.objective}</div>
+			{run.pending_approval && (
+				<div
+					style={{
+						marginTop: 8,
+						padding: "8px 10px",
+						borderRadius: 6,
+						background: "var(--bg-2)",
+						border: "1px solid var(--sev-medium)",
+					}}
+				>
+					<div style={{ fontSize: 12, color: "var(--text-1)", fontWeight: 600 }}>
+						Approval required — intrusive action
+					</div>
+					<div style={{ fontSize: 11.5, fontFamily: "var(--font-mono)", color: "var(--text-2)", marginTop: 4 }}>
+						{run.pending_approval.tool}({JSON.stringify(run.pending_approval.args)})
+					</div>
+					<div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+						<button
+							className="btn btn-primary btn-sm"
+							disabled={decide.isPending}
+							onClick={() => decide.mutate("allow")}
+						>
+							Approve
+						</button>
+						<button
+							className="btn btn-ghost btn-sm"
+							disabled={decide.isPending}
+							onClick={() => decide.mutate("deny")}
+						>
+							Deny
+						</button>
+					</div>
+				</div>
+			)}
+			{run.error && <div style={{ color: "var(--sev-high)", fontSize: 12, marginTop: 6 }}>{run.error}</div>}
+			{run.final_text && (
+				<div style={{ whiteSpace: "pre-wrap", fontSize: 13, lineHeight: 1.6, color: "var(--text-1)", marginTop: 8 }}>
+					{run.final_text}
+				</div>
+			)}
+			{open && (
+				<div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 6 }}>
+					{run.actions.map((a, i) => (
+						<div key={i} style={{ fontSize: 11.5, fontFamily: "var(--font-mono)", color: "var(--text-2)" }}>
+							<div style={{ color: "var(--accent)" }}>
+								→ {a.tool}({JSON.stringify(a.arguments)})
+							</div>
+							<div style={{ whiteSpace: "pre-wrap", color: "var(--text-3)" }}>{a.result.slice(0, 1200)}</div>
+						</div>
+					))}
+				</div>
+			)}
+		</div>
+	);
+}
+
+function AiTab({ scanId, findings }: { scanId: string; findings: Finding[] }) {
+	const qc = useQueryClient();
+	const { data: status } = useQuery({
+		queryKey: ["ai-status"],
+		queryFn: () => api.get("/ai/status").then((r) => r.data),
+	});
+
+	// Load saved results on page load
+	const { data: savedResults = [] } = useQuery({
+		queryKey: ["ai-results", scanId],
+		queryFn: () => api.get(`/ai/scans/${scanId}/results`).then((r) => r.data),
+		enabled:
+			["completed", "failed"].includes(status?.enabled ? "completed" : "") ||
+			true,
+	});
+
+	const summaryMut = useMutation({
+		mutationFn: () =>
+			api.post(`/ai/scans/${scanId}/summary`).then((r) => r.data),
+		onSuccess: () => qc.invalidateQueries({ queryKey: ["ai-results", scanId] }),
+	});
+	const reportMut = useMutation({
+		mutationFn: () =>
+			api.post(`/ai/scans/${scanId}/report`).then((r) => r.data),
+		onSuccess: () => qc.invalidateQueries({ queryKey: ["ai-results", scanId] }),
+	});
+	const fpMut = useMutation({
+		mutationFn: () =>
+			api.post(`/ai/scans/${scanId}/false-positives`).then((r) => r.data),
+		onSuccess: () => qc.invalidateQueries({ queryKey: ["ai-results", scanId] }),
+	});
+
+	const enabled = status?.enabled ?? false;
+	const pending =
+		summaryMut.isPending || reportMut.isPending || fpMut.isPending;
+	const errOf = (m: { error: unknown }): string | null => {
+		const e = m.error as {
+			response?: { data?: { detail?: string } };
+			message?: string;
+		} | null;
+		if (!e) return null;
+		return e.response?.data?.detail ?? e.message ?? "Request failed";
+	};
+
+	const findingTitle = (id: string) =>
+		findings.find((f) => f.id === id)?.title ?? id;
+
+	// Merge fresh + saved results, preferring fresh
+	const hasFreshSummary = !!summaryMut.data;
+	const hasFreshReport = !!reportMut.data;
+	const hasFreshFp = !!fpMut.data;
+
+	return (
+		<div
+			className="page-pad"
+			style={{ display: "flex", flexDirection: "column", gap: 14 }}
+		>
+			{!enabled && (
+				<div
+					style={{
+						padding: "12px 14px",
+						borderRadius: 8,
+						background: "var(--bg-2)",
+						border: "1px solid var(--border)",
+						fontSize: 12.5,
+						color: "var(--text-2)",
+					}}
+				>
+					No AI provider is configured. Add an API key in{" "}
+					<strong>Settings → AI</strong> to enable summaries, report narrative,
+					and false-positive testing.
+				</div>
+			)}
+
+			<AgentPanel scanId={scanId} enabled={enabled} />
+
+			<div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-2)", marginTop: 4 }}>
+				Assist (read-only analysis)
+			</div>
+			<div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+				<button
+					className="btn btn-primary btn-sm"
+					disabled={!enabled || pending}
+					onClick={() => summaryMut.mutate()}
+				>
+					{summaryMut.isPending ? "Summarizing…" : "Summarize findings"}
+				</button>
+				<button
+					className="btn btn-ghost btn-sm"
+					disabled={!enabled || pending}
+					onClick={() => reportMut.mutate()}
+				>
+					{reportMut.isPending ? "Generating…" : "Generate report narrative"}
+				</button>
+				<button
+					className="btn btn-ghost btn-sm"
+					disabled={!enabled || pending}
+					onClick={() => fpMut.mutate()}
+				>
+					{fpMut.isPending ? "Testing…" : "Test false positives"}
+				</button>
+			</div>
+
+			{[summaryMut, reportMut, fpMut].map((m, i) =>
+				errOf(m) ? (
+					<div key={i} style={{ color: "var(--sev-high)", fontSize: 12 }}>
+						{errOf(m)}
+					</div>
+				) : null,
+			)}
+
+			{/* Fresh + saved summaries */}
+			{summaryMut.data && (
+				<AiResultPanel
+					title="Summary"
+					meta={summaryMut.data}
+					text={summaryMut.data.summary}
 				/>
 			)}
+			{!hasFreshSummary &&
+				savedResults
+					.filter((r: { type: string }) => r.type === "summary")
+					.slice(0, 1)
+					.map(
+						(r: {
+							id: string;
+							content: { text: string };
+							provider: string;
+							model: string;
+							token_usage: {
+								input_tokens: number;
+								output_tokens: number;
+							} | null;
+							created_at: string;
+						}) => (
+							<AiResultPanel
+								key={r.id}
+								title={`Summary (saved ${new Date(r.created_at).toLocaleString()})`}
+								meta={{
+									provider: r.provider,
+									model: r.model,
+									usage: r.token_usage ?? undefined,
+								}}
+								text={r.content.text}
+							/>
+						),
+					)}
+
+			{/* Fresh + saved reports */}
+			{reportMut.data && (
+				<AiResultPanel
+					title="Report narrative"
+					meta={reportMut.data}
+					text={reportMut.data.report}
+				/>
+			)}
+			{!hasFreshReport &&
+				savedResults
+					.filter((r: { type: string }) => r.type === "report")
+					.slice(0, 1)
+					.map(
+						(r: {
+							id: string;
+							content: { text: string };
+							provider: string;
+							model: string;
+							token_usage: {
+								input_tokens: number;
+								output_tokens: number;
+							} | null;
+							created_at: string;
+						}) => (
+							<AiResultPanel
+								key={r.id}
+								title={`Report (saved ${new Date(r.created_at).toLocaleString()})`}
+								meta={{
+									provider: r.provider,
+									model: r.model,
+									usage: r.token_usage ?? undefined,
+								}}
+								text={r.content.text}
+							/>
+						),
+					)}
+
+			{/* Fresh + saved FP results */}
+			{fpMut.data && (
+				<FalsePositivePanel data={fpMut.data} findingTitle={findingTitle} />
+			)}
+			{!hasFreshFp &&
+				savedResults
+					.filter((r: { type: string }) => r.type === "false_positives")
+					.slice(0, 1)
+					.map(
+						(r: {
+							id: string;
+							content: {
+								items: {
+									id: string;
+									confidence: string;
+									reason: string;
+									verification?: string;
+								}[];
+								methodology?: string;
+							};
+							provider: string;
+							model: string;
+							token_usage: {
+								input_tokens: number;
+								output_tokens: number;
+							} | null;
+							created_at: string;
+						}) => (
+							<FalsePositivePanel
+								key={r.id}
+								data={{
+									items: r.content.items,
+									methodology: r.content.methodology ?? "",
+									assessed_count: r.content.items?.length ?? 0,
+									flagged_count: r.content.items?.length ?? 0,
+									provider: r.provider,
+									model: r.model,
+									usage: r.token_usage,
+								}}
+								findingTitle={findingTitle}
+								savedDate={new Date(r.created_at).toLocaleString()}
+							/>
+						),
+					)}
+		</div>
+	);
+}
+
+function FalsePositivePanel({
+	data,
+	findingTitle,
+	savedDate,
+}: {
+	data: {
+		items: {
+			id: string;
+			confidence: string;
+			reason: string;
+			verification?: string;
+		}[];
+		methodology?: string;
+		assessed_count: number;
+		flagged_count: number;
+		truncated?: boolean;
+		provider: string;
+		model: string;
+		usage?: { input_tokens: number; output_tokens: number } | null;
+	};
+	findingTitle: (id: string) => string;
+	savedDate?: string;
+}) {
+	return (
+		<div className="panel">
+			<div
+				className="panel-head"
+				style={{
+					display: "flex",
+					justifyContent: "space-between",
+					alignItems: "center",
+				}}
+			>
+				<span className="panel-title">
+					{savedDate
+						? `False Positive Test (saved ${savedDate})`
+						: "Likely false positives"}{" "}
+					— {data.flagged_count} of {data.assessed_count} assessed
+				</span>
+				<span style={{ fontSize: 11, color: "var(--text-3)" }}>
+					{data.provider} · {data.model}
+					{data.usage
+						? ` · ${data.usage.input_tokens + data.usage.output_tokens} tok`
+						: ""}
+				</span>
+			</div>
+			<div style={{ padding: 14 }}>
+				{data.truncated && (
+					<div style={{ fontSize: 11.5, color: "var(--sev-high)", marginBottom: 8 }}>
+						⚠ The model's response was truncated (too many findings) — results may be
+						incomplete. Re-run on a smaller scan or filter first.
+					</div>
+				)}
+				{/* Methodology */}
+				{data.methodology && (
+					<div
+						style={{
+							marginBottom: 14,
+							padding: "10px 12px",
+							background: "var(--bg-1)",
+							borderRadius: 6,
+							border: "1px solid var(--border)",
+							borderLeft: "3px solid var(--accent)",
+						}}
+					>
+						<div
+							style={{
+								fontSize: 10,
+								fontWeight: 600,
+								color: "var(--text-3)",
+								marginBottom: 6,
+								textTransform: "uppercase",
+								letterSpacing: "0.05em",
+							}}
+						>
+							Assessment Methodology
+						</div>
+						<div
+							style={{ fontSize: 12, color: "var(--text-1)", lineHeight: 1.55 }}
+						>
+							{data.methodology}
+						</div>
+					</div>
+				)}
+
+				{data.items.length === 0 ? (
+					<div style={{ fontSize: 12.5, color: "var(--text-2)" }}>
+						No findings were flagged as likely false positives.
+					</div>
+				) : (
+					<div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+						{data.items.map((it) => (
+							<div
+								key={it.id}
+								style={{
+									padding: "10px 12px",
+									background: "var(--bg-1)",
+									borderRadius: 6,
+									border: "1px solid var(--border)",
+								}}
+							>
+								<div
+									style={{
+										display: "flex",
+										alignItems: "center",
+										gap: 8,
+										marginBottom: 6,
+									}}
+								>
+									<span
+										style={{
+											fontWeight: 600,
+											fontSize: 12.5,
+											color: "var(--text-0)",
+										}}
+									>
+										{findingTitle(it.id)}
+									</span>
+									<span
+										className={`pill ${
+											it.confidence === "high"
+												? "pill-cancelled"
+												: it.confidence === "medium"
+													? "pill-pending"
+													: "pill"
+										}`}
+									>
+										{it.confidence}
+									</span>
+								</div>
+								<div
+									style={{
+										fontSize: 12,
+										color: "var(--text-2)",
+										marginBottom: it.verification ? 8 : 0,
+									}}
+								>
+									{it.reason}
+								</div>
+								{it.verification && (
+									<div
+										style={{
+											padding: "8px 10px",
+											background: "var(--bg-0)",
+											borderRadius: 4,
+											border: "1px solid var(--border)",
+										}}
+									>
+										<div
+											style={{
+												fontSize: 10,
+												fontWeight: 600,
+												color: "var(--text-3)",
+												marginBottom: 4,
+												textTransform: "uppercase",
+												letterSpacing: "0.05em",
+											}}
+										>
+											Verification Steps
+										</div>
+										<pre
+											style={{
+												margin: 0,
+												fontSize: 11,
+												color: "var(--text-1)",
+												whiteSpace: "pre-wrap",
+												fontFamily: "var(--font-mono)",
+												lineHeight: 1.5,
+											}}
+										>
+											{it.verification}
+										</pre>
+									</div>
+								)}
+							</div>
+						))}
+					</div>
+				)}
+				<div style={{ fontSize: 11, color: "var(--text-3)", marginTop: 10 }}>
+					Advisory only — review before marking anything as a false positive.
+				</div>
+			</div>
+		</div>
+	);
+}
+
+function AiResultPanel({
+	title,
+	text,
+	meta,
+}: {
+	title: string;
+	text: string;
+	meta: {
+		provider: string;
+		model: string;
+		usage?: { input_tokens: number; output_tokens: number };
+	};
+}) {
+	return (
+		<div className="panel">
+			<div
+				className="panel-head"
+				style={{
+					display: "flex",
+					justifyContent: "space-between",
+					alignItems: "center",
+				}}
+			>
+				<span className="panel-title">{title}</span>
+				<span style={{ fontSize: 11, color: "var(--text-3)" }}>
+					{meta.provider} · {meta.model}
+					{meta.usage
+						? ` · ${meta.usage.input_tokens + meta.usage.output_tokens} tok`
+						: ""}
+				</span>
+			</div>
+			<div
+				style={{
+					padding: 14,
+					whiteSpace: "pre-wrap",
+					fontSize: 13,
+					lineHeight: 1.6,
+					color: "var(--text-1)",
+				}}
+			>
+				{text}
 			</div>
 		</div>
 	);
@@ -1498,7 +2206,7 @@ function HostsTab({
 				<HostDetail
 					host={selectedHost}
 					scanId={scanId}
-					findings={findings.filter(f => f.host_ip === selectedHost.ip)}
+					findings={findings.filter((f) => f.host_ip === selectedHost.ip)}
 					onClose={() => setSelectedHost(null)}
 				/>
 			)}
