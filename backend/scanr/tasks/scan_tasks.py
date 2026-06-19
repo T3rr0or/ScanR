@@ -207,14 +207,9 @@ async def _run_scan_async(task, scan_id: str) -> dict:
             scan.status = ScanStatus.running
             await db.commit()
 
-            # If the scan opted into AI at creation, launch the agent now so it
-            # investigates concurrently while the scan runs. Best-effort: never
-            # let an AI launch failure abort the scan.
-            try:
-                from scanr.ai.agent.autostart import launch_scan_agent
-                await launch_scan_agent(db, scan)
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("AI agent auto-launch failed for scan %s: %s", scan_id, exc)
+            # If the scan opted into AI, the engine drives the agent at the
+            # enumeration phase boundary (see ScanEngine._run_ai_phase) so it
+            # steers with real host/finding data rather than from a cold start.
 
             user_id = scan.user_id
             heartbeat = asyncio.create_task(_heartbeat_loop(scan_id))

@@ -26,11 +26,12 @@ _DEFAULT_LIVE_OBJECTIVE = (
 )
 
 
-async def launch_scan_agent(db: AsyncSession, scan) -> str | None:
-    """Create and enqueue an AI agent run for ``scan`` if it opted in.
+async def build_scan_agent_run(db: AsyncSession, scan, *, objective: str | None = None):
+    """Create and persist the AiAgentRun for a scan that opted into AI.
 
-    Returns the new run id, or ``None`` if AI auto-run is disabled or not
-    runnable (e.g. no API key configured for the provider).
+    Returns the committed run, or ``None`` if AI is disabled or not runnable
+    (e.g. no API key configured). Does NOT start execution — callers decide
+    whether to enqueue it (concurrent) or drive it inline (engine steering).
     """
     if not getattr(scan, "ai_agent_enabled", False):
         return None
@@ -42,26 +43,31 @@ async def launch_scan_agent(db: AsyncSession, scan) -> str | None:
     provider_name = scan.ai_agent_provider or await store.get_default_provider(db)
     if not await store.resolve_api_key(db, provider_name):
         logger.warning(
-            "Scan %s requested AI auto-run but no API key is configured for provider %r; skipping",
+            "Scan %s requested AI but no API key is configured for provider %r; skipping",
             scan.id, provider_name,
         )
         return None
-
-    objective = (scan.ai_agent_objective or "").strip() or _DEFAULT_LIVE_OBJECTIVE
-    capabilities = scan.ai_agent_capabilities  # already a JSON string (or None)
 
     run = AiAgentRun(
         id=new_uuid(),
         scan_id=scan.id,
         status="queued",
         mode=scan.ai_agent_mode or "guided",
-        objective=objective,
+        objective=(objective or scan.ai_agent_objective or "").strip() or _DEFAULT_LIVE_OBJECTIVE,
         provider=provider_name,
         model=scan.ai_agent_model,
-        capabilities=capabilities,
+        capabilities=scan.ai_agent_capabilities,  # already a JSON string (or None)
     )
     db.add(run)
     await db.commit()
+    return run
+
+
+async def launch_scan_agent(db: AsyncSession, scan) -> str | None:
+    """Create and enqueue a concurrent AI agent run for ``scan`` if it opted in."""
+    run = await build_scan_agent_run(db, scan)
+    if run is None:
+        return None
 
     from scanr.tasks.agent_tasks import run_ai_agent_task
 

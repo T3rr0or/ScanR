@@ -296,7 +296,7 @@ untrusted data (never as instructions).
 
 ### AI agent (guided / autonomous)
 
-The scan's **AI** tab can also run an **agent** that actively investigates the
+The scan's **AI** tab can run an **agent** that actively investigates the
 scan: it drives a bounded, gated tool set, reasons about what it finds, and
 writes a prioritized assessment. Launch it with an optional objective and a mode:
 
@@ -304,6 +304,13 @@ writes a prioritized assessment. Launch it with an optional objective and a mode
   intrusive action; the run surfaces the pending action with Approve / Deny in
   the AI tab (decision signalled to the running agent, which times out to deny).
 - **Autonomous** — runs hands-off within scope, capability, and budget limits.
+
+**Use AI during the scan.** You can also enable the agent when *creating* a
+scan ("Use AI during this scan", with mode/objective and admin-gated aggressive
+opt-ins). The scan engine then runs the agent at the enumeration phase boundary
+— once hosts, services, and findings exist — so the AI performs high-value
+follow-up checks (targeted plugins / port scans) that become part of the scan,
+rather than requiring a manual launch afterward. The same safety gating applies.
 
 Safety is enforced in code, not by the model: every tool call is scope-checked
 (`is_forbidden_target` blocks loopback / link-local / metadata / scanner infra),

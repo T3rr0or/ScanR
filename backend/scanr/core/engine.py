@@ -553,6 +553,10 @@ class ScanEngine:
                 logger.error("Credential chain failed: %s", exc, exc_info=True)
             await scan_log.phase_done("chain", "Credential chain complete")
 
+        # AI steering phase: if the scan opted into AI, let the agent act on the
+        # discovered hosts/services/findings before the scan finishes.
+        await self._run_ai_phase(scan, scan_log)
+
         await scan_log.phase_done(
             "engine",
             f"Scan complete — {context.hosts_scanned} hosts scanned, "
@@ -578,6 +582,41 @@ class ScanEngine:
             }, scan.user_id, self.db)
         except Exception as exc:
             logger.error("scan.completed webhook dispatch failed: %s", exc)
+
+    async def _run_ai_phase(self, scan, scan_log: ScanLogger) -> None:
+        """Let the opted-in AI agent steer the scan once enumeration is done.
+
+        Runs the agent inline (its own DB session) with the discovered hosts,
+        services, and findings already in place, so it can perform high-value
+        follow-up checks (targeted plugins / port scans) that become part of the
+        scan. Best-effort: a failure here never fails the scan.
+        """
+        if not getattr(scan, "ai_agent_enabled", False):
+            return
+        try:
+            from scanr.ai.agent.autostart import build_scan_agent_run
+
+            default_obj = (
+                "Scanning and enumeration just finished for this scan. Review the "
+                "discovered hosts, services, and findings, then perform the highest-"
+                "value follow-up checks now — run targeted plugins or port scans "
+                "against promising hosts, corroborate the most serious issues, and "
+                "record what you find. Finish with a prioritized assessment and "
+                "concrete next steps."
+            )
+            objective = (scan.ai_agent_objective or "").strip() or default_obj
+            run = await build_scan_agent_run(self.db, scan, objective=objective)
+            if run is None:
+                return
+
+            await scan_log.phase_start("ai_agent", f"AI agent steering the scan ({run.mode})")
+            from scanr.tasks.agent_tasks import _run_agent_async
+
+            await _run_agent_async(run.id)
+            await scan_log.phase_done("ai_agent", "AI agent phase complete")
+        except Exception as exc:  # noqa: BLE001 - never let AI break the scan
+            logger.error("AI steering phase failed: %s", exc, exc_info=True)
+            await scan_log.warn(f"AI agent phase failed: {exc}", phase="ai_agent")
 
     async def _scan_host(
         self,
