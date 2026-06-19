@@ -278,10 +278,17 @@ def command_tools() -> list[Tool]:
             ToolDef(
                 name="run_command",
                 description=(
-                    "Run a shell command in an isolated sandbox container that has a pentest "
-                    "toolkit (nmap, nuclei, curl, python/pip, etc.) and can install more tools. "
-                    "Network egress is restricted to the scan's authorized targets plus package "
-                    "mirrors. Use for checks no built-in tool covers."
+                    "Run a shell command in a PERSISTENT, isolated sandbox container (Kali). "
+                    "State persists across calls in this run: installs, downloaded files, the "
+                    "working directory (/work), and footholds all survive between commands, so "
+                    "build on previous steps instead of repeating setup. A broad toolkit is "
+                    "ALREADY installed — nmap, masscan, nikto, sqlmap, gobuster, ffuf, "
+                    "feroxbuster, wfuzz, whatweb, wpscan, hydra, john, smbclient, curl, git, "
+                    "python3/pip — and SecLists wordlists are at /usr/share/seclists. Do NOT "
+                    "waste steps reinstalling these; just run them. Only install (pip install "
+                    "--user / git clone / go install) for tools not already present. Network "
+                    "egress is restricted to the scan's authorized targets plus package mirrors. "
+                    "Runs non-root, so raw-socket scans fall back to TCP connect."
                 ),
                 parameters={
                     "type": "object",

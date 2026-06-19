@@ -1,20 +1,39 @@
 # ScanR AI sandbox toolkit image.
-# The disposable container the agent gets a shell into. Contains a pentest
-# toolkit and can install more at runtime (egress is restricted to the scan's
-# targets + allowlisted package mirrors by the runner/proxy). Holds NO ScanR
-# code or secrets. Runs as a non-root user.
-FROM debian:stable-slim
+#
+# The disposable container the agent gets a shell into. It is intentionally a
+# FAT image: a broad pentest toolkit + wordlists are baked in at build time so
+# the agent almost never has to install anything at runtime. That keeps agent
+# runs cheap (no tokens/time wasted re-installing tools every session) and works
+# even under the locked-down runtime (non-root, read-only rootfs).
+#
+# Holds NO ScanR code or secrets. Runs as a non-root user. The agent CAN still
+# install extra things at runtime via the allowlisted proxy (pip --user, git
+# clone, go install into its writable HOME/work), but shouldn't need to often.
+FROM kalilinux/kali-rolling
 
+ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates curl wget dnsutils iputils-ping netcat-openbsd \
-    nmap python3 python3-pip python3-venv git jq openssl \
+    # core net / shell utilities
+    ca-certificates curl wget dnsutils whois iputils-ping netcat-traditional \
+    git jq openssl vim-tiny less \
+    # runtimes for ad-hoc scripts / installs
+    python3 python3-pip python3-venv golang \
+    # scanning / enumeration
+    nmap masscan whatweb \
+    # web / content discovery
+    nikto sqlmap gobuster ffuf feroxbuster dirb wfuzz \
+    # cms / service specific
+    wpscan smbclient \
+    # auth / cracking
+    hydra john \
+    # wordlists (so the agent doesn't download them every run)
+    seclists \
     && rm -rf /var/lib/apt/lists/*
 
-# Best-effort: a couple of common web tools. Failures here don't break the build;
-# the agent can install what it needs at runtime via the allowlisted proxy.
+# A couple of common Python libs for quick scripting.
 RUN pip3 install --no-cache-dir --break-system-packages httpx requests || true
 
-# Non-root user the runner executes commands as (matches --user 1000:1000).
+# Non-root user the runner execs commands as (matches --user 1000:1000).
 RUN useradd -m -u 1000 -s /bin/bash sbx
 USER sbx
 WORKDIR /work

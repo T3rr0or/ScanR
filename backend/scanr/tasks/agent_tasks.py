@@ -117,6 +117,15 @@ async def _run_agent_async(run_id: str) -> dict:
                 run.error = str(exc)
                 await slog.error(f"AI agent error: {exc}", phase="ai_agent")
             finally:
+                # Tear down the agent's persistent sandbox session (if any).
+                try:
+                    from scanr.sandbox.client import SandboxClient
+
+                    sbx = SandboxClient.from_settings()
+                    if sbx is not None:
+                        await sbx.close(run_id=run.id)
+                except Exception:  # noqa: BLE001 - teardown is best-effort
+                    pass
                 await db.commit()
                 await slog.close()
             return {"run_id": run_id, "status": run.status}

@@ -29,39 +29,63 @@ command; the runner returns output. A runner compromise cannot read ScanR
 secrets, and the secret-holding worker cannot touch the socket.
 
 ```
-worker (agent loop, secrets)  --HTTP /run-->  sandbox-runner (Docker socket, no secrets)
-                                                   |
-                                                   v  spawns, captures, destroys
-                                          ephemeral sandbox container
+worker (agent loop, secrets) --HTTP /exec--> sandbox-runner (Docker socket, no secrets)
+                             --HTTP /session/stop-->  |
+                                                   v  ensures (per run), exec, reaps
+                                          persistent session container (per run)
                                           (pentest toolkit, no secrets,
                                            egress: targets + mirrors only)
 ```
 
+**Persistent session per run.** Rather than a throwaway container per command,
+the runner keeps **one container alive per agent run** and `docker exec`s each
+command into it. State (installed tools, downloaded files, the `/work` dir,
+footholds) therefore survives between commands — the agent operates statefully
+like a real pentester instead of starting cold every step. The container is
+reaped when the run ends (worker calls `/session/stop`) and, as a backstop, by a
+max-lifetime reaper in the runner so nothing leaks if a run crashes.
+
+**Fat image to keep runs cheap.** The toolkit image is intentionally large: a
+broad set of tools + wordlists are baked in at build time so the agent almost
+never spends tokens/time installing things at runtime. The agent prompt
+advertises the pre-installed toolkit so the model uses it directly.
+
 ## 2. Components
 
-1. **Sandbox image** (`backend/sandbox/Dockerfile.sandbox`) — a pentest toolkit:
-   nmap, nuclei, curl, wget, dnsutils, netcat, python3+pip, etc. Runs as a
-   non-root user. No ScanR code or secrets.
+1. **Sandbox image** (`backend/sandbox/Dockerfile.sandbox`) — a **fat** Kali-based
+   pentest toolkit: nmap, masscan, nikto, sqlmap, gobuster, ffuf, feroxbuster,
+   wfuzz, whatweb, wpscan, hydra, john, smbclient, curl, git, python3+pip, plus
+   SecLists wordlists. Baked in at build time so the agent rarely installs at
+   runtime. Runs as a non-root user. No ScanR code or secrets.
 2. **Sandbox-runner service** (`backend/scanr/sandbox/runner_app.py`) — a tiny
-   FastAPI app, the **only** holder of the Docker socket. `POST /run` →
-   spawn → capture → destroy. Authenticated with a shared `SANDBOX_TOKEN`;
-   only reachable on the internal compose network. No `SECRET_KEY`/`VAULT_KEY`/
-   DB env.
+   FastAPI app, the **only** holder of the Docker socket. `POST /exec` ensures a
+   per-run session container exists, runs the command via `docker exec`, and
+   returns output; `POST /session/stop` reaps it. Authenticated with a shared
+   `SANDBOX_TOKEN`; only reachable on the internal compose network. No
+   `SECRET_KEY`/`VAULT_KEY`/DB env.
 3. **SandboxClient** (`backend/scanr/sandbox/client.py`) — worker-side HTTP
-   client to the runner. **Fail-closed**: if no runner is configured or it's
-   unreachable, command execution is denied (never silently "succeeds").
+   client to the runner (`run` + `close`). **Fail-closed**: if no runner is
+   configured or it's unreachable, command execution is denied (never silently
+   "succeeds").
 4. **Agent integration** — `AgentContext.run_command` + a gated `run_command`
    tool. New capability `allow_command_exec` (admin + aggressive + approval).
+   The agent task reaps the session in a `finally` when the run ends.
 
-## 3. Per-run container hardening
+## 3. Session container hardening
 
-Each `POST /run` launches a container with:
-- `--rm`, `--network <per-run-net>`, no bind mounts, no ScanR env.
-- `--user` non-root, `--read-only` root fs + a small writable `/tmp` & workdir,
+The per-run session container is created (`docker run -d`) with:
+- `--network <sandbox-net>`, no bind mounts, no ScanR env; a keep-alive
+  entrypoint (`sleep infinity`) so the runner can `docker exec` repeatedly.
+- `--user` non-root, `--read-only` root fs + writable **tmpfs** for `/tmp`,
+  `/work`, and `HOME` (so non-root `pip install --user` / `git clone` / language
+  installers work despite the read-only rootfs),
   `--cap-drop ALL` (the sandbox gets **no** `NET_ADMIN`, so it cannot alter its
   own firewall), `--pids-limit`, `--memory`, `--cpus`, `--security-opt
   no-new-privileges`.
-- A wall-clock timeout; killed + removed on timeout.
+- A per-command wall-clock timeout enforced container-side (`timeout`) plus an
+  asyncio backstop; a max-lifetime reaper destroys any session that outlives the
+  cap. Because the rootfs is read-only and the user is non-root, system `apt`
+  installs are unavailable by design — the fat image pre-bakes the toolkit.
 
 ## 4. Egress enforcement (targets + mirrors)
 

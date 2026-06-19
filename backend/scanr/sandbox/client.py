@@ -55,7 +55,7 @@ class SandboxClient:
         headers = {"X-Sandbox-Token": self._token} if self._token else {}
         try:
             async with httpx.AsyncClient(timeout=self._timeout + 15) as client:
-                resp = await client.post(f"{self._base_url}/run", json=payload, headers=headers)
+                resp = await client.post(f"{self._base_url}/exec", json=payload, headers=headers)
         except Exception as exc:  # noqa: BLE001 - any failure is fail-closed
             raise SandboxUnavailable(str(exc)) from exc
         if resp.status_code == 401:
@@ -70,3 +70,24 @@ class SandboxClient:
             truncated=bool(data.get("truncated", False)),
             timed_out=bool(data.get("timed_out", False)),
         )
+
+    async def close(self, *, run_id: str) -> None:
+        """Tear down the persistent session container for ``run_id``.
+
+        Best-effort: failures are swallowed (the runner reaps stale sessions on a
+        max-lifetime timer anyway, so a missed teardown can't leak indefinitely).
+        """
+        if not run_id:
+            return
+        import httpx
+
+        headers = {"X-Sandbox-Token": self._token} if self._token else {}
+        try:
+            async with httpx.AsyncClient(timeout=30) as client:
+                await client.post(
+                    f"{self._base_url}/session/stop",
+                    json={"run_id": run_id},
+                    headers=headers,
+                )
+        except Exception:  # noqa: BLE001 - teardown is best-effort
+            pass

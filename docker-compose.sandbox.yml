@@ -8,8 +8,10 @@
 #
 # Security notes (see docs/ai-sandbox-design.md):
 # - Only the sandbox-runner gets the Docker socket; it holds NO ScanR secrets.
-# - Spawned sandbox containers are ephemeral, non-root, read-only, cap-drop ALL,
-#   resource/time-limited, and have no ScanR env.
+# - One persistent container per agent run (state survives between commands);
+#   reaped at run end and by a max-lifetime backstop. Non-root, read-only rootfs
+#   (writable tmpfs for /tmp,/work,HOME), cap-drop ALL, resource/time-limited,
+#   no ScanR env.
 # - The proxy allowlists package mirrors for installs. STRICT per-target L3
 #   egress (so raw scans can only reach the scan's targets) requires a host
 #   firewall on the `scanr_sandbox` network and MUST be validated on your host.
@@ -41,6 +43,7 @@ services:
       SANDBOX_IMAGE: ${SANDBOX_IMAGE:-scanr-sandbox:latest}
       SANDBOX_NETWORK: scanr_sandbox
       SANDBOX_PROXY_URL: ${SANDBOX_PROXY_URL:-http://sandbox-proxy:8888}
+      SANDBOX_MAX_LIFETIME: ${SANDBOX_MAX_LIFETIME:-3600}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     networks:
