@@ -5,6 +5,7 @@ gated dispatch, is logged for audit, and counts against the budget. The loop
 stops on: the model finishing (no tool calls), the budget/iteration ceiling, or
 cancellation by the caller.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -41,13 +42,20 @@ async def run_agent(
     scan_summary: str = "",
     max_tokens_per_call: int = 4096,
     on_action: "Callable[[AgentAction], Awaitable[None]] | None" = None,
-) -> AgentRun:
-    """Drive the agent loop. ``on_action`` (if given) is awaited after each tool
-    action so callers can persist the transcript live (e.g. for the UI)."""
+    messages: list[Msg] | None = None,
+    usage: Usage | None = None,
+    iterations: int = 0,
+) -> tuple[AgentRun, list[Msg]]:
+    """Drive the agent loop. Returns the run result AND the complete message
+    history (for serialization as conversation). Pass ``messages``, ``usage``,
+    and ``iterations`` to resume an existing conversation."""
     system = build_system_prompt(ctx.policy, scan_summary)
-    messages: list[Msg] = [Msg(role="user", content=objective)]
+    if messages:
+        messages.append(Msg(role="user", content=objective))
+    else:
+        messages = [Msg(role="user", content=objective)]
     tool_defs = registry.definitions()
-    run = AgentRun()
+    run = AgentRun(usage=usage or Usage(), iterations=iterations)
 
     while True:
         done, why = ctx.budget.exhausted()
@@ -70,9 +78,7 @@ async def run_agent(
 
         # Record the assistant turn (text + any tool calls) so the model sees
         # its own prior actions on the next iteration.
-        messages.append(
-            Msg(role="assistant", content=completion.text, tool_calls=completion.tool_calls)
-        )
+        messages.append(Msg(role="assistant", content=completion.text, tool_calls=completion.tool_calls))
         if completion.text:
             await ctx.log(completion.text)
 
@@ -90,7 +96,7 @@ async def run_agent(
                 await on_action(action)
             messages.append(Msg(role="tool", content=result, tool_call_id=call.id, name=call.name))
 
-    return run
+    return run, messages
 
 
 def _short_args(args: dict) -> str:

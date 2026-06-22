@@ -415,6 +415,7 @@ async def false_positives(
 
 # ── guided / autonomous agent ───────────────────────────────────────────────
 
+
 class AgentRunRequest(BaseModel):
     mode: str = Field(default="guided", pattern="^(guided|autonomous)$")
     objective: str = Field(default="", max_length=2000)
@@ -428,16 +429,12 @@ class AgentRunRequest(BaseModel):
     allow_command_exec: bool = False
 
     def aggressive_requested(self) -> bool:
-        return (
-            self.aggressive
-            or self.allow_privilege_escalation
-            or self.allow_exploitation
-            or self.allow_command_exec
-        )
+        return self.aggressive or self.allow_privilege_escalation or self.allow_exploitation or self.allow_command_exec
 
 
 def _agent_run_dict(run: AiAgentRun) -> dict:
     import json as _json
+
     return {
         "id": run.id,
         "scan_id": run.scan_id,
@@ -454,6 +451,7 @@ def _agent_run_dict(run: AiAgentRun) -> dict:
         "token_usage": _json.loads(run.token_usage) if run.token_usage else None,
         "error": run.error,
         "pending_approval": _json.loads(run.pending_approval) if run.pending_approval else None,
+        "conversation": _json.loads(run.conversation) if run.conversation else [],
         "created_at": run.created_at.isoformat() if run.created_at else None,
     }
 
@@ -496,6 +494,7 @@ async def launch_agent(
     )
     # If any aggressive sub-capability is requested, aggressive is implied on.
     import json as _json
+
     caps = {
         "aggressive": body.aggressive_requested(),
         "allow_privilege_escalation": body.allow_privilege_escalation,
@@ -517,6 +516,7 @@ async def launch_agent(
     await db.commit()
 
     from scanr.tasks.agent_tasks import run_ai_agent_task
+
     run_ai_agent_task.delay(run.id)
     return _agent_run_dict(run)
 
@@ -530,9 +530,13 @@ async def list_agent_runs(
     """List AI agent runs for a scan, newest first."""
     await _own_scan(db, scan_id, current_user.id)
     rows = (
-        (await db.execute(
-            select(AiAgentRun).where(AiAgentRun.scan_id == scan_id).order_by(AiAgentRun.created_at.desc())
-        )).scalars().all()
+        (
+            await db.execute(
+                select(AiAgentRun).where(AiAgentRun.scan_id == scan_id).order_by(AiAgentRun.created_at.desc())
+            )
+        )
+        .scalars()
+        .all()
     )
     return [_agent_run_dict(r) for r in rows]
 
@@ -556,6 +560,47 @@ class ApprovalBody(BaseModel):
     decision: str = Field(pattern="^(allow|deny)$")
 
 
+class ChatBody(BaseModel):
+    message: str = Field(..., min_length=1, max_length=4000)
+
+
+@router.post("/agent/runs/{run_id}/chat")
+async def agent_chat(
+    run_id: str,
+    body: ChatBody,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_scope("scans:write")),
+):
+    """Send a follow-up message to a completed agent run and resume it."""
+    run = await db.get(AiAgentRun, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Agent run not found")
+    await _own_scan(db, run.scan_id, current_user.id)
+
+    if run.status == "running":
+        raise HTTPException(
+            status_code=409, detail="Agent is already running — wait for it to finish or approve pending actions."
+        )
+    if run.status == "queued":
+        raise HTTPException(status_code=409, detail="Agent is queued — wait for it to start.")
+    if run.status in ("failed", "cancelled"):
+        raise HTTPException(status_code=400, detail=f"Cannot chat with a {run.status} run. Start a new one.")
+
+    # Append user message to conversation.
+    import json as _json
+
+    conv = _json.loads(run.conversation) if run.conversation else []
+    conv.append({"role": "user", "content": body.message})
+    run.conversation = _json.dumps(conv)
+    run.status = "queued"
+    await db.commit()
+
+    from scanr.tasks.agent_tasks import run_ai_agent_task
+
+    run_ai_agent_task.delay(run.id, resume=True)
+    return _agent_run_dict(run)
+
+
 @router.post("/agent/runs/{run_id}/approval")
 async def decide_agent_approval(
     run_id: str,
@@ -574,12 +619,14 @@ async def decide_agent_approval(
     await _own_scan(db, run.scan_id, current_user.id)
 
     import json as _json
+
     pending = _json.loads(run.pending_approval) if run.pending_approval else None
     if not pending or pending.get("approval_id") != body.approval_id:
         raise HTTPException(status_code=409, detail="No matching pending approval for this run")
 
     try:
         from scanr.db.redis import get_redis
+
         r = get_redis()
         await r.setex(f"scanr:ai:approval:{body.approval_id}", 600, body.decision)
     except Exception as exc:

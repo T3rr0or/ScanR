@@ -1,9 +1,12 @@
 """Celery task: run a guided/autonomous AI agent against a scan."""
+
 from __future__ import annotations
 
 import asyncio
 import json
 import logging
+
+from scanr.ai.llm.base import Msg, Usage
 
 from .celery_app import celery_app
 from .scan_tasks import _make_engine_and_session
@@ -12,16 +15,16 @@ logger = logging.getLogger(__name__)
 
 
 @celery_app.task(name="scanr.run_ai_agent")
-def run_ai_agent_task(run_id: str) -> dict:
+def run_ai_agent_task(run_id: str, resume: bool = False) -> dict:
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     try:
-        return loop.run_until_complete(_run_agent_async(run_id))
+        return loop.run_until_complete(_run_agent_async(run_id, resume=resume))
     finally:
         loop.close()
 
 
-async def _run_agent_async(run_id: str) -> dict:
+async def _run_agent_async(run_id: str, resume: bool = False) -> dict:
     from scanr.ai import settings_store as store
     from scanr.ai.agent.db_context import DbAgentContext
     from scanr.ai.agent.loop import run_agent
@@ -72,7 +75,10 @@ async def _run_agent_async(run_id: str) -> dict:
                     logger=slog,
                     run_id=run.id,
                 )
-                await slog.info(f"AI agent started ({run.mode}, {provider.name}/{provider.model})", phase="ai_agent")
+                await slog.info(
+                    f"AI agent {'resumed' if resume else 'started'} ({run.mode}, {provider.name}/{provider.model})",
+                    phase="ai_agent",
+                )
 
                 # Persist the transcript live so the UI shows progress mid-run,
                 # not only at the end.
@@ -83,29 +89,55 @@ async def _run_agent_async(run_id: str) -> dict:
                     run.actions = json.dumps(acc)
                     await db.commit()
 
-                result = await run_agent(
+                # On resume, load conversation + previous usage to continue from
+                # where the user left off.
+                all_messages: list = []
+                prev_usage = Usage()
+                prev_iterations = 0
+                if resume:
+                    raw_conv = json.loads(run.conversation) if run.conversation else []
+                    all_messages = _deserialize_conversation(raw_conv)
+                    if run.token_usage:
+                        tu = json.loads(run.token_usage)
+                        prev_usage = Usage(
+                            input_tokens=tu.get("input_tokens", 0),
+                            output_tokens=tu.get("output_tokens", 0),
+                            cached_input_tokens=tu.get("cached_input_tokens", 0),
+                        )
+                    prev_actions = json.loads(run.actions) if run.actions else []
+                    prev_iterations = len(prev_actions)
+                    acc = list(prev_actions)
+
+                result, all_messages = await run_agent(
                     provider,
                     ctx,
                     default_registry(policy),
                     objective=run.objective,
                     scan_summary=_scan_summary(scan),
                     on_action=_on_action,
+                    messages=all_messages if all_messages else None,
+                    usage=prev_usage,
+                    iterations=prev_iterations,
                 )
+
+                # Serialize the full conversation so future resumes see all history.
+                run.conversation = json.dumps(_serialize_conversation(all_messages))
 
                 run.status = "completed"
                 run.provider = provider.name
                 run.model = provider.model
                 run.stop_reason = result.stop_reason
                 run.final_text = result.final_text
-                run.actions = json.dumps([
-                    {"tool": a.tool, "arguments": a.arguments, "result": a.result[:4000]}
-                    for a in result.actions
-                ])
-                run.token_usage = json.dumps({
-                    "input_tokens": result.usage.input_tokens,
-                    "output_tokens": result.usage.output_tokens,
-                    "cached_input_tokens": result.usage.cached_input_tokens,
-                })
+                run.actions = json.dumps(
+                    [{"tool": a.tool, "arguments": a.arguments, "result": a.result[:4000]} for a in result.actions]
+                )
+                run.token_usage = json.dumps(
+                    {
+                        "input_tokens": result.usage.input_tokens,
+                        "output_tokens": result.usage.output_tokens,
+                        "cached_input_tokens": result.usage.cached_input_tokens,
+                    }
+                )
                 await slog.info(
                     f"AI agent finished ({result.stop_reason}); {len(result.actions)} action(s)",
                     phase="ai_agent",
@@ -150,3 +182,39 @@ def _scan_summary(scan) -> str:
             "will appear. Prioritize guiding the live engagement; re-check the data as it grows."
         )
     return summary
+
+
+def _serialize_conversation(messages: list[Msg]) -> list[dict]:
+    """Serialize Msg list to JSON-compatible dicts for DB storage."""
+    out: list[dict] = []
+    for m in messages:
+        d: dict = {"role": m.role, "content": m.content}
+        if m.tool_calls:
+            d["tool_calls"] = [{"id": tc.id, "name": tc.name, "arguments": tc.arguments} for tc in m.tool_calls]
+        if m.tool_call_id:
+            d["tool_call_id"] = m.tool_call_id
+        if m.name:
+            d["name"] = m.name
+        out.append(d)
+    return out
+
+
+def _deserialize_conversation(raw: list[dict]) -> list[Msg]:
+    """Deserialize conversation dicts back to Msg objects."""
+    from scanr.ai.llm.base import ToolCall
+
+    out: list[Msg] = []
+    for d in raw:
+        tcs = []
+        for tc in d.get("tool_calls") or []:
+            tcs.append(ToolCall(id=tc["id"], name=tc["name"], arguments=tc["arguments"]))
+        out.append(
+            Msg(
+                role=d["role"],
+                content=d.get("content", ""),
+                tool_calls=tcs,
+                tool_call_id=d.get("tool_call_id"),
+                name=d.get("name"),
+            )
+        )
+    return out

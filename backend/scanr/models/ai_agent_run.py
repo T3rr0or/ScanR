@@ -33,3 +33,6 @@ class AiAgentRun(Base, TimestampMixin):
     # When set (JSON {approval_id, tool, args, reason}), the run is paused in
     # guided mode awaiting an operator allow/deny decision.
     pending_approval: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Full chat conversation (JSON array of serialized messages) — enables
+    # resuming the agent loop with follow-up user messages.
+    conversation: Mapped[str | None] = mapped_column(Text, nullable=True)

@@ -2,7 +2,7 @@
  * ScanDetail — full-page scan view
  * Tabs: Console | Findings | Hosts | Topology | Screenshots | Exclusions
  */
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
 	X,
@@ -515,10 +515,30 @@ interface AgentRun {
 	model?: string | null;
 	stop_reason?: string | null;
 	final_text?: string | null;
-	actions: { tool: string; arguments: Record<string, unknown>; result: string }[];
+	actions: {
+		tool: string;
+		arguments: Record<string, unknown>;
+		result: string;
+	}[];
 	token_usage?: { input_tokens: number; output_tokens: number } | null;
 	error?: string | null;
-	pending_approval?: { approval_id: string; tool: string; args: Record<string, unknown>; reason: string } | null;
+	pending_approval?: {
+		approval_id: string;
+		tool: string;
+		args: Record<string, unknown>;
+		reason: string;
+	} | null;
+	conversation?: {
+		role: string;
+		content?: string;
+		tool_calls?: {
+			id: string;
+			name: string;
+			arguments: Record<string, unknown>;
+		}[];
+		tool_call_id?: string;
+		name?: string;
+	}[];
 	created_at?: string | null;
 }
 
@@ -531,18 +551,48 @@ function AgentPanel({ scanId, enabled }: { scanId: string; enabled: boolean }) {
 	} catch {
 		/* not admin */
 	}
-	const [objective, setObjective] = useState("");
+	const [message, setMessage] = useState("");
 	const [mode, setMode] = useState<"guided" | "autonomous">("guided");
 	const [maxIterations, setMaxIterations] = useState(25);
-	const [aggressive, setAggressive] = useState(false);
-	const [allowExploit, setAllowExploit] = useState(false);
-	const [allowPrivesc, setAllowPrivesc] = useState(false);
-	const [allowCmd, setAllowCmd] = useState(false);
+	const [capability, setCapability] = useState<"analyze" | "active" | "full">(
+		"analyze",
+	);
+	const [showSettings, setShowSettings] = useState(false);
+	const chatRef = useRef<HTMLDivElement>(null);
+
+	const CAPS: Record<
+		string,
+		{
+			aggressive: boolean;
+			allow_exploitation: boolean;
+			allow_privilege_escalation: boolean;
+			allow_command_exec: boolean;
+		}
+	> = {
+		analyze: {
+			aggressive: false,
+			allow_exploitation: false,
+			allow_privilege_escalation: false,
+			allow_command_exec: false,
+		},
+		active: {
+			aggressive: true,
+			allow_exploitation: false,
+			allow_privilege_escalation: false,
+			allow_command_exec: false,
+		},
+		full: {
+			aggressive: true,
+			allow_exploitation: true,
+			allow_privilege_escalation: true,
+			allow_command_exec: true,
+		},
+	};
 
 	const { data: runs = [] } = useQuery<AgentRun[]>({
 		queryKey: ["ai-agent-runs", scanId],
-		queryFn: () => api.get(`/ai/scans/${scanId}/agent/runs`).then((r) => r.data),
-		// poll while a run is active so status/result update live
+		queryFn: () =>
+			api.get(`/ai/scans/${scanId}/agent/runs`).then((r) => r.data),
 		refetchInterval: (q) =>
 			(q.state.data ?? []).some((r) => ["queued", "running"].includes(r.status))
 				? 4000
@@ -550,114 +600,442 @@ function AgentPanel({ scanId, enabled }: { scanId: string; enabled: boolean }) {
 	});
 
 	const launch = useMutation({
-		mutationFn: () =>
-			api
+		mutationFn: (msg: string) => {
+			const c = CAPS[capability];
+			return api
 				.post(`/ai/scans/${scanId}/agent`, {
 					mode,
-					objective: objective.trim(),
+					objective: msg.trim(),
 					max_iterations: maxIterations,
-					aggressive: isAdmin && aggressive,
-					allow_exploitation: isAdmin && aggressive && allowExploit,
-					allow_privilege_escalation: isAdmin && aggressive && allowPrivesc,
-					allow_command_exec: isAdmin && aggressive && allowCmd,
+					aggressive: isAdmin && c.aggressive,
+					allow_exploitation: isAdmin && c.allow_exploitation,
+					allow_privilege_escalation: isAdmin && c.allow_privilege_escalation,
+					allow_command_exec: isAdmin && c.allow_command_exec,
 				})
+				.then((r) => r.data);
+		},
+		onSuccess: () => {
+			setMessage("");
+			qc.invalidateQueries({ queryKey: ["ai-agent-runs", scanId] });
+		},
+	});
+
+	const chatMut = useMutation({
+		mutationFn: ({ runId, msg }: { runId: string; msg: string }) =>
+			api
+				.post(`/ai/agent/runs/${runId}/chat`, { message: msg })
 				.then((r) => r.data),
 		onSuccess: () => {
-			setObjective("");
+			setMessage("");
 			qc.invalidateQueries({ queryKey: ["ai-agent-runs", scanId] });
 		},
 	});
 
 	const launchErr = (() => {
-		const e = launch.error as { response?: { data?: { detail?: string } } } | null;
+		const e = (launch.error ?? chatMut.error) as {
+			response?: { data?: { detail?: string } };
+		} | null;
 		return e?.response?.data?.detail ?? null;
 	})();
 
 	const active = runs.some((r) => ["queued", "running"].includes(r.status));
+	const latestRun = runs[0];
+	const canChat =
+		latestRun?.status === "completed" && latestRun?.conversation?.length;
+
+	const send = () => {
+		const msg = message.trim();
+		if (!msg || !enabled || launch.isPending || chatMut.isPending) return;
+		if (canChat && latestRun) {
+			chatMut.mutate({ runId: latestRun.id, msg });
+		} else {
+			launch.mutate(msg);
+		}
+	};
+
+	// Auto-scroll to bottom on new messages
+	useEffect(() => {
+		if (chatRef.current)
+			chatRef.current.scrollTop = chatRef.current.scrollHeight;
+	}, [runs]);
+
+	const capLabel: Record<string, string> = {
+		analyze: "Read-only",
+		active: "Active",
+		full: "Full",
+	};
 
 	return (
-		<div className="panel">
-			<div className="panel-head" style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-				<span className="panel-title">AI agent (investigates this scan)</span>
-				<span style={{ fontSize: 11, color: "var(--text-3)" }}>guided asks before intrusive steps · autonomous runs hands-off</span>
+		<div
+			className="panel"
+			style={{
+				display: "flex",
+				flexDirection: "column",
+				maxHeight: "calc(100vh - 200px)",
+			}}
+		>
+			<div
+				className="panel-head"
+				style={{
+					display: "flex",
+					alignItems: "center",
+					justifyContent: "space-between",
+				}}
+			>
+				<span className="panel-title">AI Agent</span>
+				<button
+					className="btn btn-ghost btn-sm"
+					onClick={() => setShowSettings((s) => !s)}
+					style={{ fontSize: 11 }}
+				>
+					{mode} · {capLabel[capability]} · {maxIterations} steps{" "}
+					{showSettings ? "▲" : "▼"}
+				</button>
 			</div>
-			<div style={{ padding: 14, display: "flex", flexDirection: "column", gap: 10 }}>
-				<textarea
-					className="input"
-					placeholder="Objective (optional) — e.g. 'focus on the web services and find the most exploitable issue'"
-					value={objective}
-					onChange={(e) => setObjective(e.target.value)}
-					rows={2}
-					style={{ resize: "vertical", fontFamily: "inherit" }}
-				/>
-				<div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-					<select
-						className="input"
-						value={mode}
-						onChange={(e) => setMode(e.target.value as "guided" | "autonomous")}
-						style={{ width: "auto" }}
-					>
-						<option value="guided">Guided</option>
-						<option value="autonomous">Autonomous</option>
-					</select>
-					<label style={{ fontSize: 11.5, color: "var(--text-3)", display: "flex", alignItems: "center", gap: 5 }}>
-						Max steps
+
+			{showSettings && (
+				<div
+					style={{
+						padding: "10px 14px",
+						borderBottom: "1px solid var(--border)",
+						display: "flex",
+						flexDirection: "column",
+						gap: 8,
+					}}
+				>
+					<div style={{ display: "flex", gap: 8 }}>
+						{(["guided", "autonomous"] as const).map((m) => (
+							<button
+								key={m}
+								className={`btn btn-sm ${mode === m ? "btn-primary" : "btn-ghost"}`}
+								onClick={() => setMode(m)}
+								style={{ flex: 1, fontSize: 11.5 }}
+							>
+								{m === "guided" ? "🛡 Guided (you approve)" : "🚀 Autonomous"}
+							</button>
+						))}
+					</div>
+					<div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+						<span style={{ fontSize: 11, color: "var(--text-3)" }}>
+							Max steps:
+						</span>
 						<input
 							type="number"
 							className="input"
 							min={1}
 							max={200}
 							value={maxIterations}
-							onChange={(e) => setMaxIterations(Math.max(1, Math.min(200, Number(e.target.value) || 1)))}
-							style={{ width: 64 }}
-							title="Maximum reasoning iterations before the agent stops (1–200)"
+							onChange={(e) =>
+								setMaxIterations(
+									Math.max(1, Math.min(200, Number(e.target.value) || 1)),
+								)
+							}
+							style={{ width: 56, fontSize: 11.5 }}
 						/>
-					</label>
-					<button
-						className="btn btn-primary btn-sm"
-						disabled={!enabled || launch.isPending || active}
-						onClick={() => launch.mutate()}
-					>
-						{launch.isPending ? "Starting…" : active ? "Run in progress…" : "Run AI agent"}
-					</button>
-					{!enabled && (
-						<span style={{ fontSize: 11.5, color: "var(--text-3)" }}>
-							Configure a provider key in Settings → AI first.
-						</span>
+					</div>
+					{isAdmin && (
+						<div style={{ display: "flex", gap: 6 }}>
+							{(["analyze", "active", "full"] as const).map((c) => (
+								<button
+									key={c}
+									className={`btn btn-sm ${capability === c ? "btn-primary" : "btn-ghost"}`}
+									onClick={() => setCapability(c)}
+									style={{ flex: 1, fontSize: 11 }}
+								>
+									{c === "analyze"
+										? "📋 Read-only"
+										: c === "active"
+											? "🔍 Active"
+											: "💣 Full"}
+								</button>
+							))}
+						</div>
 					)}
 				</div>
-				{isAdmin && (
-					<div style={{ borderTop: "1px solid var(--border)", paddingTop: 8, display: "flex", flexDirection: "column", gap: 4 }}>
-						<label style={{ fontSize: 12, color: "var(--text-1)", display: "flex", alignItems: "center", gap: 6 }}>
-							<input type="checkbox" checked={aggressive} onChange={(e) => setAggressive(e.target.checked)} />
-							Aggressive mode (admin) — allow intrusive/destructive actions
-						</label>
-						{aggressive && (
-							<div style={{ paddingLeft: 22, display: "flex", flexDirection: "column", gap: 4 }}>
-								<label style={{ fontSize: 11.5, color: "var(--text-2)", display: "flex", alignItems: "center", gap: 6 }}>
-									<input type="checkbox" checked={allowExploit} onChange={(e) => setAllowExploit(e.target.checked)} />
-									Allow exploitation (run destructive plugins)
-								</label>
-								<label style={{ fontSize: 11.5, color: "var(--text-2)", display: "flex", alignItems: "center", gap: 6 }}>
-									<input type="checkbox" checked={allowPrivesc} onChange={(e) => setAllowPrivesc(e.target.checked)} />
-									Allow privilege escalation
-								</label>
-								<label style={{ fontSize: 11.5, color: "var(--text-2)", display: "flex", alignItems: "center", gap: 6 }}>
-									<input type="checkbox" checked={allowCmd} onChange={(e) => setAllowCmd(e.target.checked)} />
-									Allow command execution (sandboxed shell)
-								</label>
-								<div style={{ fontSize: 11, color: "var(--sev-high)" }}>
-									⚠ Only against systems you are authorized to actively exploit.
-								</div>
-							</div>
-						)}
+			)}
+
+			{/* Chat messages */}
+			<div
+				ref={chatRef}
+				style={{
+					flex: 1,
+					overflowY: "auto",
+					padding: "10px 14px",
+					display: "flex",
+					flexDirection: "column",
+					gap: 8,
+				}}
+			>
+				{!latestRun && !active && (
+					<div
+						style={{
+							fontSize: 12,
+							color: "var(--text-3)",
+							textAlign: "center",
+							padding: 20,
+						}}
+					>
+						Send a message to start the agent.
 					</div>
 				)}
-				{launchErr && <div style={{ color: "var(--sev-high)", fontSize: 12 }}>{launchErr}</div>}
 
-				{runs.map((run) => (
-					<AgentRunCard key={run.id} run={run} />
-				))}
+				{latestRun?.conversation?.map((msg, i) => {
+					if (msg.role === "user") {
+						return (
+							<div
+								key={i}
+								style={{ display: "flex", justifyContent: "flex-end" }}
+							>
+								<div
+									style={{
+										maxWidth: "80%",
+										padding: "8px 12px",
+										borderRadius: 12,
+										borderBottomRightRadius: 4,
+										background: "var(--accent)",
+										color: "#fff",
+										fontSize: 13,
+										lineHeight: 1.5,
+									}}
+								>
+									{msg.content}
+								</div>
+							</div>
+						);
+					}
+					if (msg.role === "assistant") {
+						const hasTools = msg.tool_calls && msg.tool_calls.length > 0;
+						return (
+							<div
+								key={i}
+								style={{ display: "flex", flexDirection: "column", gap: 4 }}
+							>
+								{msg.content && (
+									<div
+										style={{
+											maxWidth: "85%",
+											padding: "8px 12px",
+											borderRadius: 12,
+											borderBottomLeftRadius: 4,
+											background: "var(--bg-2)",
+											border: "1px solid var(--border)",
+											fontSize: 13,
+											lineHeight: 1.5,
+											color: "var(--text-1)",
+											whiteSpace: "pre-wrap",
+										}}
+									>
+										{msg.content}
+									</div>
+								)}
+								{hasTools &&
+									msg.tool_calls!.map((tc, j) => (
+										<div
+											key={j}
+											style={{
+												marginLeft: 8,
+												padding: "4px 8px",
+												borderRadius: 6,
+												background: "var(--bg-2)",
+												border: "1px solid var(--border)",
+												fontSize: 11,
+												fontFamily: "var(--font-mono)",
+												color: "var(--accent)",
+											}}
+										>
+											🔧 {tc.name}({JSON.stringify(tc.arguments).slice(0, 100)})
+										</div>
+									))}
+							</div>
+						);
+					}
+					if (msg.role === "tool") {
+						return (
+							<div
+								key={i}
+								style={{
+									marginLeft: 16,
+									padding: "4px 8px",
+									borderRadius: 6,
+									background: "var(--bg-1)",
+									border: "1px solid var(--border)",
+									fontSize: 10.5,
+									fontFamily: "var(--font-mono)",
+									color: "var(--text-3)",
+									maxHeight: 160,
+									overflowY: "auto",
+									whiteSpace: "pre-wrap",
+								}}
+							>
+								{msg.content?.slice(0, 2000)}
+							</div>
+						);
+					}
+					return null;
+				})}
+
+				{/* Thinking indicator */}
+				{(launch.isPending ||
+					chatMut.isPending ||
+					(active && latestRun?.status !== "completed")) && (
+					<div
+						style={{
+							display: "flex",
+							gap: 8,
+							alignItems: "center",
+							padding: "8px 12px",
+						}}
+					>
+						<div
+							style={{
+								width: 8,
+								height: 8,
+								borderRadius: "50%",
+								background: "var(--accent)",
+								animation: "pulse 1s infinite",
+							}}
+						/>
+						<span style={{ fontSize: 12, color: "var(--text-3)" }}>
+							Agent is thinking…
+						</span>
+					</div>
+				)}
+
+				{/* Approval prompt */}
+				{latestRun?.pending_approval && <ApprovalCard run={latestRun} />}
+
+				{/* Run card for non-chat runs (backward compat) */}
+				{runs
+					.filter((r) => !r.conversation?.length)
+					.map((run) => (
+						<AgentRunCard key={run.id} run={run} />
+					))}
+
+				{launchErr && (
+					<div
+						style={{
+							color: "var(--sev-high)",
+							fontSize: 11.5,
+							textAlign: "center",
+						}}
+					>
+						{launchErr}
+					</div>
+				)}
+				{!enabled && (
+					<div
+						style={{
+							fontSize: 11,
+							color: "var(--text-3)",
+							textAlign: "center",
+						}}
+					>
+						Configure a provider key in Settings → AI first.
+					</div>
+				)}
+			</div>
+
+			{/* Input */}
+			<div
+				style={{
+					padding: "8px 14px",
+					borderTop: "1px solid var(--border)",
+					display: "flex",
+					gap: 8,
+				}}
+			>
+				<input
+					className="input"
+					placeholder={
+						canChat
+							? "Continue the conversation…"
+							: "What should the agent investigate?"
+					}
+					value={message}
+					onChange={(e) => setMessage(e.target.value)}
+					onKeyDown={(e) => {
+						if (e.key === "Enter" && !e.shiftKey) {
+							e.preventDefault();
+							send();
+						}
+					}}
+					disabled={!enabled || launch.isPending || chatMut.isPending || active}
+					style={{ flex: 1, fontSize: 13 }}
+				/>
+				<button
+					className="btn btn-primary btn-sm"
+					disabled={
+						!enabled ||
+						!message.trim() ||
+						launch.isPending ||
+						chatMut.isPending ||
+						active
+					}
+					onClick={send}
+				>
+					▶
+				</button>
+			</div>
+		</div>
+	);
+}
+
+function ApprovalCard({ run }: { run: AgentRun }) {
+	const qc = useQueryClient();
+	const decide = useMutation({
+		mutationFn: (decision: "allow" | "deny") =>
+			api.post(`/ai/agent/runs/${run.id}/approval`, {
+				approval_id: run.pending_approval?.approval_id,
+				decision,
+			}),
+		onSuccess: () =>
+			qc.invalidateQueries({ queryKey: ["ai-agent-runs", run.scan_id] }),
+	});
+	return (
+		<div
+			style={{
+				padding: 10,
+				borderRadius: 6,
+				background: "var(--bg-2)",
+				border: "2px solid var(--sev-medium)",
+			}}
+		>
+			<div
+				style={{
+					fontSize: 12.5,
+					fontWeight: 700,
+					color: "var(--sev-medium)",
+					marginBottom: 4,
+				}}
+			>
+				⏸ Agent paused — needs your approval
+			</div>
+			<div
+				style={{
+					fontSize: 11.5,
+					fontFamily: "var(--font-mono)",
+					color: "var(--text-2)",
+				}}
+			>
+				{run.pending_approval?.tool}(
+				{JSON.stringify(run.pending_approval?.args)})
+			</div>
+			<div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+				<button
+					className="btn btn-primary btn-sm"
+					disabled={decide.isPending}
+					onClick={() => decide.mutate("allow")}
+				>
+					✓ Approve
+				</button>
+				<button
+					className="btn btn-sm"
+					disabled={decide.isPending}
+					onClick={() => decide.mutate("deny")}
+					style={{ color: "var(--sev-high)", borderColor: "var(--sev-high)" }}
+				>
+					✗ Deny
+				</button>
 			</div>
 		</div>
 	);
@@ -667,17 +1045,39 @@ function AgentRunCard({ run }: { run: AgentRun }) {
 	const running = ["queued", "running"].includes(run.status);
 	const [open, setOpen] = useState(running);
 	const qc = useQueryClient();
+
+	const stopLabel: Record<string, string> = {
+		end: "Agent finished",
+		budget: "Hit token limit",
+		max_iterations: "Hit step limit",
+		error: "Error",
+	};
+
 	const decide = useMutation({
 		mutationFn: (decision: "allow" | "deny") =>
 			api.post(`/ai/agent/runs/${run.id}/approval`, {
 				approval_id: run.pending_approval?.approval_id,
 				decision,
 			}),
-		onSuccess: () => qc.invalidateQueries({ queryKey: ["ai-agent-runs", run.scan_id] }),
+		onSuccess: () =>
+			qc.invalidateQueries({ queryKey: ["ai-agent-runs", run.scan_id] }),
 	});
 	return (
-		<div style={{ border: "1px solid var(--border)", borderRadius: 8, padding: "10px 12px" }}>
-			<div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+		<div
+			style={{
+				border: "1px solid var(--border)",
+				borderRadius: 8,
+				padding: "10px 12px",
+			}}
+		>
+			<div
+				style={{
+					display: "flex",
+					alignItems: "center",
+					gap: 8,
+					flexWrap: "wrap",
+				}}
+			>
 				<StatusPill status={run.status} />
 				<span style={{ fontSize: 11, color: "var(--text-3)" }}>{run.mode}</span>
 				{run.provider && (
@@ -690,29 +1090,59 @@ function AgentRunCard({ run }: { run: AgentRun }) {
 						{run.token_usage.input_tokens + run.token_usage.output_tokens} tok
 					</span>
 				)}
+				{run.stop_reason && run.status === "completed" && (
+					<span style={{ fontSize: 10.5, color: "var(--text-3)" }}>
+						· {stopLabel[run.stop_reason] ?? run.stop_reason}
+					</span>
+				)}
 				<span style={{ flex: 1 }} />
 				{run.actions.length > 0 && (
-					<button className="btn btn-ghost btn-sm" onClick={() => setOpen((o) => !o)}>
-						{open ? "Hide" : `${run.actions.length} action(s)`}
+					<button
+						className="btn btn-ghost btn-sm"
+						onClick={() => setOpen((o) => !o)}
+					>
+						{open
+							? "Hide steps"
+							: `${run.actions.length} step${run.actions.length !== 1 ? "s" : ""}`}
 					</button>
 				)}
 			</div>
-			<div style={{ fontSize: 11.5, color: "var(--text-2)", marginTop: 4 }}>{run.objective}</div>
+			{run.objective && (
+				<div style={{ fontSize: 11.5, color: "var(--text-2)", marginTop: 4 }}>
+					{run.objective}
+				</div>
+			)}
+
+			{/* ── Approval prompt ── */}
 			{run.pending_approval && (
 				<div
 					style={{
 						marginTop: 8,
-						padding: "8px 10px",
+						padding: 10,
 						borderRadius: 6,
 						background: "var(--bg-2)",
-						border: "1px solid var(--sev-medium)",
+						border: "2px solid var(--sev-medium)",
 					}}
 				>
-					<div style={{ fontSize: 12, color: "var(--text-1)", fontWeight: 600 }}>
-						Approval required — intrusive action
+					<div
+						style={{
+							fontSize: 12.5,
+							fontWeight: 700,
+							color: "var(--sev-medium)",
+							marginBottom: 4,
+						}}
+					>
+						⏸ Agent paused — needs your approval
 					</div>
-					<div style={{ fontSize: 11.5, fontFamily: "var(--font-mono)", color: "var(--text-2)", marginTop: 4 }}>
-						{run.pending_approval.tool}({JSON.stringify(run.pending_approval.args)})
+					<div
+						style={{
+							fontSize: 11.5,
+							fontFamily: "var(--font-mono)",
+							color: "var(--text-2)",
+						}}
+					>
+						{run.pending_approval.tool}(
+						{JSON.stringify(run.pending_approval.args)})
 					</div>
 					<div style={{ display: "flex", gap: 8, marginTop: 8 }}>
 						<button
@@ -720,32 +1150,107 @@ function AgentRunCard({ run }: { run: AgentRun }) {
 							disabled={decide.isPending}
 							onClick={() => decide.mutate("allow")}
 						>
-							Approve
+							✓ Approve
 						</button>
 						<button
-							className="btn btn-ghost btn-sm"
+							className="btn btn-sm"
 							disabled={decide.isPending}
 							onClick={() => decide.mutate("deny")}
+							style={{
+								color: "var(--sev-high)",
+								borderColor: "var(--sev-high)",
+							}}
 						>
-							Deny
+							✗ Deny
 						</button>
 					</div>
 				</div>
 			)}
-			{run.error && <div style={{ color: "var(--sev-high)", fontSize: 12, marginTop: 6 }}>{run.error}</div>}
-			{run.final_text && (
-				<div style={{ whiteSpace: "pre-wrap", fontSize: 13, lineHeight: 1.6, color: "var(--text-1)", marginTop: 8 }}>
-					{run.final_text}
+
+			{/* ── Error ── */}
+			{run.error && (
+				<div
+					style={{
+						color: "var(--sev-high)",
+						fontSize: 12,
+						marginTop: 6,
+						padding: 8,
+						background: "var(--bg-2)",
+						borderRadius: 4,
+					}}
+				>
+					{run.error}
 				</div>
 			)}
-			{open && (
-				<div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 6 }}>
+
+			{/* ── Final report ── */}
+			{run.final_text && (
+				<div style={{ marginTop: 10 }}>
+					<div
+						style={{
+							fontSize: 11,
+							fontWeight: 600,
+							color: "var(--text-2)",
+							marginBottom: 4,
+						}}
+					>
+						📝 Agent report
+					</div>
+					<div
+						style={{
+							whiteSpace: "pre-wrap",
+							fontSize: 13,
+							lineHeight: 1.6,
+							color: "var(--text-1)",
+						}}
+					>
+						{run.final_text}
+					</div>
+				</div>
+			)}
+
+			{/* ── Warning when no report ── */}
+			{run.status === "completed" && !run.final_text && !run.error && (
+				<div
+					style={{
+						fontSize: 11.5,
+						color: "var(--text-3)",
+						marginTop: 6,
+						fontStyle: "italic",
+					}}
+				>
+					Agent stopped without producing a report. Expand steps to see what
+					happened.
+				</div>
+			)}
+
+			{/* ── Action log ── */}
+			{open && run.actions.length > 0 && (
+				<div
+					style={{
+						marginTop: 8,
+						display: "flex",
+						flexDirection: "column",
+						gap: 6,
+						maxHeight: 400,
+						overflowY: "auto",
+					}}
+				>
 					{run.actions.map((a, i) => (
-						<div key={i} style={{ fontSize: 11.5, fontFamily: "var(--font-mono)", color: "var(--text-2)" }}>
-							<div style={{ color: "var(--accent)" }}>
+						<div
+							key={i}
+							style={{
+								fontSize: 11.5,
+								fontFamily: "var(--font-mono)",
+								color: "var(--text-2)",
+							}}
+						>
+							<div style={{ color: "var(--accent)", fontWeight: 600 }}>
 								→ {a.tool}({JSON.stringify(a.arguments)})
 							</div>
-							<div style={{ whiteSpace: "pre-wrap", color: "var(--text-3)" }}>{a.result.slice(0, 1200)}</div>
+							<div style={{ whiteSpace: "pre-wrap", color: "var(--text-3)" }}>
+								{a.result.slice(0, 1200)}
+							</div>
 						</div>
 					))}
 				</div>
@@ -816,14 +1321,21 @@ function AiTab({ scanId, findings }: { scanId: string; findings: Finding[] }) {
 					}}
 				>
 					No AI provider is configured. Add an API key in{" "}
-					<strong>Settings → AI</strong> to enable summaries and
-					false-positive testing.
+					<strong>Settings → AI</strong> to enable summaries and false-positive
+					testing.
 				</div>
 			)}
 
 			<AgentPanel scanId={scanId} enabled={enabled} />
 
-			<div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-2)", marginTop: 4 }}>
+			<div
+				style={{
+					fontSize: 12,
+					fontWeight: 600,
+					color: "var(--text-2)",
+					marginTop: 4,
+				}}
+			>
 				Assist (read-only analysis)
 			</div>
 			<div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -985,9 +1497,15 @@ function FalsePositivePanel({
 			</div>
 			<div style={{ padding: 14 }}>
 				{data.truncated && (
-					<div style={{ fontSize: 11.5, color: "var(--sev-high)", marginBottom: 8 }}>
-						⚠ The model's response was truncated (too many findings) — results may be
-						incomplete. Re-run on a smaller scan or filter first.
+					<div
+						style={{
+							fontSize: 11.5,
+							color: "var(--sev-high)",
+							marginBottom: 8,
+						}}
+					>
+						⚠ The model's response was truncated (too many findings) — results
+						may be incomplete. Re-run on a smaller scan or filter first.
 					</div>
 				)}
 				{/* Methodology */}
@@ -1166,9 +1684,15 @@ function AiResultPanel({
 				}}
 			>
 				{truncated && (
-					<div style={{ fontSize: 11.5, color: "var(--sev-high)", marginBottom: 8 }}>
-						⚠ The model's response was truncated (too many findings) — results may be
-						incomplete. Re-run on a smaller scan or filter first.
+					<div
+						style={{
+							fontSize: 11.5,
+							color: "var(--sev-high)",
+							marginBottom: 8,
+						}}
+					>
+						⚠ The model's response was truncated (too many findings) — results
+						may be incomplete. Re-run on a smaller scan or filter first.
 					</div>
 				)}
 				{text}
