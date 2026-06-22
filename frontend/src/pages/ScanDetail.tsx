@@ -452,6 +452,7 @@ export default function ScanDetail({ scanId, onBack }: Props) {
 						) : (
 							<NetworkTopology
 								hosts={hosts}
+								scanName={scan?.name}
 								findingsByHost={Object.fromEntries(
 									hosts.map((h) => [
 										h.ip,

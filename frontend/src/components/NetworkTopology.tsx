@@ -21,6 +21,7 @@ interface Props {
   hosts: HostNode[]
   findingsByHost?: Record<string, { severity: string }[]>
   onSelectHost?: (host: HostNode) => void
+  scanName?: string
 }
 
 const SEV_HEX: Record<string, string> = {
@@ -50,10 +51,84 @@ function nodeRadius(openPorts: number): number {
   return Math.max(7, Math.min(22, 7 + Math.sqrt(openPorts) * 2.8))
 }
 
-export default function NetworkTopology({ hosts, findingsByHost, onSelectHost }: Props) {
+async function exportPng(svgEl: SVGSVGElement, filename: string): Promise<string> {
+  const width = svgEl.clientWidth || 800
+  const height = svgEl.clientHeight || 500
+  const scale = 2 // retina
+
+  const serializer = new XMLSerializer()
+  const svgStr = serializer.serializeToString(svgEl)
+  const blob = new Blob([svgStr], { type: 'image/svg+xml;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+
+  return new Promise((resolve, reject) => {
+    const img = new Image()
+    img.onload = () => {
+      const canvas = document.createElement('canvas')
+      canvas.width = width * scale
+      canvas.height = height * scale
+      const ctx = canvas.getContext('2d')!
+      ctx.scale(scale, scale)
+      ctx.fillStyle = '#0d1117'
+      ctx.fillRect(0, 0, width, height)
+      ctx.drawImage(img, 0, 0, width, height)
+      URL.revokeObjectURL(url)
+      const dataUrl = canvas.toDataURL('image/png')
+      const a = document.createElement('a')
+      a.href = dataUrl
+      a.download = filename
+      a.click()
+      resolve(dataUrl)
+    }
+    img.onerror = reject
+    img.src = url
+  })
+}
+
+function printPdf(dataUrl: string, scanName: string, hostCount: number, date: string) {
+  const html = `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Network Topology — ${scanName}</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: Arial, sans-serif; background: #fff; color: #111; padding: 32px; }
+  h1 { font-size: 20px; font-weight: 700; margin-bottom: 4px; }
+  .meta { font-size: 12px; color: #555; margin-bottom: 24px; }
+  img { width: 100%; border: 1px solid #ddd; border-radius: 4px; }
+  .legend { margin-top: 16px; font-size: 11px; color: #555; display: flex; gap: 16px; flex-wrap: wrap; }
+  .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 4px; vertical-align: middle; }
+  @media print { body { padding: 0; } }
+</style>
+</head>
+<body>
+<h1>Network Topology — ${scanName}</h1>
+<div class="meta">${hostCount} host${hostCount !== 1 ? 's' : ''} discovered · Generated ${date}</div>
+<img src="${dataUrl}" alt="Network topology diagram">
+<div class="legend">
+  <span><span class="dot" style="background:#f43f5e"></span>Critical</span>
+  <span><span class="dot" style="background:#f97316"></span>High</span>
+  <span><span class="dot" style="background:#eab308"></span>Medium</span>
+  <span><span class="dot" style="background:#22c55e"></span>Low</span>
+  <span><span class="dot" style="background:#38bdf8"></span>Info</span>
+  <span><span class="dot" style="background:#4b5563"></span>None</span>
+  <span style="margin-left:auto">Node size = number of open ports</span>
+</div>
+</body>
+</html>`
+  const w = window.open('', '_blank')
+  if (!w) return
+  w.document.write(html)
+  w.document.close()
+  w.onload = () => { w.focus(); w.print() }
+}
+
+export default function NetworkTopology({ hosts, findingsByHost, onSelectHost, scanName = 'scan' }: Props) {
   const svgRef = useRef<SVGSVGElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const [tooltip, setTooltip] = useState<{ x: number; y: number; host: HostNode } | null>(null)
+  const [exporting, setExporting] = useState(false)
 
   useEffect(() => {
     if (!svgRef.current || !containerRef.current) return
@@ -305,7 +380,7 @@ export default function NetworkTopology({ hosts, findingsByHost, onSelectHost }:
     <div ref={containerRef} style={{ position: 'relative', width: '100%', height: '100%', background: 'var(--bg-1)', borderRadius: 8, overflow: 'hidden' }}>
       <svg ref={svgRef} style={{ width: '100%', height: '100%', display: 'block' }} />
 
-      {/* Legend */}
+      {/* Legend + export */}
       <div style={{
         position: 'absolute', top: 12, right: 12,
         background: 'var(--bg-2)', border: '1px solid var(--border)',
@@ -321,6 +396,50 @@ export default function NetworkTopology({ hosts, findingsByHost, onSelectHost }:
         <div style={{ borderTop: '1px solid var(--border)', marginTop: 4, paddingTop: 4, color: 'var(--text-3)', lineHeight: 1.7 }}>
           <div>Node size = open ports</div>
           <div>Scroll to zoom · drag to pan</div>
+        </div>
+        <div style={{ borderTop: '1px solid var(--border)', marginTop: 4, paddingTop: 6, display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <button
+            disabled={exporting || hosts.length === 0}
+            style={{
+              fontSize: 11, padding: '4px 8px', borderRadius: 4, cursor: 'pointer',
+              background: 'var(--bg-3)', border: '1px solid var(--border)',
+              color: 'var(--text-1)', opacity: (exporting || hosts.length === 0) ? 0.4 : 1,
+            }}
+            onClick={async () => {
+              if (!svgRef.current) return
+              setExporting(true)
+              try {
+                const slug = scanName.replace(/[^a-z0-9]+/gi, '-').toLowerCase()
+                await exportPng(svgRef.current, `topology-${slug}.png`)
+              } finally {
+                setExporting(false)
+              }
+            }}
+          >
+            {exporting ? 'Exporting…' : '↓ Export PNG'}
+          </button>
+          <button
+            disabled={exporting || hosts.length === 0}
+            style={{
+              fontSize: 11, padding: '4px 8px', borderRadius: 4, cursor: 'pointer',
+              background: 'var(--bg-3)', border: '1px solid var(--border)',
+              color: 'var(--text-1)', opacity: (exporting || hosts.length === 0) ? 0.4 : 1,
+            }}
+            onClick={async () => {
+              if (!svgRef.current) return
+              setExporting(true)
+              try {
+                const slug = scanName.replace(/[^a-z0-9]+/gi, '-').toLowerCase()
+                const dataUrl = await exportPng(svgRef.current, `topology-${slug}.png`)
+                const date = new Date().toLocaleString()
+                printPdf(dataUrl, scanName, hosts.length, date)
+              } finally {
+                setExporting(false)
+              }
+            }}
+          >
+            {exporting ? 'Exporting…' : '↓ Export PDF'}
+          </button>
         </div>
       </div>
 

@@ -1285,6 +1285,12 @@ function UserManagementSection() {
 		role: "analyst",
 	});
 	const [err, setErr] = useState<string | null>(null);
+	const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+
+	const { data: me } = useQuery({
+		queryKey: ["me"],
+		queryFn: () => api.get("/users/me").then((r) => r.data),
+	});
 
 	const { data: users = [] } = useQuery({
 		queryKey: ["admin-users"],
@@ -1306,6 +1312,14 @@ function UserManagementSection() {
 		mutationFn: ({ id, is_active }: { id: string; is_active: boolean }) =>
 			api.patch(`/users/${id}`, { is_active }),
 		onSuccess: () => qc.invalidateQueries({ queryKey: ["admin-users"] }),
+	});
+
+	const deleteMut = useMutation({
+		mutationFn: (id: string) => api.delete(`/users/${id}`),
+		onSuccess: () => {
+			qc.invalidateQueries({ queryKey: ["admin-users"] });
+			setConfirmDeleteId(null);
+		},
 	});
 
 	return (
@@ -1442,15 +1456,46 @@ function UserManagementSection() {
 									</span>
 								</td>
 								<td>
-									<button
-										className="btn btn-ghost btn-sm"
-										onClick={() =>
-											toggleMut.mutate({ id: u.id, is_active: !u.is_active })
-										}
-										style={{ fontSize: 11 }}
-									>
-										{u.is_active ? "Disable" : "Enable"}
-									</button>
+									<div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+										<button
+											className="btn btn-ghost btn-sm"
+											onClick={() =>
+												toggleMut.mutate({ id: u.id, is_active: !u.is_active })
+											}
+											style={{ fontSize: 11 }}
+										>
+											{u.is_active ? "Disable" : "Enable"}
+										</button>
+										{me?.id !== u.id && (
+											confirmDeleteId === u.id ? (
+												<>
+													<button
+														className="btn btn-sm"
+														style={{ fontSize: 11, color: "var(--sev-critical)", borderColor: "var(--sev-critical)" }}
+														onClick={() => deleteMut.mutate(u.id)}
+														disabled={deleteMut.isPending}
+													>
+														Confirm delete
+													</button>
+													<button
+														className="btn btn-ghost btn-sm"
+														style={{ fontSize: 11 }}
+														onClick={() => setConfirmDeleteId(null)}
+													>
+														Cancel
+													</button>
+												</>
+											) : (
+												<button
+													className="btn btn-ghost btn-sm"
+													style={{ fontSize: 11, color: "var(--sev-high)" }}
+													onClick={() => setConfirmDeleteId(u.id)}
+												>
+													Delete
+												</button>
+											)
+										)}
+									</div>
 								</td>
 							</tr>
 						))}

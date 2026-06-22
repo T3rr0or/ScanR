@@ -4,7 +4,7 @@ import logging
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from scanr.auth.password import hash_password, verify_password
@@ -151,11 +151,64 @@ async def delete_user(
     db: AsyncSession = Depends(get_db),
     admin: User = Depends(require_admin),
 ):
+    from scanr.models.api_key import APIKey
+    from scanr.models.credential import Credential
+    from scanr.models.exclusion import Exclusion
+    from scanr.models.finding import Finding
+    from scanr.models.host import Host
+    from scanr.models.plugin_run import PluginRun
+    from scanr.models.port import Port
+    from scanr.models.report import Report
+    from scanr.models.scan import Scan
+    from scanr.models.scan_agent import ScanAgent
+    from scanr.models.scan_template import ScanTemplate
+    from scanr.models.schedule import Schedule
+    from scanr.models.screenshot import Screenshot
+    from scanr.models.target import Target
+    from scanr.models.webhook import Webhook
+    from scanr.models.wordlist import Wordlist
+
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     if user.id == admin.id:
         raise HTTPException(status_code=400, detail="Cannot delete your own account")
-    user.is_active = False  # soft-delete — preserve scan history
+
+    # Revoke tokens and remove user-owned non-scan data.
+    await db.execute(delete(APIKey).where(APIKey.user_id == user_id))
+    await db.execute(delete(Webhook).where(Webhook.user_id == user_id))
+    await db.execute(delete(Schedule).where(Schedule.user_id == user_id))
+    await db.execute(delete(ScanAgent).where(ScanAgent.user_id == user_id))
+
+    # Promote user-created templates/wordlists/credentials to global.
+    await db.execute(update(ScanTemplate).where(ScanTemplate.user_id == user_id).values(user_id=None))
+    await db.execute(update(Wordlist).where(Wordlist.user_id == user_id).values(user_id=None))
+    await db.execute(update(Credential).where(Credential.user_id == user_id).values(user_id=None))
+
+    # Delete scan data in FK-safe order. Child tables have no ondelete="CASCADE"
+    # so we must clear them before deleting scans/hosts.
+    scan_ids = select(Scan.id).where(Scan.user_id == user_id)
+    host_ids = select(Host.id).where(Host.scan_id.in_(scan_ids))
+
+    # NULL out nullable back-references that point at these scans.
+    await db.execute(update(Finding).where(Finding.first_seen_scan_id.in_(scan_ids)).values(first_seen_scan_id=None))
+    await db.execute(update(Finding).where(Finding.last_seen_scan_id.in_(scan_ids)).values(last_seen_scan_id=None))
+    # NULL compare_scan_id on any scan (own or other user) that compares against these.
+    await db.execute(update(Scan).where(Scan.compare_scan_id.in_(scan_ids)).values(compare_scan_id=None))
+
+    # Delete leaf records before their parents.
+    await db.execute(delete(Port).where(Port.host_id.in_(host_ids)))
+    await db.execute(delete(Screenshot).where(Screenshot.scan_id.in_(scan_ids)))
+    await db.execute(delete(Finding).where(Finding.scan_id.in_(scan_ids)))
+    await db.execute(delete(PluginRun).where(PluginRun.scan_id.in_(scan_ids)))
+    await db.execute(delete(Exclusion).where(Exclusion.scan_id.in_(scan_ids)))
+    await db.execute(delete(Report).where(Report.scan_id.in_(scan_ids)))
+    await db.execute(delete(Target).where(Target.scan_id.in_(scan_ids)))
+    await db.execute(delete(Host).where(Host.scan_id.in_(scan_ids)))
+    # ai_results and ai_agent_runs have ondelete="CASCADE" at DB level — deleted automatically.
+    await db.execute(delete(Scan).where(Scan.user_id == user_id))
+
+    await db.delete(user)
     await db.commit()
+    logger.info("Admin %s permanently deleted user=%s", admin.email, user.email)
