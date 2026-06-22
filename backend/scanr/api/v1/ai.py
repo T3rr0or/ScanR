@@ -421,8 +421,9 @@ class AgentRunRequest(BaseModel):
     objective: str = Field(default="", max_length=2000)
     provider: str | None = None
     model: str | None = None
-    max_iterations: int | None = Field(default=None, ge=1, le=200)
-    max_tokens: int | None = Field(default=None, ge=1000, le=2_000_000)
+    # 0 = unlimited (rely on the Stop button); None = engine default.
+    max_iterations: int | None = Field(default=None, ge=0, le=200)
+    max_tokens: int | None = Field(default=None, ge=0, le=2_000_000)
     # Aggressive opt-ins — each gated; only take effect with aggressive=True.
     aggressive: bool = False
     allow_privilege_escalation: bool = False

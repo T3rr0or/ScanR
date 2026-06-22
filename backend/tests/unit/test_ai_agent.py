@@ -361,5 +361,17 @@ async def test_loop_stops_when_should_stop():
     assert run.iterations == 0  # stopped before the first model call
 
 
+def test_budget_zero_means_unlimited():
+    # 0 disables a ceiling so a run only ends on completion or operator Stop.
+    b = Budget(max_iterations=0, max_tokens=0)
+    b.iterations = 10_000
+    b.add(Usage(input_tokens=10_000_000, output_tokens=10_000_000))
+    assert b.exhausted() == (False, "")
+    # A finite ceiling still trips even when the other is unlimited.
+    b2 = Budget(max_iterations=2, max_tokens=0)
+    b2.iterations = 2
+    assert b2.exhausted()[0] is True
+
+
 async def _ok_handler(ctx, args) -> str:
     return "OK"

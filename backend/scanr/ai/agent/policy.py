@@ -74,8 +74,10 @@ class Budget:
         return self.used.input_tokens + self.used.output_tokens
 
     def exhausted(self) -> tuple[bool, str]:
-        if self.iterations >= self.max_iterations:
+        # 0 (or falsy) means no ceiling — the run only stops on completion or an
+        # operator Stop.
+        if self.max_iterations and self.iterations >= self.max_iterations:
             return True, f"reached max iterations ({self.max_iterations})"
-        if self.total_tokens >= self.max_tokens:
+        if self.max_tokens and self.total_tokens >= self.max_tokens:
             return True, f"reached token budget ({self.max_tokens})"
         return False, ""
