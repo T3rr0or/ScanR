@@ -18,6 +18,10 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
+    from scanr.db.migration_utils import has_table
+
+    if has_table("app_settings"):
+        return
     op.create_table(
         "app_settings",
         sa.Column("key", sa.String(128), primary_key=True),

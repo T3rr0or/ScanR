@@ -8,7 +8,7 @@ from __future__ import annotations
 from typing import Sequence, Union
 from alembic import op
 import sqlalchemy as sa
-from sqlalchemy import inspect as sa_inspect, text
+from sqlalchemy import inspect as sa_inspect
 
 revision: str = "0004"
 down_revision: Union[str, None] = "0003"

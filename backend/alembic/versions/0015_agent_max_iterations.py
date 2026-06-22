@@ -7,7 +7,6 @@ Revision ID: 0015
 """
 from typing import Sequence, Union
 
-from alembic import op
 import sqlalchemy as sa
 
 
@@ -18,8 +17,12 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.add_column("ai_agent_runs", sa.Column("max_iterations", sa.Integer(), nullable=True))
+    from scanr.db.migration_utils import add_column_if_missing
+
+    add_column_if_missing("ai_agent_runs", sa.Column("max_iterations", sa.Integer(), nullable=True))
 
 
 def downgrade() -> None:
-    op.drop_column("ai_agent_runs", "max_iterations")
+    from scanr.db.migration_utils import drop_column_if_exists
+
+    drop_column_if_exists("ai_agent_runs", "max_iterations")

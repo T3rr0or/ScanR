@@ -8,7 +8,6 @@ Revision ID: 0016
 
 from typing import Sequence, Union
 
-from alembic import op
 import sqlalchemy as sa
 
 revision: str = "0016"
@@ -18,11 +17,12 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.add_column(
-        "ai_agent_runs",
-        sa.Column("conversation", sa.Text(), nullable=True),
-    )
+    from scanr.db.migration_utils import add_column_if_missing
+
+    add_column_if_missing("ai_agent_runs", sa.Column("conversation", sa.Text(), nullable=True))
 
 
 def downgrade() -> None:
-    op.drop_column("ai_agent_runs", "conversation")
+    from scanr.db.migration_utils import drop_column_if_exists
+
+    drop_column_if_exists("ai_agent_runs", "conversation")

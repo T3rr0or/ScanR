@@ -8,7 +8,6 @@ Revision ID: 0008
 """
 from typing import Sequence, Union
 
-from alembic import op
 import sqlalchemy as sa
 
 
@@ -19,11 +18,12 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.add_column(
-        "scans",
-        sa.Column("last_heartbeat", sa.DateTime(timezone=True), nullable=True),
-    )
+    from scanr.db.migration_utils import add_column_if_missing
+
+    add_column_if_missing("scans", sa.Column("last_heartbeat", sa.DateTime(timezone=True), nullable=True))
 
 
 def downgrade() -> None:
-    op.drop_column("scans", "last_heartbeat")
+    from scanr.db.migration_utils import drop_column_if_exists
+
+    drop_column_if_exists("scans", "last_heartbeat")

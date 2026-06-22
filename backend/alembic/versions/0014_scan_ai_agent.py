@@ -7,7 +7,6 @@ Revision ID: 0014
 """
 from typing import Sequence, Union
 
-from alembic import op
 import sqlalchemy as sa
 
 
@@ -18,21 +17,27 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.add_column(
-        "scans",
-        sa.Column("ai_agent_enabled", sa.Boolean(), nullable=False, server_default=sa.false()),
+    from scanr.db.migration_utils import add_column_if_missing
+
+    add_column_if_missing(
+        "scans", sa.Column("ai_agent_enabled", sa.Boolean(), nullable=False, server_default=sa.false())
     )
-    op.add_column("scans", sa.Column("ai_agent_mode", sa.String(length=20), nullable=True))
-    op.add_column("scans", sa.Column("ai_agent_objective", sa.Text(), nullable=True))
-    op.add_column("scans", sa.Column("ai_agent_provider", sa.String(length=40), nullable=True))
-    op.add_column("scans", sa.Column("ai_agent_model", sa.String(length=120), nullable=True))
-    op.add_column("scans", sa.Column("ai_agent_capabilities", sa.Text(), nullable=True))
+    add_column_if_missing("scans", sa.Column("ai_agent_mode", sa.String(length=20), nullable=True))
+    add_column_if_missing("scans", sa.Column("ai_agent_objective", sa.Text(), nullable=True))
+    add_column_if_missing("scans", sa.Column("ai_agent_provider", sa.String(length=40), nullable=True))
+    add_column_if_missing("scans", sa.Column("ai_agent_model", sa.String(length=120), nullable=True))
+    add_column_if_missing("scans", sa.Column("ai_agent_capabilities", sa.Text(), nullable=True))
 
 
 def downgrade() -> None:
-    op.drop_column("scans", "ai_agent_capabilities")
-    op.drop_column("scans", "ai_agent_model")
-    op.drop_column("scans", "ai_agent_provider")
-    op.drop_column("scans", "ai_agent_objective")
-    op.drop_column("scans", "ai_agent_mode")
-    op.drop_column("scans", "ai_agent_enabled")
+    from scanr.db.migration_utils import drop_column_if_exists
+
+    for col in (
+        "ai_agent_capabilities",
+        "ai_agent_model",
+        "ai_agent_provider",
+        "ai_agent_objective",
+        "ai_agent_mode",
+        "ai_agent_enabled",
+    ):
+        drop_column_if_exists("scans", col)
