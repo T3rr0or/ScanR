@@ -44,6 +44,15 @@ async def _run_agent_async(run_id: str, resume: bool = False) -> dict:
             run.status = "running"
             await db.commit()
 
+            # Drop any stale cancel flag from a prior run so a fresh/resumed run
+            # isn't stopped on its first iteration. Stop sets this flag.
+            try:
+                from scanr.db.redis import get_redis
+
+                await get_redis().delete(f"scanr:ai:cancel:{run_id}")
+            except Exception:
+                pass
+
             scan = await db.get(Scan, run.scan_id)
             slog = ScanLogger(run.scan_id)
             settings = get_settings()
@@ -63,7 +72,7 @@ async def _run_agent_async(run_id: str, resume: bool = False) -> dict:
                     allow_command_exec=bool(caps.get("allow_command_exec")),
                 )
                 budget = Budget(
-                    max_tokens=max(settings.ai_max_tokens * 20, 100_000),
+                    max_tokens=run.max_tokens or max(settings.ai_max_tokens * 20, 100_000),
                     max_iterations=run.max_iterations or Budget.max_iterations,
                 )
                 ctx = DbAgentContext(
@@ -130,7 +139,7 @@ async def _run_agent_async(run_id: str, resume: bool = False) -> dict:
                 # Serialize the full conversation so future resumes see all history.
                 run.conversation = json.dumps(_serialize_conversation(all_messages))
 
-                run.status = "completed"
+                run.status = "cancelled" if result.stop_reason == "cancelled" else "completed"
                 run.provider = provider.name
                 run.model = provider.model
                 run.stop_reason = result.stop_reason
@@ -145,8 +154,15 @@ async def _run_agent_async(run_id: str, resume: bool = False) -> dict:
                         "cached_input_tokens": result.usage.cached_input_tokens,
                     }
                 )
+                # Human-readable reason for the live scan console.
+                _reason = {
+                    "end": "completed its assessment",
+                    "max_iterations": f"reached the step limit ({budget.max_iterations} steps)",
+                    "budget": f"reached the token safety limit (~{budget.max_tokens // 1000}k tokens)",
+                    "cancelled": "was stopped by the operator",
+                }.get(result.stop_reason, result.stop_reason)
                 await slog.info(
-                    f"AI agent finished ({result.stop_reason}); {len(result.actions)} action(s)",
+                    f"AI agent {_reason} after {len(result.actions)} step(s).",
                     phase="ai_agent",
                 )
             except (AIProviderError, RuntimeError) as exc:

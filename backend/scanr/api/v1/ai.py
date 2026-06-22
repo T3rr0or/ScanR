@@ -422,6 +422,7 @@ class AgentRunRequest(BaseModel):
     provider: str | None = None
     model: str | None = None
     max_iterations: int | None = Field(default=None, ge=1, le=200)
+    max_tokens: int | None = Field(default=None, ge=1000, le=2_000_000)
     # Aggressive opt-ins — each gated; only take effect with aggressive=True.
     aggressive: bool = False
     allow_privilege_escalation: bool = False
@@ -441,6 +442,7 @@ def _agent_run_dict(run: AiAgentRun) -> dict:
         "status": run.status,
         "mode": run.mode,
         "max_iterations": run.max_iterations,
+        "max_tokens": run.max_tokens,
         "objective": run.objective,
         "provider": run.provider,
         "model": run.model,
@@ -510,6 +512,7 @@ async def launch_agent(
         provider=provider_name,
         model=body.model,
         max_iterations=body.max_iterations,
+        max_tokens=body.max_tokens,
         capabilities=_json.dumps(caps) if caps["aggressive"] else None,
     )
     db.add(run)
@@ -659,3 +662,38 @@ async def decide_agent_approval(
         raise HTTPException(status_code=502, detail=f"Could not signal decision: {exc}")
     logger.info("agent approval %s for run %s by %s", body.decision, run_id, current_user.email)
     return {"ok": True, "decision": body.decision}
+
+
+@router.post("/agent/runs/{run_id}/cancel")
+async def cancel_agent_run(
+    run_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_scope("scans:write")),
+):
+    """Operator Stop for an in-flight run. Sets a Redis cancel flag the worker's
+    agent loop checks between iterations; the run stops cleanly and is marked
+    'cancelled' with its partial transcript preserved."""
+    run = await db.get(AiAgentRun, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Agent run not found")
+    await _own_scan(db, run.scan_id, current_user.id)
+
+    if run.status not in ("queued", "running"):
+        raise HTTPException(status_code=409, detail=f"Run is {run.status}; nothing to stop.")
+
+    # If the agent has a pending approval, also release it as a deny so the loop
+    # unblocks immediately rather than waiting out the approval timeout.
+    try:
+        from scanr.db.redis import get_redis
+
+        r = get_redis()
+        await r.setex(f"scanr:ai:cancel:{run_id}", 600, "1")
+        import json as _json
+
+        pending = _json.loads(run.pending_approval) if run.pending_approval else None
+        if pending and pending.get("approval_id"):
+            await r.setex(f"scanr:ai:approval:{pending['approval_id']}", 600, "deny")
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Could not signal stop: {exc}")
+    logger.info("agent run %s stop requested by %s", run_id, current_user.email)
+    return {"ok": True}
