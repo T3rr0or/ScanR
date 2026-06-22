@@ -420,6 +420,7 @@ class AgentRunRequest(BaseModel):
     objective: str = Field(default="", max_length=2000)
     provider: str | None = None
     model: str | None = None
+    max_iterations: int | None = Field(default=None, ge=1, le=200)
     # Aggressive opt-ins — each gated; only take effect with aggressive=True.
     aggressive: bool = False
     allow_privilege_escalation: bool = False
@@ -442,6 +443,7 @@ def _agent_run_dict(run: AiAgentRun) -> dict:
         "scan_id": run.scan_id,
         "status": run.status,
         "mode": run.mode,
+        "max_iterations": run.max_iterations,
         "objective": run.objective,
         "provider": run.provider,
         "model": run.model,
@@ -508,6 +510,7 @@ async def launch_agent(
         objective=objective,
         provider=provider_name,
         model=body.model,
+        max_iterations=body.max_iterations,
         capabilities=_json.dumps(caps) if caps["aggressive"] else None,
     )
     db.add(run)

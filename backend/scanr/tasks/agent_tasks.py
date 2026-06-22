@@ -59,7 +59,10 @@ async def _run_agent_async(run_id: str) -> dict:
                     allow_exploitation=bool(caps.get("allow_exploitation")),
                     allow_command_exec=bool(caps.get("allow_command_exec")),
                 )
-                budget = Budget(max_tokens=max(settings.ai_max_tokens * 20, 100_000))
+                budget = Budget(
+                    max_tokens=max(settings.ai_max_tokens * 20, 100_000),
+                    max_iterations=run.max_iterations or Budget.max_iterations,
+                )
                 ctx = DbAgentContext(
                     scan_id=run.scan_id,
                     db=db,

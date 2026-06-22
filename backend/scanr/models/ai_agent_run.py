@@ -18,6 +18,8 @@ class AiAgentRun(Base, TimestampMixin):
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="queued", index=True)
     # queued | running | completed | failed | cancelled
     mode: Mapped[str] = mapped_column(String(20), nullable=False)  # guided | autonomous
+    # Max reasoning iterations before the run stops (None = engine default).
+    max_iterations: Mapped[int | None] = mapped_column(nullable=True)
     # JSON: {aggressive, allow_privilege_escalation, allow_exploitation}. Null = none.
     capabilities: Mapped[str | None] = mapped_column(Text, nullable=True)
     objective: Mapped[str] = mapped_column(Text, nullable=False)

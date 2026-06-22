@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import logging
 import os
 import time
 import uuid
@@ -25,6 +26,8 @@ from dataclasses import dataclass, field
 
 from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
+
+logger = logging.getLogger("scanr.sandbox.runner")
 
 _TOKEN = os.environ.get("SANDBOX_TOKEN", "")
 _IMAGE = os.environ.get("SANDBOX_IMAGE", "scanr-sandbox:latest")
@@ -135,11 +138,16 @@ def _exec_args(name: str, command: str, timeout: int) -> list[str]:
 
 
 async def _run_docker(args: list[str], timeout: float) -> tuple[int, str, str, bool]:
-    proc = await asyncio.create_subprocess_exec(
-        *args,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *args,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+    except (FileNotFoundError, OSError) as exc:
+        # docker CLI missing / socket unreachable — surface a clear cause.
+        logger.error("failed to spawn docker (%s): %s", args[:2], exc)
+        return -1, "", f"failed to run docker: {exc}", False
     try:
         out, err = await asyncio.wait_for(proc.communicate(), timeout=timeout)
     except asyncio.TimeoutError:
@@ -193,17 +201,23 @@ async def exec_command(body: ExecRequest, x_sandbox_token: str | None = Header(d
     _check_token(x_sandbox_token)
     ephemeral = not body.run_id
     run_id = body.run_id or f"once-{uuid.uuid4().hex[:12]}"
-    name = await _ensure_session(run_id, body.scope)
     try:
-        code, out, err, timed_out = await _run_docker(
-            _exec_args(name, body.command, body.timeout),
-            timeout=body.timeout + 15,
-        )
-    finally:
-        if ephemeral:
-            async with _LOCK:
-                _SESSIONS.pop(run_id, None)
-            await _remove_container(name)
+        name = await _ensure_session(run_id, body.scope)
+        try:
+            code, out, err, timed_out = await _run_docker(
+                _exec_args(name, body.command, body.timeout),
+                timeout=body.timeout + 15,
+            )
+        finally:
+            if ephemeral:
+                async with _LOCK:
+                    _SESSIONS.pop(run_id, None)
+                await _remove_container(name)
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001 - never return an opaque 500 to the worker
+        logger.exception("sandbox exec failed for run %s", run_id)
+        raise HTTPException(status_code=502, detail=f"sandbox exec error: {exc}") from exc
     return {
         "exit_code": code,
         "stdout": out[:_MAX_STDOUT],

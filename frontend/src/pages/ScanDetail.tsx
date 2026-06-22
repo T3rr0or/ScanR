@@ -532,6 +532,7 @@ function AgentPanel({ scanId, enabled }: { scanId: string; enabled: boolean }) {
 	}
 	const [objective, setObjective] = useState("");
 	const [mode, setMode] = useState<"guided" | "autonomous">("guided");
+	const [maxIterations, setMaxIterations] = useState(25);
 	const [aggressive, setAggressive] = useState(false);
 	const [allowExploit, setAllowExploit] = useState(false);
 	const [allowPrivesc, setAllowPrivesc] = useState(false);
@@ -553,6 +554,7 @@ function AgentPanel({ scanId, enabled }: { scanId: string; enabled: boolean }) {
 				.post(`/ai/scans/${scanId}/agent`, {
 					mode,
 					objective: objective.trim(),
+					max_iterations: maxIterations,
 					aggressive: isAdmin && aggressive,
 					allow_exploitation: isAdmin && aggressive && allowExploit,
 					allow_privilege_escalation: isAdmin && aggressive && allowPrivesc,
@@ -597,6 +599,19 @@ function AgentPanel({ scanId, enabled }: { scanId: string; enabled: boolean }) {
 						<option value="guided">Guided</option>
 						<option value="autonomous">Autonomous</option>
 					</select>
+					<label style={{ fontSize: 11.5, color: "var(--text-3)", display: "flex", alignItems: "center", gap: 5 }}>
+						Max steps
+						<input
+							type="number"
+							className="input"
+							min={1}
+							max={200}
+							value={maxIterations}
+							onChange={(e) => setMaxIterations(Math.max(1, Math.min(200, Number(e.target.value) || 1)))}
+							style={{ width: 64 }}
+							title="Maximum reasoning iterations before the agent stops (1–200)"
+						/>
+					</label>
 					<button
 						className="btn btn-primary btn-sm"
 						disabled={!enabled || launch.isPending || active}
