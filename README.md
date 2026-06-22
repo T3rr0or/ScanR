@@ -317,6 +317,12 @@ Safety is enforced in code, not by the model: every tool call is scope-checked
 aggressive capabilities each require their own opt-in, the run has a token +
 iteration budget, and every action is streamed to the scan console and persisted.
 
+The AI tab exposes the run's limits directly — **Max steps** (reasoning
+iterations) and **Max tokens** (safety cap) — and a **Stop** button cancels an
+in-flight run after its current step, keeping the partial transcript. Reaching
+either limit ends the run cleanly and is labelled as such (e.g. "Reached step
+limit").
+
 Tools available to the agent today: read the scan's hosts/findings/evidence,
 `fetch_url` (HTTP GET, non-intrusive), `list_plugins`, `run_plugin` (run a ScanR
 plugin against a discovered host), and `run_port_scan` (nmap a host). Active
@@ -347,16 +353,37 @@ give it a real shell — `run_command` — that runs inside an isolated, disposa
 container so it can use the full pentest toolkit and adapt like an operator.
 This is **off** unless you opt in with the sandbox Compose overlay.
 
+**Enable it:**
+
 ```bash
-# 1. Generate a shared token for the worker ↔ runner channel
-export SANDBOX_TOKEN=$(openssl rand -hex 32)
+# 1. Set a shared worker ↔ runner token in .env (do NOT leave it empty)
+echo "SANDBOX_TOKEN=$(openssl rand -hex 32)" >> .env
 
 # 2. Build the toolkit image (fat, pre-baked — one-time cost)
 docker build -t scanr-sandbox:latest -f backend/sandbox/Dockerfile.sandbox backend
 
-# 3. Start ScanR with the sandbox overlay
-docker compose -f docker-compose.yml -f docker-compose.sandbox.yml up -d --build
+# 3. Tell Compose to always include the sandbox overlay (see warning below),
+#    then bring the stack up
+echo "COMPOSE_FILE=docker-compose.yml:docker-compose.sandbox.yml" >> .env
+docker compose up -d --build
 ```
+
+> ⚠️ **Don't lose the sandbox on the next deploy.** The sandbox services live in
+> a separate overlay file (`docker-compose.sandbox.yml`). If you bring the stack
+> up *without* that overlay — e.g. a plain `docker compose up -d` — Compose
+> recreates `api` and `worker` **without** `SANDBOX_RUNNER_URL`, silently
+> disabling `run_command` (it returns "sandbox not configured") while the runner
+> container keeps running. Setting `COMPOSE_FILE` in `.env` (step 3) makes every
+> `docker compose` command include the overlay automatically, so this can't
+> happen. The alternative is to pass `-f docker-compose.yml -f
+> docker-compose.sandbox.yml` on **every** command.
+
+**Verify it's active:** `docker compose exec worker printenv SANDBOX_RUNNER_URL`
+should print `http://sandbox-runner:8090`. In a scan's **AI** tab the agent's
+`run_command` calls then execute instead of returning "sandbox not configured".
+
+**Disable it:** remove the `COMPOSE_FILE` line from `.env` (or stop passing the
+overlay) and `docker compose up -d`. Command execution returns to fail-closed.
 
 Isolation model: only a dedicated **sandbox-runner** holds the Docker socket and
 it carries **no ScanR secrets**; the secret-holding worker can't touch the
@@ -432,6 +459,7 @@ API docs are available at **http://localhost:8000/docs**.
 | `SANDBOX_RUNNER_URL` | empty | URL of the sandbox-runner; enables the agent's `run_command` shell when set (fail-closed if unset) |
 | `SANDBOX_TOKEN` | empty | Shared token authenticating the worker to the sandbox-runner |
 | `SANDBOX_IMAGE` | `scanr-sandbox:latest` | Toolkit image the sandbox runs |
+| `SANDBOX_CMD_TIMEOUT` | `120` | Per-command timeout (seconds) in the sandbox |
 | `DATABASE_URL` | compose-managed | SQLAlchemy database URL |
 | `REDIS_URL` | compose-managed | Redis URL |
 | `CELERY_BROKER_URL` | compose-managed | Celery broker URL |
