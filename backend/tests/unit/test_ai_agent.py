@@ -295,7 +295,7 @@ async def test_loop_runs_tools_then_finishes():
         Completion(text="## Conclusion\nOne high finding.", usage=Usage(input_tokens=8, output_tokens=12)),
     ]
     ctx = FakeContext(AgentPolicy(mode=AutonomyMode.guided))
-    run = await run_agent(ScriptedProvider(script), ctx, ToolRegistry(read_only_tools()), objective="assess")
+    run, _ = await run_agent(ScriptedProvider(script), ctx, ToolRegistry(read_only_tools()), objective="assess")
     assert run.stop_reason == "end"
     assert run.final_text.startswith("## Conclusion")
     assert [a.tool for a in run.actions] == ["list_findings"]
@@ -313,9 +313,52 @@ async def test_loop_stops_on_iteration_budget():
         stop_reason="tool_use",
     )
     ctx = FakeContext(AgentPolicy(mode=AutonomyMode.autonomous), budget=Budget(max_iterations=3, max_tokens=10_000))
-    run = await run_agent(ScriptedProvider([forever]), ctx, ToolRegistry(read_only_tools()), objective="loop")
+    run, _ = await run_agent(ScriptedProvider([forever]), ctx, ToolRegistry(read_only_tools()), objective="loop")
     assert run.stop_reason == "max_iterations"
     assert run.iterations == 3
+
+
+@pytest.mark.asyncio
+async def test_resume_does_not_reinject_objective():
+    """On resume (messages given), the loop must answer the latest user turn,
+    not re-append the original objective (regression for the chat-resume bug)."""
+    from scanr.ai.llm.base import Msg
+
+    prior = [
+        Msg(role="user", content="ORIGINAL OBJECTIVE"),
+        Msg(role="assistant", content="done first turn"),
+        Msg(role="user", content="now test xss"),  # the follow-up
+    ]
+    ctx = FakeContext(AgentPolicy(mode=AutonomyMode.guided))
+    script = [Completion(text="answering the follow-up", usage=Usage(input_tokens=1, output_tokens=1))]
+    run, msgs = await run_agent(
+        ScriptedProvider(script), ctx, ToolRegistry(read_only_tools()),
+        objective="ORIGINAL OBJECTIVE", messages=prior,
+    )
+    # The original objective must NOT have been appended again as a new turn.
+    assert sum(1 for m in msgs if m.role == "user" and m.content == "ORIGINAL OBJECTIVE") == 1
+    # The follow-up must remain the last user turn the model saw.
+    user_turns = [m for m in msgs if m.role == "user"]
+    assert user_turns[-1].content == "now test xss"
+
+
+@pytest.mark.asyncio
+async def test_loop_stops_when_should_stop():
+    """The cooperative stop signal ends the run with stop_reason='stopped'."""
+    class StoppingCtx(FakeContext):
+        async def should_stop(self):
+            return True
+
+    forever = Completion(
+        text="",
+        tool_calls=[ToolCall(id="t", name="list_hosts", arguments={})],
+        usage=Usage(input_tokens=1, output_tokens=1),
+        stop_reason="tool_use",
+    )
+    ctx = StoppingCtx(AgentPolicy(mode=AutonomyMode.autonomous))
+    run, _ = await run_agent(ScriptedProvider([forever]), ctx, ToolRegistry(read_only_tools()), objective="loop")
+    assert run.stop_reason == "stopped"
+    assert run.iterations == 0  # stopped before the first model call
 
 
 async def _ok_handler(ctx, args) -> str:

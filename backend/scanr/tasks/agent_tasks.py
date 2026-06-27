@@ -89,6 +89,12 @@ async def _run_agent_async(run_id: str, resume: bool = False) -> dict:
                     run.actions = json.dumps(acc)
                     await db.commit()
 
+                async def _on_step(msgs):
+                    # Stream the conversation to the DB after each turn so the
+                    # chat UI updates live, not only when the run finishes.
+                    run.conversation = json.dumps(_serialize_conversation(msgs))
+                    await db.commit()
+
                 # On resume, load conversation + previous usage to continue from
                 # where the user left off.
                 all_messages: list = []
@@ -115,6 +121,7 @@ async def _run_agent_async(run_id: str, resume: bool = False) -> dict:
                     objective=run.objective,
                     scan_summary=_scan_summary(scan),
                     on_action=_on_action,
+                    on_step=_on_step,
                     messages=all_messages if all_messages else None,
                     usage=prev_usage,
                     iterations=prev_iterations,
@@ -152,6 +159,15 @@ async def _run_agent_async(run_id: str, resume: bool = False) -> dict:
                 run.error = str(exc)
                 await slog.error(f"AI agent error: {exc}", phase="ai_agent")
             finally:
+                # Clear any stop flag so a later resume doesn't stop immediately.
+                try:
+                    import redis.asyncio as aioredis
+
+                    r = aioredis.from_url(settings.redis_url, decode_responses=True)
+                    await r.delete(f"scanr:ai:cancel:{run.id}")
+                    await r.aclose()
+                except Exception:  # noqa: BLE001 - best-effort
+                    pass
                 # Tear down the agent's persistent sandbox session (if any).
                 try:
                     from scanr.sandbox.client import SandboxClient

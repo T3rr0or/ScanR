@@ -179,6 +179,15 @@ async def delete_user(
     await db.execute(delete(APIKey).where(APIKey.user_id == user_id))
     await db.execute(delete(Webhook).where(Webhook.user_id == user_id))
     await db.execute(delete(Schedule).where(Schedule.user_id == user_id))
+    # Detach any scan (this user's or another's) that references one of this
+    # user's scan agents before deleting the agents — Scan.agent_id is a
+    # non-cascading FK, so deleting a referenced agent would otherwise raise a
+    # ForeignKeyViolation on Postgres.
+    await db.execute(
+        update(Scan)
+        .where(Scan.agent_id.in_(select(ScanAgent.id).where(ScanAgent.user_id == user_id)))
+        .values(agent_id=None)
+    )
     await db.execute(delete(ScanAgent).where(ScanAgent.user_id == user_id))
 
     # Promote user-created templates/wordlists/credentials to global.

@@ -601,6 +601,32 @@ async def agent_chat(
     return _agent_run_dict(run)
 
 
+@router.post("/agent/runs/{run_id}/stop")
+async def agent_stop(
+    run_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_scope("scans:write")),
+):
+    """Ask a running agent to stop after its current step (like Claude's Stop)."""
+    run = await db.get(AiAgentRun, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Agent run not found")
+    await _own_scan(db, run.scan_id, current_user.id)
+    if run.status not in ("running", "queued"):
+        return _agent_run_dict(run)
+
+    # Set a cancel flag the agent loop polls each iteration (fail-safe TTL so a
+    # stale flag can't linger). The run finishes itself with stop_reason=stopped.
+    import redis.asyncio as aioredis
+
+    r = aioredis.from_url(get_settings().redis_url, decode_responses=True)
+    try:
+        await r.set(f"scanr:ai:cancel:{run_id}", "1", ex=3600)
+    finally:
+        await r.aclose()
+    return _agent_run_dict(run)
+
+
 @router.post("/agent/runs/{run_id}/approval")
 async def decide_agent_approval(
     run_id: str,

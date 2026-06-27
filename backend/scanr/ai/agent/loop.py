@@ -42,22 +42,36 @@ async def run_agent(
     scan_summary: str = "",
     max_tokens_per_call: int = 4096,
     on_action: "Callable[[AgentAction], Awaitable[None]] | None" = None,
+    on_step: "Callable[[list[Msg]], Awaitable[None]] | None" = None,
     messages: list[Msg] | None = None,
     usage: Usage | None = None,
     iterations: int = 0,
 ) -> tuple[AgentRun, list[Msg]]:
     """Drive the agent loop. Returns the run result AND the complete message
-    history (for serialization as conversation). Pass ``messages``, ``usage``,
-    and ``iterations`` to resume an existing conversation."""
+    history (for serialization as conversation).
+
+    Pass ``messages``, ``usage``, and ``iterations`` to resume an existing
+    conversation — on resume the latest user turn is already the last message,
+    so the objective is NOT re-appended. ``on_step`` (if given) is awaited with
+    the running message list after each turn so callers can stream the
+    conversation to the UI live."""
     system = build_system_prompt(ctx.policy, scan_summary)
     if messages:
-        messages.append(Msg(role="user", content=objective))
+        # Resuming: the new user message is already the last entry — don't
+        # re-inject the original objective (that would answer the wrong prompt
+        # and produce two consecutive user turns, which some providers reject).
+        pass
     else:
         messages = [Msg(role="user", content=objective)]
     tool_defs = registry.definitions()
     run = AgentRun(usage=usage or Usage(), iterations=iterations)
 
     while True:
+        if await ctx.should_stop():
+            run.stop_reason = "stopped"
+            await ctx.log("agent stopped by user")
+            break
+
         done, why = ctx.budget.exhausted()
         if done:
             run.stop_reason = "budget" if "token" in why else "max_iterations"
@@ -85,6 +99,8 @@ async def run_agent(
         if not completion.tool_calls:
             run.final_text = completion.text
             run.stop_reason = "end"
+            if on_step is not None:
+                await on_step(messages)
             break
 
         for call in completion.tool_calls:
@@ -95,6 +111,11 @@ async def run_agent(
             if on_action is not None:
                 await on_action(action)
             messages.append(Msg(role="tool", content=result, tool_call_id=call.id, name=call.name))
+
+        # Stream the conversation after each completed turn so the UI updates
+        # live instead of only when the whole run finishes.
+        if on_step is not None:
+            await on_step(messages)
 
     return run, messages
 

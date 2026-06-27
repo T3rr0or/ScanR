@@ -37,6 +37,11 @@ class AgentContext(ABC):
     async def log(self, message: str) -> None:
         """Surface a line to the live scan console / audit trail."""
 
+    async def should_stop(self) -> bool:
+        """Whether the operator has asked to stop the run. Checked each loop
+        iteration. Default False; the DB-backed impl checks a cancel flag."""
+        return False
+
     @abstractmethod
     async def request_approval(self, tool: str, args: dict, reason: str) -> bool:
         """Ask the operator to approve an intrusive action. Returns True to run.

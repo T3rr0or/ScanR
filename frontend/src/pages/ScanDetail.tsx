@@ -542,6 +542,14 @@ interface AgentRun {
 	created_at?: string | null;
 }
 
+const stopReasonLabel: Record<string, string> = {
+	end: "Agent finished",
+	stopped: "Stopped — send a message to continue",
+	budget: "Reached length limit — send a message to continue",
+	max_iterations: "Reached step limit — send a message to continue",
+	error: "Error",
+};
+
 function AgentPanel({ scanId, enabled }: { scanId: string; enabled: boolean }) {
 	const qc = useQueryClient();
 	const token = useAuthStore((s) => s.token);
@@ -595,7 +603,7 @@ function AgentPanel({ scanId, enabled }: { scanId: string; enabled: boolean }) {
 			api.get(`/ai/scans/${scanId}/agent/runs`).then((r) => r.data),
 		refetchInterval: (q) =>
 			(q.state.data ?? []).some((r) => ["queued", "running"].includes(r.status))
-				? 4000
+				? 2000
 				: false,
 	});
 
@@ -631,6 +639,12 @@ function AgentPanel({ scanId, enabled }: { scanId: string; enabled: boolean }) {
 		},
 	});
 
+	const stopMut = useMutation({
+		mutationFn: (runId: string) =>
+			api.post(`/ai/agent/runs/${runId}/stop`).then((r) => r.data),
+		onSuccess: () => qc.invalidateQueries({ queryKey: ["ai-agent-runs", scanId] }),
+	});
+
 	const launchErr = (() => {
 		const e = (launch.error ?? chatMut.error) as {
 			response?: { data?: { detail?: string } };
@@ -639,6 +653,7 @@ function AgentPanel({ scanId, enabled }: { scanId: string; enabled: boolean }) {
 	})();
 
 	const active = runs.some((r) => ["queued", "running"].includes(r.status));
+	const runningRun = runs.find((r) => ["queued", "running"].includes(r.status));
 	const latestRun = runs[0];
 	const canChat =
 		latestRun?.status === "completed" && latestRun?.conversation?.length;
@@ -901,12 +916,31 @@ function AgentPanel({ scanId, enabled }: { scanId: string; enabled: boolean }) {
 					</div>
 				)}
 
+				{/* Why the latest run ended (length/step limit, stopped, error) */}
+				{latestRun &&
+					latestRun.status === "completed" &&
+					latestRun.stop_reason &&
+					latestRun.stop_reason !== "end" &&
+					!!latestRun.conversation?.length && (
+						<div
+							style={{
+								fontSize: 11,
+								color: "var(--text-3)",
+								textAlign: "center",
+								padding: "2px 0",
+							}}
+						>
+							{stopReasonLabel[latestRun.stop_reason] ?? latestRun.stop_reason}
+						</div>
+					)}
+
 				{/* Approval prompt */}
 				{latestRun?.pending_approval && <ApprovalCard run={latestRun} />}
 
-				{/* Run card for non-chat runs (backward compat) */}
+				{/* Older pre-chat runs (no conversation) render as compact cards. The
+				    latest run always renders as live-streaming chat bubbles above. */}
 				{runs
-					.filter((r) => !r.conversation?.length)
+					.filter((r) => r.id !== latestRun?.id && !r.conversation?.length)
 					.map((run) => (
 						<AgentRunCard key={run.id} run={run} />
 					))}
@@ -962,19 +996,34 @@ function AgentPanel({ scanId, enabled }: { scanId: string; enabled: boolean }) {
 					disabled={!enabled || launch.isPending || chatMut.isPending || active}
 					style={{ flex: 1, fontSize: 13 }}
 				/>
-				<button
-					className="btn btn-primary btn-sm"
-					disabled={
-						!enabled ||
-						!message.trim() ||
-						launch.isPending ||
-						chatMut.isPending ||
-						active
-					}
-					onClick={send}
-				>
-					▶
-				</button>
+				{active ? (
+					<button
+						className="btn btn-sm"
+						onClick={() => runningRun && stopMut.mutate(runningRun.id)}
+						disabled={!runningRun || stopMut.isPending}
+						style={{
+							background: "var(--sev-high)",
+							color: "#fff",
+							borderColor: "var(--sev-high)",
+						}}
+						title="Stop the agent"
+					>
+						{stopMut.isPending ? "Stopping…" : "■ Stop"}
+					</button>
+				) : (
+					<button
+						className="btn btn-primary btn-sm"
+						disabled={
+							!enabled ||
+							!message.trim() ||
+							launch.isPending ||
+							chatMut.isPending
+						}
+						onClick={send}
+					>
+						▶
+					</button>
+				)}
 			</div>
 		</div>
 	);

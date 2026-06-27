@@ -122,6 +122,22 @@ class DbAgentContext(AgentContext):
     async def log(self, message: str) -> None:
         await self._log.info(message, phase="ai_agent")
 
+    async def should_stop(self) -> bool:
+        """True if the operator pressed Stop (a flag set in Redis by the API)."""
+        if not self._run_id:
+            return False
+        import redis.asyncio as aioredis
+
+        from scanr.config import get_settings
+
+        r = aioredis.from_url(get_settings().redis_url, decode_responses=True)
+        try:
+            return bool(await r.get(f"scanr:ai:cancel:{self._run_id}"))
+        except Exception:  # noqa: BLE001 - a Redis hiccup shouldn't kill the run
+            return False
+        finally:
+            await r.aclose()
+
     async def request_approval(self, tool: str, args: dict, reason: str) -> bool:
         """Pause the run, surface the pending action on the run row, and wait for
         an operator allow/deny (signalled via Redis). Times out to deny (safe)."""
