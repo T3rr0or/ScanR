@@ -104,8 +104,12 @@ async def run_agent(
             break
 
         for call in completion.tool_calls:
-            await ctx.log(f"→ {call.name}({_short_args(call.arguments)})")
+            # Full, exact command line for the audit trail — every tool, including
+            # the built-ins (fetch_url, run_port_scan, …), with complete arguments
+            # so an auditor/customer can see precisely what was executed.
+            await ctx.log(f"→ {call.name}({_full_args(call.arguments)})")
             result = await registry.dispatch(ctx, call.name, call.arguments)
+            await ctx.log(f"← {call.name}: {_preview(result)}")
             action = AgentAction(tool=call.name, arguments=call.arguments, result=result)
             run.actions.append(action)
             if on_action is not None:
@@ -120,6 +124,18 @@ async def run_agent(
     return run, messages
 
 
-def _short_args(args: dict) -> str:
-    s = ", ".join(f"{k}={v!r}" for k, v in args.items())
-    return s[:120]
+def _full_args(args: dict) -> str:
+    """Exact JSON of the tool arguments for the audit trail (no truncation)."""
+    import json
+
+    try:
+        return json.dumps(args, ensure_ascii=False, default=str)
+    except Exception:  # noqa: BLE001
+        return repr(args)
+
+
+def _preview(result: str, limit: int = 2000) -> str:
+    """A bounded preview of a tool result for the console (full result is kept
+    in the run transcript)."""
+    result = result or ""
+    return result if len(result) <= limit else result[:limit] + f"… ({len(result)} chars)"

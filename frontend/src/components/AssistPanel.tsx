@@ -6,6 +6,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import api from "@/api/client";
 import type { Finding } from "@/api/findings";
+import Markdown from "@/components/Markdown";
 
 interface SavedResult {
 	id: string;
@@ -301,15 +302,7 @@ function ResultCard({
 						: ""}
 				</span>
 			</div>
-			<div
-				style={{
-					padding: 12,
-					whiteSpace: "pre-wrap",
-					fontSize: 12.5,
-					lineHeight: 1.6,
-					color: "var(--text-1)",
-				}}
-			>
+			<div style={{ padding: 12 }}>
 				{truncated && (
 					<div
 						style={{ fontSize: 11, color: "var(--sev-high)", marginBottom: 8 }}
@@ -318,7 +311,7 @@ function ResultCard({
 						incomplete.
 					</div>
 				)}
-				{text}
+				<Markdown>{text}</Markdown>
 			</div>
 		</div>
 	);
