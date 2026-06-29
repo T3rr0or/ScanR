@@ -397,7 +397,7 @@ class DbAgentContext(AgentContext):
             targets = [str(ip) for ip in hrows.scalars().all()]
         return [t for t in targets if t and not is_forbidden_target(t, self.denylist)]
 
-    async def _persist_findings(self, scan, host_id: str, findings: list) -> int:
+    async def _persist_findings(self, scan, host_id: str | None, findings: list) -> int:
         """Route plugin findings through ResultCollector so agent discoveries
         become first-class findings (deduped, counted, shown in the UI)."""
         if not findings:
