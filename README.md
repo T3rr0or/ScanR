@@ -359,13 +359,10 @@ This is **off** unless you opt in with the sandbox Compose overlay.
 # 1. Set a shared worker ↔ runner token in .env (do NOT leave it empty)
 echo "SANDBOX_TOKEN=$(openssl rand -hex 32)" >> .env
 
-# 2. Build the toolkit image (fat, pre-baked — one-time cost)
-docker build -t scanr-sandbox:latest -f backend/sandbox/Dockerfile.sandbox backend
-
-# 3. Tell Compose to always include the sandbox overlay (see warning below),
-#    then bring the stack up
+# 2. Tell Compose to always include the sandbox overlay (see warning below),
+#    then bring the stack up (images are pulled from GHCR automatically)
 echo "COMPOSE_FILE=docker-compose.yml:docker-compose.sandbox.yml" >> .env
-docker compose up -d --build
+docker compose up -d
 ```
 
 > ⚠️ **Don't lose the sandbox on the next deploy.** The sandbox services live in
@@ -373,7 +370,7 @@ docker compose up -d --build
 > up *without* that overlay — e.g. a plain `docker compose up -d` — Compose
 > recreates `api` and `worker` **without** `SANDBOX_RUNNER_URL`, silently
 > disabling `run_command` (it returns "sandbox not configured") while the runner
-> container keeps running. Setting `COMPOSE_FILE` in `.env` (step 3) makes every
+> container keeps running. Setting `COMPOSE_FILE` in `.env` (step 2) makes every
 > `docker compose` command include the overlay automatically, so this can't
 > happen. The alternative is to pass `-f docker-compose.yml -f
 > docker-compose.sandbox.yml` on **every** command.
@@ -458,7 +455,7 @@ API docs are available at **http://localhost:8000/docs**.
 | `DEEPSEEK_API_KEY` | empty | Key for the DeepSeek provider |
 | `SANDBOX_RUNNER_URL` | empty | URL of the sandbox-runner; enables the agent's `run_command` shell when set (fail-closed if unset) |
 | `SANDBOX_TOKEN` | empty | Shared token authenticating the worker to the sandbox-runner |
-| `SANDBOX_IMAGE` | `scanr-sandbox:latest` | Toolkit image the sandbox runs |
+| `SANDBOX_IMAGE` | `ghcr.io/t3rr0or/scanr-sandbox:latest` | Toolkit image the sandbox runs |
 | `SANDBOX_CMD_TIMEOUT` | `120` | Per-command timeout (seconds) in the sandbox |
 | `DATABASE_URL` | compose-managed | SQLAlchemy database URL |
 | `REDIS_URL` | compose-managed | Redis URL |
@@ -504,13 +501,19 @@ docker compose pull
 docker compose up -d
 ```
 
+If you use the sandbox or self-update overlays, set `COMPOSE_FILE` in `.env`
+(see the [sandbox section](#ai-command-execution-sandbox-optional)) and the same
+commands automatically include all needed services.
 Database migrations run automatically on API startup.
 
-Admins can optionally enable in-app updates by setting `SELF_UPDATE_ENABLED=true` in `.env` and starting ScanR with the self-update override:
+Admins can optionally enable in-app updates by setting `COMPOSE_FILE=docker-compose.yml:docker-compose.self-update.yml` in `.env` and `SELF_UPDATE_ENABLED=true`. Then start with:
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.self-update.yml up -d
+docker compose up -d
 ```
+
+(Or combine with the sandbox:
+`COMPOSE_FILE=docker-compose.yml:docker-compose.sandbox.yml:docker-compose.self-update.yml`)
 
 This enables the **Update now** button when a newer GitHub release is available. The override mounts the host Docker socket and project directory into the API container, so only use it for trusted admin-only deployments. The default `docker-compose.yml` does not mount the Docker socket.
 

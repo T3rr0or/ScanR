@@ -87,10 +87,19 @@ jobs:
         image:
           - name: scanr-api
             context: ./backend
+            file: Dockerfile
           - name: scanr-worker
             context: ./backend
+            file: Dockerfile
           - name: scanr-frontend
             context: ./frontend
+            file: Dockerfile
+          - name: scanr-sandbox-runner
+            context: ./backend
+            file: sandbox/Dockerfile.runner
+          - name: scanr-sandbox
+            context: ./backend/sandbox
+            file: Dockerfile.sandbox
 
     steps:
       - name: Check out repository
@@ -121,6 +130,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: ${{ matrix.image.context }}
+          file: ${{ matrix.image.context }}/${{ matrix.image.file }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}

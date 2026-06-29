@@ -1,16 +1,17 @@
-.PHONY: help dev-backend dev-worker dev-frontend dev install test lint docker-up docker-down docker-logs nvd-update
+.PHONY: help dev-backend dev-worker dev-frontend dev install test lint docker-up docker-up-sandbox docker-down docker-logs nvd-update
 
 help:
 	@echo "ScanR — Development Commands"
 	@echo ""
-	@echo "  make install       Install all dependencies"
-	@echo "  make dev           Start backend API (uvicorn dev server)"
-	@echo "  make dev-worker    Start Celery worker"
-	@echo "  make dev-frontend  Start Vite dev server"
-	@echo "  make test          Run pytest"
-	@echo "  make docker-up     Start all services via Docker Compose"
-	@echo "  make docker-down   Stop Docker Compose services"
-	@echo "  make nvd-update    Download/update NVD CVE feeds"
+	@echo "  make install            Install all dependencies"
+	@echo "  make dev                Start backend API (uvicorn dev server)"
+	@echo "  make dev-worker         Start Celery worker"
+	@echo "  make dev-frontend       Start Vite dev server"
+	@echo "  make test               Run pytest"
+	@echo "  make docker-up          Start services via Docker Compose"
+	@echo "  make docker-up-sandbox  Start with AI sandbox enabled"
+	@echo "  make docker-down        Stop Docker Compose services"
+	@echo "  make nvd-update         Download/update NVD CVE feeds"
 
 install:
 	cd backend && pip install -e ".[dev]"
@@ -32,7 +33,10 @@ lint:
 	cd backend && ruff check scanr/ && mypy scanr/
 
 docker-up:
-	docker compose up -d --build
+	docker compose up -d
+
+docker-up-sandbox:
+	docker compose -f docker-compose.yml -f docker-compose.sandbox.yml up -d
 
 docker-logs:
 	docker compose logs -f
