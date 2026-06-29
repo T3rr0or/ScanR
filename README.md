@@ -89,24 +89,17 @@ cd ScanR
 cp .env.example .env
 ```
 
-Edit `.env` and set required secrets:
+Set these 3 required values in `.env`:
 
-```env
-# Generate with:
-# python3 -c "import secrets; print(secrets.token_urlsafe(32))"
-SECRET_KEY=
-
-# Generate with:
-# python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
-VAULT_KEY=
-
-POSTGRES_PASSWORD=
-
-ADMIN_EMAIL=admin@example.com
-ADMIN_PASSWORD=
+```bash
+# Generate secrets:
+python3 -c "import secrets; print(secrets.token_urlsafe(32))"  # → SECRET_KEY
+python3 -c "import secrets; print(secrets.token_urlsafe(16))"  # → ADMIN_PASSWORD
+python3 -c "import secrets; print(secrets.token_urlsafe(24))"  # → POSTGRES_PASSWORD
 ```
 
-ScanR refuses to start if `SECRET_KEY`, `ADMIN_PASSWORD`, or `POSTGRES_PASSWORD` are missing.
+Everything else has defaults. SANDBOX_TOKEN ships with a default — regenerate
+for production (`openssl rand -hex 32`).
 
 ### 3. Start
 
@@ -121,6 +114,8 @@ Services:
 - **worker** - Celery scanner worker
 - **postgres** - application database
 - **redis** - task queue, result backend, and event bus
+- **sandbox-runner** - AI agent command-execution sandbox
+- **sandbox-proxy** - filtered egress for sandbox package installs
 
 First boot runs migrations and seeds system templates/plugins.
 
