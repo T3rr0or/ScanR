@@ -66,6 +66,42 @@ async def _get_finding(ctx: AgentContext, args: dict) -> str:
     return json.dumps(finding)[:8000]
 
 
+
+async def _create_finding(ctx: AgentContext, args: dict) -> str:
+    severity = str(args.get("severity", "")).strip().lower()
+    title = str(args.get("title", "")).strip()
+    if not severity or not title:
+        raise ToolError("severity and title are required")
+    if severity not in ("critical", "high", "medium", "low", "info"):
+        raise ToolError(f"invalid severity {severity!r}; must be critical/high/medium/low/info")
+    desc = str(args.get("description", "")).strip() or None
+    evidence = str(args.get("evidence", "")).strip() or None
+    remediation = str(args.get("remediation", "")).strip() or None
+    host_ip = str(args.get("host_ip", "")).strip() or None
+    port = args.get("port_number")
+    if port is not None:
+        try:
+            port = int(port)
+        except (TypeError, ValueError):
+            raise ToolError("port_number must be an integer")
+    cvss = args.get("cvss_score")
+    if cvss is not None:
+        try:
+            cvss = float(cvss)
+        except (TypeError, ValueError):
+            raise ToolError("cvss_score must be a number")
+    result = await ctx.create_finding(
+        severity=severity,
+        title=title,
+        description=desc,
+        evidence=evidence,
+        remediation=remediation,
+        host_ip=host_ip,
+        port_number=port,
+        cvss_score=cvss,
+    )
+    return json.dumps(result)
+
 def read_only_tools() -> list[Tool]:
     return [
         Tool(
@@ -106,6 +142,32 @@ def read_only_tools() -> list[Tool]:
                 },
             ),
             _get_finding,
+        ),
+        Tool(
+            ToolDef(
+                name="create_finding",
+                description="Create a new finding discovered by the agent. Use this to add findings that you discover during the engagement.",
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "severity": {
+                            "type": "string",
+                            "enum": ["critical", "high", "medium", "low", "info"],
+                            "description": "Severity of the finding.",
+                        },
+                        "title": {"type": "string", "description": "Short title for the finding (max 512 chars)."},
+                        "description": {"type": "string", "description": "Detailed description of the finding."},
+                        "evidence": {"type": "string", "description": "Evidence supporting the finding."},
+                        "remediation": {"type": "string", "description": "Suggested remediation steps."},
+                        "host_ip": {"type": "string", "description": "IP of the affected host."},
+                        "port_number": {"type": "integer", "description": "Affected port number."},
+                        "cvss_score": {"type": "number", "description": "CVSS score (0.0-10.0)."},
+                    },
+                    "required": ["severity", "title"],
+                    "additionalProperties": False,
+                },
+            ),
+            _create_finding,
         ),
     ]
 

@@ -3,8 +3,12 @@
 # the runner app. NO ScanR secrets are injected into this service.
 FROM python:3.12-slim
 
+# Install Docker CLI (static binary — the Debian docker.io package only ships
+# dockerd, not the CLI client, since Trixie).
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    docker.io \
+    ca-certificates curl \
+    && curl -fsSL https://download.docker.com/linux/static/stable/x86_64/docker-27.5.1.tgz \
+    | tar xz -C /usr/local/bin --strip-components=1 \
     && rm -rf /var/lib/apt/lists/*
 
 RUN pip install --no-cache-dir "fastapi>=0.115.0" "uvicorn[standard]>=0.30.0" "pydantic>=2.0.0"

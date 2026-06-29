@@ -32,7 +32,13 @@ services:
       dockerfile: Dockerfile
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/system/health')"]
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/system/health')",
+        ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -66,6 +72,9 @@ services:
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
     volumes:
       - reports_data:/app/reports
       - nvd_data:/app/nvd_cache
@@ -104,6 +113,9 @@ services:
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
     cap_add:
       - NET_RAW
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
     volumes:
       - reports_data:/app/reports
       - nvd_data:/app/nvd_cache

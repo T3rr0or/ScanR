@@ -54,6 +54,14 @@ class FakeContext(AgentContext):
         self.commands.append(command)
         return {"exit_code": 0, "stdout": f"ran: {command}", "stderr": "", "truncated": False, "timed_out": False}
 
+    async def create_finding(self, severity, title, description=None, evidence=None,
+                             remediation=None, host_ip=None, port_number=None, cvss_score=None):
+        self.created_findings = getattr(self, "created_findings", [])
+        finding = {"id": f"f{len(self._findings) + len(self.created_findings) + 1}",
+                   "severity": severity, "title": title, "host_ip": host_ip}
+        self.created_findings.append(finding)
+        return finding
+
 
 class ScriptedProvider(LLMProvider):
     """Returns a pre-scripted sequence of completions, one per call."""

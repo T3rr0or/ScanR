@@ -119,6 +119,62 @@ class DbAgentContext(AgentContext):
             "cvss_score": f.cvss_score,
         }
 
+    async def create_finding(
+        self,
+        severity: str,
+        title: str,
+        description: str | None = None,
+        evidence: str | None = None,
+        remediation: str | None = None,
+        host_ip: str | None = None,
+        port_number: int | None = None,
+        cvss_score: float | None = None,
+    ) -> dict:
+        """Persist a finding the agent discovered. Routed through ResultCollector
+        (plugin_id 'ai_agent') so it's deduped, counted in scan stats, and shown
+        in the UI exactly like a plugin finding. Returns a summary dict; ``recorded``
+        is False when an identical finding already existed (deduped away)."""
+        from scanr.core.plugin_base import FindingData, Severity
+        from scanr.models import Scan
+
+        # Resolve the host (if the agent named one). An unknown IP isn't fatal —
+        # the finding is still recorded, just left unattached to a host.
+        host_id: str | None = None
+        if host_ip:
+            host = (
+                await self._db.execute(
+                    select(Host).where(Host.scan_id == self.scan_id, Host.ip == host_ip)
+                )
+            ).scalar_one_or_none()
+            host_id = host.id if host else None
+
+        data = FindingData(
+            plugin_id="ai_agent",
+            severity=Severity(severity),
+            title=title,
+            description=description or "",
+            evidence=evidence or "",
+            remediation=remediation or "",
+            cvss_score=cvss_score,
+            port_number=port_number,
+        )
+        scan = (
+            await self._db.execute(select(Scan).where(Scan.id == self.scan_id))
+        ).scalar_one_or_none()
+        recorded = await self._persist_findings(scan, host_id, [data])
+        await self._log.info(
+            f"agent recorded finding: [{severity}] {title}" + (f" on {host_ip}" if host_ip else ""),
+            phase="ai_agent",
+        )
+        return {
+            "recorded": bool(recorded),
+            "severity": severity,
+            "title": title,
+            "host_ip": host_ip,
+            "port": port_number,
+            "plugin_id": "ai_agent",
+        }
+
     async def log(self, message: str) -> None:
         await self._log.info(message, phase="ai_agent")
 

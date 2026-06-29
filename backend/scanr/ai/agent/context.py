@@ -6,6 +6,7 @@ implementation (next slice) backs these with the DB / scan engine / WebSocket;
 tests use an in-memory fake. Centralizing access here is what lets scope and
 capability checks be enforced in one place.
 """
+
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
@@ -67,3 +68,17 @@ class AgentContext(ABC):
         """Run a shell command in the isolated sandbox (egress scoped to the
         scan's targets + package mirrors). Returns a result dict, or
         {"denied": True, "reason": ...} when the sandbox is unavailable/disabled."""
+
+    @abstractmethod
+    async def create_finding(
+        self,
+        severity: str,
+        title: str,
+        description: str | None = None,
+        evidence: str | None = None,
+        remediation: str | None = None,
+        host_ip: str | None = None,
+        port_number: int | None = None,
+        cvss_score: float | None = None,
+    ) -> dict:
+        """Create a new finding discovered by the AI agent. Returns the created finding."""

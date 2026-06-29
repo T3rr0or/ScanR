@@ -146,7 +146,9 @@ async def _run_agent_async(run_id: str, resume: bool = False) -> dict:
                 # Serialize the full conversation so future resumes see all history.
                 run.conversation = json.dumps(_serialize_conversation(all_messages))
 
-                run.status = "cancelled" if result.stop_reason == "cancelled" else "completed"
+                # A user Stop ends the run normally (stop_reason='stopped') so it
+                # stays resumable — the reason is carried by stop_reason, not status.
+                run.status = "completed"
                 run.provider = provider.name
                 run.model = provider.model
                 run.stop_reason = result.stop_reason
@@ -166,7 +168,7 @@ async def _run_agent_async(run_id: str, resume: bool = False) -> dict:
                     "end": "completed its assessment",
                     "max_iterations": f"reached the step limit ({budget.max_iterations} steps)",
                     "budget": f"reached the token safety limit (~{budget.max_tokens // 1000}k tokens)",
-                    "cancelled": "was stopped by the operator",
+                    "stopped": "was stopped by the operator",
                 }.get(result.stop_reason, result.stop_reason)
                 await slog.info(
                     f"AI agent {_reason} after {len(result.actions)} step(s).",
