@@ -15,9 +15,11 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
     # core net / shell utilities
     ca-certificates curl wget dnsutils whois iputils-ping netcat-traditional \
-    git jq openssl vim-tiny less \
+    git jq openssl vim-tiny less sshpass openssh-client \
     # runtimes for ad-hoc scripts / installs
     python3 python3-pip python3-venv golang \
+    # database clients (for probing discovered DBs)
+    postgresql-client default-mysql-client \
     # scanning / enumeration
     nmap masscan whatweb \
     # web / content discovery

@@ -178,11 +178,19 @@ async def _fetch_url(ctx: AgentContext, args: dict) -> str:
         raise ToolError("url is required")
     if not url.startswith(("http://", "https://")):
         raise ToolError("url must start with http:// or https://")
+    method = str(args.get("method", "GET")).strip().upper()
+    if method not in ("GET", "POST"):
+        raise ToolError("method must be GET or POST")
+    body_raw = str(args.get("body", "")).strip() or None
+    content_type = str(args.get("content_type", "application/x-www-form-urlencoded")).strip()
     import httpx
 
     try:
         async with httpx.AsyncClient(timeout=10.0, follow_redirects=False, verify=False) as client:
-            resp = await client.get(url)
+            if method == "POST":
+                resp = await client.post(url, content=body_raw, headers={"content-type": content_type})
+            else:
+                resp = await client.get(url)
     except Exception as exc:  # noqa: BLE001 - report any fetch failure to the model
         raise ToolError(f"request failed: {exc}")
     interesting = {
@@ -205,12 +213,19 @@ def web_tools() -> list[Tool]:
             ToolDef(
                 name="fetch_url",
                 description=(
-                    "HTTP GET a URL on a discovered host and return status, key headers, and a "
-                    "body snippet. Use to inspect web responses. In scope only; non-intrusive."
+                    "HTTP request to a URL on a discovered host. Returns status, key headers, "
+                    "and a body snippet. Use method=POST with body and content_type to submit "
+                    "forms (e.g. login, search). Use GET by default for reading pages. "
+                    "Not proxy-filtered — POST goes directly from the worker. Non-intrusive."
                 ),
                 parameters={
                     "type": "object",
-                    "properties": {"url": {"type": "string", "description": "Absolute http(s) URL"}},
+                    "properties": {
+                        "url": {"type": "string", "description": "Absolute http(s) URL"},
+                        "method": {"type": "string", "enum": ["GET", "POST"], "description": "HTTP method (default GET)"},
+                        "body": {"type": "string", "description": "Request body for POST (e.g. 'username=admin&password=test')"},
+                        "content_type": {"type": "string", "description": "Content-Type header for POST (default: application/x-www-form-urlencoded)"},
+                    },
                     "required": ["url"],
                     "additionalProperties": False,
                 },

@@ -74,6 +74,9 @@ class Settings(BaseSettings):
     ai_provider: str = "anthropic"
     ai_model: str = ""
     ai_max_tokens: int = 2048
+    # Per-minute input token cap for agent loop. 0 = no limit.
+    # Anthropic free tier = 10,000/min. Set to 0 for pay-as-you-go plans.
+    ai_rate_limit_tokens_per_min: int = 0
     openai_api_key: str = ""
     deepseek_api_key: str = ""
     anthropic_api_key: str = ""

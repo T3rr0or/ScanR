@@ -7,7 +7,12 @@ both handled here so callers only ever deal with the normalized types.
 """
 from __future__ import annotations
 
+import asyncio
+import logging
+
 from .base import Completion, LLMProvider, Msg, StopReason, ToolCall, ToolDef, Usage
+
+logger = logging.getLogger(__name__)
 
 
 class AnthropicProvider(LLMProvider):
@@ -87,7 +92,22 @@ class AnthropicProvider(LLMProvider):
         if wire_tools:
             kwargs["tools"] = wire_tools
 
-        resp = await client.messages.create(**kwargs)
+        # Retry on rate limits with exponential backoff (up to 3 attempts)
+        for attempt in range(3):
+            try:
+                resp = await client.messages.create(**kwargs)
+                break
+            except Exception as exc:
+                is_rate_limit = (
+                    hasattr(exc, "status_code") and getattr(exc, "status_code", 0) == 429
+                ) or "rate_limit" in str(exc).lower()
+                if is_rate_limit and attempt < 2:
+                    delay = 2 ** attempt * 15  # 15s, 30s
+                    logger.warning("anthropic rate limit hit, retrying in %ds (attempt %d/3)", delay, attempt + 2)
+                    await asyncio.sleep(delay)
+                    # Switch to a cheaper model hint for the retry
+                    continue
+                raise
 
         text_parts: list[str] = []
         tool_calls: list[ToolCall] = []

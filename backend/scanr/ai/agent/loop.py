@@ -8,6 +8,8 @@ cancellation by the caller.
 
 from __future__ import annotations
 
+import asyncio
+import logging
 from dataclasses import dataclass, field
 from typing import Awaitable, Callable
 
@@ -15,6 +17,8 @@ from scanr.ai.agent.context import AgentContext
 from scanr.ai.agent.prompts import build_system_prompt
 from scanr.ai.agent.tools import ToolRegistry
 from scanr.ai.llm.base import LLMProvider, Msg, Usage
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -80,6 +84,14 @@ async def run_agent(
 
         ctx.budget.iterations += 1
         run.iterations += 1
+
+        # Rate-limit: pause if input tokens/min cap would be exceeded.
+        # Uses a rolling 60s window — sleeps until oldest tokens expire.
+        wait = ctx.budget.check_rate()
+        if wait > 0:
+            logger.info("rate limit: waiting %.1fs before next API call", wait)
+            await ctx.log(f"⏳ rate limit — waiting {wait:.0f}s before next LLM call")
+            await asyncio.sleep(wait)
 
         completion = await provider.complete(
             system=system,

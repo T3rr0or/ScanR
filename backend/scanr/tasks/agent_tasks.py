@@ -72,6 +72,9 @@ async def _run_agent_async(run_id: str, resume: bool = False) -> dict:
                     allow_command_exec=bool(caps.get("allow_command_exec")),
                 )
                 # None = engine default; 0 = unlimited (operator stops manually).
+                # Per-minute input token cap: defaults to 0 (no limit), set to
+                # respect provider rate limits. Anthropic free-tier = 10K/min.
+                rpm_cap = run.rate_limit_tokens_per_min or max(settings.ai_rate_limit_tokens_per_min, 0)
                 budget = Budget(
                     max_tokens=(
                         run.max_tokens
@@ -81,6 +84,7 @@ async def _run_agent_async(run_id: str, resume: bool = False) -> dict:
                     max_iterations=(
                         run.max_iterations if run.max_iterations is not None else Budget.max_iterations
                     ),
+                    max_input_tokens_per_minute=rpm_cap,
                 )
                 ctx = DbAgentContext(
                     scan_id=run.scan_id,

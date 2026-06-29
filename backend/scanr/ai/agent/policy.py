@@ -6,7 +6,8 @@ prompt-injected tool output), because both are enforced here in Python.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+import time
+from dataclasses import dataclass, field
 from enum import Enum
 
 from scanr.ai.llm.base import Usage
@@ -54,11 +55,18 @@ class AgentPolicy:
 @dataclass
 class Budget:
     """Hard ceiling on an agent run. Checked between iterations; when exhausted
-    the loop stops and reports."""
+    the loop stops and reports.
+
+    Also enforces a per-minute input-token rate limit via a rolling window.
+    When the limit would be exceeded, the loop sleeps until tokens expire."""
     max_tokens: int = 200_000
     max_iterations: int = 12
     used: Usage | None = None
     iterations: int = 0
+    # Per-minute input token rate cap. 0 = no limit.
+    max_input_tokens_per_minute: int = 0
+    # Rolling window: list of (timestamp, input_tokens) tuples
+    _window: list[tuple[float, int]] = field(default_factory=list, repr=False)
 
     def __post_init__(self) -> None:
         if self.used is None:
@@ -67,6 +75,26 @@ class Budget:
     def add(self, usage: Usage) -> None:
         assert self.used is not None
         self.used = self.used + usage
+        # Track input tokens for rate limiting
+        if self.max_input_tokens_per_minute > 0:
+            now = time.monotonic()
+            self._window.append((now, usage.input_tokens))
+
+    def check_rate(self) -> float:
+        """Return seconds to wait before the next call fits under the rate limit.
+        0 = go ahead. Only enforced when max_input_tokens_per_minute > 0."""
+        if self.max_input_tokens_per_minute <= 0:
+            return 0.0
+        now = time.monotonic()
+        cutoff = now - 60.0
+        # Prune expired entries
+        self._window = [(ts, tk) for ts, tk in self._window if ts > cutoff]
+        total = sum(tk for _, tk in self._window)
+        if total < self.max_input_tokens_per_minute:
+            return 0.0
+        # Wait until the oldest entry expires from the 60s window
+        oldest = self._window[0][0]
+        return max(oldest + 60.0 - now, 1.0)
 
     @property
     def total_tokens(self) -> int:
