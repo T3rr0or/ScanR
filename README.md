@@ -83,30 +83,13 @@ git clone https://github.com/T3rr0or/ScanR.git
 cd ScanR
 ```
 
-### 2. Configure
+### 2. Setup
 
 ```bash
-cp .env.example .env
+./scripts/setup.sh
 ```
 
-Edit `.env` and set required secrets:
-
-```env
-# Generate with:
-# python3 -c "import secrets; print(secrets.token_urlsafe(32))"
-SECRET_KEY=
-
-# Generate with:
-# python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
-VAULT_KEY=
-
-POSTGRES_PASSWORD=
-
-ADMIN_EMAIL=admin@example.com
-ADMIN_PASSWORD=
-```
-
-ScanR refuses to start if `SECRET_KEY`, `ADMIN_PASSWORD`, or `POSTGRES_PASSWORD` are missing.
+Generates `.env` with all required secrets and prints the admin password.
 
 ### 3. Start
 
@@ -121,6 +104,8 @@ Services:
 - **worker** - Celery scanner worker
 - **postgres** - application database
 - **redis** - task queue, result backend, and event bus
+- **sandbox-runner** - AI agent command-execution sandbox
+- **sandbox-proxy** - filtered egress for sandbox package installs
 
 First boot runs migrations and seeds system templates/plugins.
 
