@@ -60,12 +60,18 @@ services:
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost}
       SECURE_COOKIES: ${SECURE_COOKIES:-true}
       # Self-update is OFF by default. It requires mounting the host Docker
-      # socket, which grants the API container root-equivalent control of the
-      # host. Enable it only via the docker-compose.self-update.yml override,
-      # which adds the socket and project-directory mounts for trusted,
-      # admin-only deployments. The base compose file does NOT mount them.
+      # socket into the API container, which grants it root-equivalent control
+      # of the host. Enable it only via the docker-compose.self-update.yml
+      # override, which adds the socket and project-directory mounts for
+      # trusted, admin-only deployments. The base compose file does NOT mount
+      # the Docker socket into the API container.
       SELF_UPDATE_ENABLED: ${SELF_UPDATE_ENABLED:-false}
       WORDLIST_DIR: /app/wordlists
+      # AI sandbox — on by default, requires SANDBOX_TOKEN in .env
+      SANDBOX_RUNNER_URL: ${SANDBOX_RUNNER_URL:-http://sandbox-runner:8090}
+      SANDBOX_TOKEN: ${SANDBOX_TOKEN:?SANDBOX_TOKEN must be set in .env}
+      SANDBOX_IMAGE: ${SANDBOX_IMAGE:-ghcr.io/t3rr0or/scanr-sandbox:${SCANR_VERSION:-latest}}
+      SANDBOX_CMD_TIMEOUT: ${SANDBOX_CMD_TIMEOUT:-120}
       AI_PROVIDER: ${AI_PROVIDER:-anthropic}
       AI_MODEL: ${AI_MODEL:-}
       AI_MAX_TOKENS: ${AI_MAX_TOKENS:-2048}
@@ -111,6 +117,11 @@ services:
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      # AI sandbox — on by default, requires SANDBOX_TOKEN in .env
+      SANDBOX_RUNNER_URL: ${SANDBOX_RUNNER_URL:-http://sandbox-runner:8090}
+      SANDBOX_TOKEN: ${SANDBOX_TOKEN:?SANDBOX_TOKEN must be set in .env}
+      SANDBOX_IMAGE: ${SANDBOX_IMAGE:-ghcr.io/t3rr0or/scanr-sandbox:${SCANR_VERSION:-latest}}
+      SANDBOX_CMD_TIMEOUT: ${SANDBOX_CMD_TIMEOUT:-120}
     cap_add:
       - NET_RAW
     dns:
@@ -134,9 +145,47 @@ services:
     ports:
       - "80:80"
 
+  # ── AI command-execution sandbox ──────────────────────────────────────────
+  # Only the sandbox-runner gets the Docker socket; it holds NO ScanR secrets.
+  # One persistent container per agent run (state survives between commands);
+  # reaped at run end and by a max-lifetime backstop. Non-root, read-only
+  # rootfs (writable tmpfs for /tmp,/work,HOME), cap-drop ALL, resource/time-
+  # limited, no ScanR env.
+  sandbox-runner:
+    image: ghcr.io/t3rr0or/scanr-sandbox-runner:${SCANR_VERSION:-latest}
+    build:
+      context: ./backend
+      dockerfile: sandbox/Dockerfile.runner
+    restart: unless-stopped
+    environment:
+      SANDBOX_TOKEN: ${SANDBOX_TOKEN:?SANDBOX_TOKEN must be set in .env}
+      SANDBOX_IMAGE: ${SANDBOX_IMAGE:-ghcr.io/t3rr0or/scanr-sandbox:${SCANR_VERSION:-latest}}
+      SANDBOX_NETWORK: scanr_sandbox
+      SANDBOX_PROXY_URL: ${SANDBOX_PROXY_URL:-http://sandbox-proxy:8888}
+      SANDBOX_MAX_LIFETIME: ${SANDBOX_MAX_LIFETIME:-3600}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - default
+      - sandbox_net
+
+  # Filtering forward-proxy: package installs reach allowlisted mirrors only.
+  sandbox-proxy:
+    image: vimagick/tinyproxy:latest
+    restart: unless-stopped
+    volumes:
+      - ./backend/sandbox/proxy/tinyproxy.conf:/etc/tinyproxy/tinyproxy.conf:ro
+      - ./backend/sandbox/proxy/filter:/etc/tinyproxy/filter:ro
+    networks:
+      - sandbox_net
+
 volumes:
   redis_data:
   postgres_data:
   reports_data:
   nvd_data:
   wordlists_data:
+
+networks:
+  sandbox_net:
+    name: scanr_sandbox

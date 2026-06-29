@@ -346,41 +346,30 @@ aggressive`) and the full safety model are documented in
 Providers are swappable per request (ChatGPT/OpenAI, DeepSeek, Anthropic), so
 you can run a cheap model for high-volume work and a stronger one for analysis.
 
-### AI command-execution sandbox (optional)
+### AI command-execution sandbox
 
-By default the agent is limited to ScanR's built-in tools. You can optionally
-give it a real shell — `run_command` — that runs inside an isolated, disposable
-container so it can use the full pentest toolkit and adapt like an operator.
-This is **off** unless you opt in with the sandbox Compose overlay.
+The sandbox gives the AI agent a real shell (`run_command`) inside an isolated,
+disposable container with the full pentest toolkit. It is **on by default** and
+**fail-closed**: if the sandbox-runner is unreachable, `run_command` returns
+"sandbox not configured" instead of falling back to something less safe.
 
-**Enable it:**
+**Only one requirement:** set `SANDBOX_TOKEN` in `.env`.
 
 ```bash
-# 1. Set a shared worker ↔ runner token in .env (do NOT leave it empty)
+# Generate a token and add it to .env:
 echo "SANDBOX_TOKEN=$(openssl rand -hex 32)" >> .env
-
-# 2. Tell Compose to always include the sandbox overlay (see warning below),
-#    then bring the stack up (images are pulled from GHCR automatically)
-echo "COMPOSE_FILE=docker-compose.yml:docker-compose.sandbox.yml" >> .env
 docker compose up -d
 ```
 
-> ⚠️ **Don't lose the sandbox on the next deploy.** The sandbox services live in
-> a separate overlay file (`docker-compose.sandbox.yml`). If you bring the stack
-> up *without* that overlay — e.g. a plain `docker compose up -d` — Compose
-> recreates `api` and `worker` **without** `SANDBOX_RUNNER_URL`, silently
-> disabling `run_command` (it returns "sandbox not configured") while the runner
-> container keeps running. Setting `COMPOSE_FILE` in `.env` (step 2) makes every
-> `docker compose` command include the overlay automatically, so this can't
-> happen. The alternative is to pass `-f docker-compose.yml -f
-> docker-compose.sandbox.yml` on **every** command.
+**Verify:** `docker compose exec worker printenv SANDBOX_RUNNER_URL` should
+print `http://sandbox-runner:8090`.
 
-**Verify it's active:** `docker compose exec worker printenv SANDBOX_RUNNER_URL`
-should print `http://sandbox-runner:8090`. In a scan's **AI** tab the agent's
-`run_command` calls then execute instead of returning "sandbox not configured".
+**Disable:** `docker compose stop sandbox-runner sandbox-proxy`. The sandbox
+services won't start on the next `docker compose up -d` unless you remove the
+`stop`.
 
-**Disable it:** remove the `COMPOSE_FILE` line from `.env` (or stop passing the
-overlay) and `docker compose up -d`. Command execution returns to fail-closed.
+To use `run_command` in a scan, you must also enable **"Allow command
+execution"** when launching the AI agent (admin-only aggressive opt-in).
 
 Isolation model: only a dedicated **sandbox-runner** holds the Docker socket and
 it carries **no ScanR secrets**; the secret-holding worker can't touch the
@@ -501,21 +490,20 @@ docker compose pull
 docker compose up -d
 ```
 
-If you use the sandbox or self-update overlays, set `COMPOSE_FILE` in `.env`
-(see the [sandbox section](#ai-command-execution-sandbox-optional)) and the same
-commands automatically include all needed services.
 Database migrations run automatically on API startup.
 
-Admins can optionally enable in-app updates by setting `COMPOSE_FILE=docker-compose.yml:docker-compose.self-update.yml` in `.env` and `SELF_UPDATE_ENABLED=true`. Then start with:
+### In-app updates (optional)
+
+Set `SELF_UPDATE_ENABLED=true` in `.env` and uncomment
+`COMPOSE_FILE=docker-compose.yml:docker-compose.self-update.yml`. Then:
 
 ```bash
 docker compose up -d
 ```
 
-(Or combine with the sandbox:
-`COMPOSE_FILE=docker-compose.yml:docker-compose.sandbox.yml:docker-compose.self-update.yml`)
-
-This enables the **Update now** button when a newer GitHub release is available. The override mounts the host Docker socket and project directory into the API container, so only use it for trusted admin-only deployments. The default `docker-compose.yml` does not mount the Docker socket.
+This enables the **Update now** button when a newer GitHub release is available.
+The self-update overlay mounts the host Docker socket and project directory into
+the API container — use only for trusted admin deployments.
 
 ---
 
