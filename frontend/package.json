@@ -1,6 +1,6 @@
 {
   "name": "scanr-frontend",
-  "version": "0.10.2",
+  "version": "0.20.1",
   "type": "module",
   "private": true,
   "scripts": {
