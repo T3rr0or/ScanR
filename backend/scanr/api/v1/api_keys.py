@@ -52,8 +52,16 @@ async def list_api_keys(
     keys = result.scalars().all()
     out = []
     for k in keys:
-        d = APIKeyRead.model_validate(k)
-        d.scopes = json.loads(k.scopes) if k.scopes else []
+        d = APIKeyRead.model_construct(
+            id=k.id,
+            name=k.name,
+            prefix=k.prefix,
+            scopes=json.loads(k.scopes) if k.scopes else [],
+            last_used_at=k.last_used_at,
+            expires_at=k.expires_at,
+            revoked=k.revoked,
+            created_at=k.created_at,
+        )
         out.append(d)
     return out
 
@@ -79,9 +87,17 @@ async def create_api_key(
     await db.commit()
     await db.refresh(api_key)
 
-    out = APIKeyCreated.model_validate(api_key)
-    out.scopes = body.scopes
-    out.key = raw
+    out = APIKeyCreated.model_construct(
+        id=api_key.id,
+        name=api_key.name,
+        prefix=api_key.prefix,
+        last_used_at=api_key.last_used_at,
+        expires_at=api_key.expires_at,
+        revoked=api_key.revoked,
+        created_at=api_key.created_at,
+        scopes=body.scopes,
+        key=raw,
+    )
     return out
 
 
