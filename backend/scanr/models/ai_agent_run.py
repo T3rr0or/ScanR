@@ -22,6 +22,8 @@ class AiAgentRun(Base, TimestampMixin):
     max_iterations: Mapped[int | None] = mapped_column(nullable=True)
     # Token safety cap before the run stops (None = engine default ~200k).
     max_tokens: Mapped[int | None] = mapped_column(nullable=True)
+    # Per-minute input token rate cap (None = engine/global default, 0 = unlimited).
+    rate_limit_tokens_per_min: Mapped[int | None] = mapped_column(nullable=True)
     # JSON: {aggressive, allow_privilege_escalation, allow_exploitation}. Null = none.
     capabilities: Mapped[str | None] = mapped_column(Text, nullable=True)
     objective: Mapped[str] = mapped_column(Text, nullable=False)

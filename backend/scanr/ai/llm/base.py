@@ -7,11 +7,17 @@ providers; only the envelope differs, and the adapters hide that.
 """
 from __future__ import annotations
 
+import asyncio
+import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Awaitable, Callable, Literal, TypeVar
 
 Role = Literal["system", "user", "assistant", "tool"]
+
+logger = logging.getLogger(__name__)
+
+T = TypeVar("T")
 
 
 @dataclass
@@ -89,3 +95,24 @@ class LLMProvider(ABC):
     ) -> Completion:
         """Run one completion and return the normalized result."""
         raise NotImplementedError
+
+
+async def retry_on_rate_limit(call: Callable[[], Awaitable[T]], *, provider: str, attempts: int = 3) -> T:
+    """Run ``call``, retrying with exponential backoff (15s, 30s, ...) if it
+    raises an exception carrying ``status_code == 429``. Re-raises on the
+    final attempt or on any non-429 error."""
+    for attempt in range(attempts):
+        try:
+            return await call()
+        except Exception as exc:
+            is_rate_limit = getattr(exc, "status_code", None) == 429
+            if is_rate_limit and attempt < attempts - 1:
+                delay = 2 ** attempt * 15
+                logger.warning(
+                    "%s rate limit hit, retrying in %ds (attempt %d/%d)",
+                    provider, delay, attempt + 2, attempts,
+                )
+                await asyncio.sleep(delay)
+                continue
+            raise
+    raise AssertionError("unreachable")  # pragma: no cover

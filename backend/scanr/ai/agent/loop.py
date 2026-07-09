@@ -92,6 +92,10 @@ async def run_agent(
             logger.info("rate limit: waiting %.1fs before next API call", wait)
             await ctx.log(f"⏳ rate limit — waiting {wait:.0f}s before next LLM call")
             await asyncio.sleep(wait)
+            if await ctx.should_stop():
+                run.stop_reason = "stopped"
+                await ctx.log("agent stopped by user")
+                break
 
         completion = await provider.complete(
             system=system,

@@ -7,7 +7,7 @@ lazily so the base package and tests work without it installed.
 """
 from __future__ import annotations
 
-from .base import Completion, LLMProvider, Msg, StopReason, ToolCall, ToolDef, Usage
+from .base import Completion, LLMProvider, Msg, StopReason, ToolCall, ToolDef, Usage, retry_on_rate_limit
 
 
 class OpenAICompatProvider(LLMProvider):
@@ -89,7 +89,9 @@ class OpenAICompatProvider(LLMProvider):
         if wire_tools:
             kwargs["tools"] = wire_tools
 
-        resp = await client.chat.completions.create(**kwargs)
+        resp = await retry_on_rate_limit(
+            lambda: client.chat.completions.create(**kwargs), provider=self.name
+        )
         choice = resp.choices[0]
         msg = choice.message
 

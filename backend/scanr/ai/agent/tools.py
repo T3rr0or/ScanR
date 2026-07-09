@@ -172,17 +172,7 @@ def read_only_tools() -> list[Tool]:
     ]
 
 
-async def _fetch_url(ctx: AgentContext, args: dict) -> str:
-    url = str(args.get("url", "")).strip()
-    if not url:
-        raise ToolError("url is required")
-    if not url.startswith(("http://", "https://")):
-        raise ToolError("url must start with http:// or https://")
-    method = str(args.get("method", "GET")).strip().upper()
-    if method not in ("GET", "POST"):
-        raise ToolError("method must be GET or POST")
-    body_raw = str(args.get("body", "")).strip() or None
-    content_type = str(args.get("content_type", "application/x-www-form-urlencoded")).strip()
+async def _http_request(url: str, method: str, body_raw: str | None, content_type: str) -> str:
     import httpx
 
     try:
@@ -206,31 +196,72 @@ async def _fetch_url(ctx: AgentContext, args: dict) -> str:
     })
 
 
+async def _fetch_url(ctx: AgentContext, args: dict) -> str:
+    url = str(args.get("url", "")).strip()
+    if not url:
+        raise ToolError("url is required")
+    if not url.startswith(("http://", "https://")):
+        raise ToolError("url must start with http:// or https://")
+    return await _http_request(url, "GET", None, "")
+
+
+async def _submit_form(ctx: AgentContext, args: dict) -> str:
+    url = str(args.get("url", "")).strip()
+    if not url:
+        raise ToolError("url is required")
+    if not url.startswith(("http://", "https://")):
+        raise ToolError("url must start with http:// or https://")
+    body_raw = str(args.get("body", "")).strip() or None
+    content_type = str(args.get("content_type", "application/x-www-form-urlencoded")).strip()
+    return await _http_request(url, "POST", body_raw, content_type)
+
+
 def web_tools() -> list[Tool]:
-    """Active but non-intrusive tools (GET requests). Scope-checked on the host."""
+    """Active tools that talk to discovered hosts over HTTP. Scope-checked on
+    the host. fetch_url (GET) is non-intrusive; submit_form (POST) is
+    intrusive — it can submit credentials/forms, so it requires the
+    'aggressive' capability and (in guided mode) operator approval."""
     return [
         Tool(
             ToolDef(
                 name="fetch_url",
                 description=(
-                    "HTTP request to a URL on a discovered host. Returns status, key headers, "
-                    "and a body snippet. Use method=POST with body and content_type to submit "
-                    "forms (e.g. login, search). Use GET by default for reading pages. "
-                    "Not proxy-filtered — POST goes directly from the worker. Non-intrusive."
+                    "HTTP GET a URL on a discovered host and return status, key headers, and a "
+                    "body snippet. Use to inspect web responses. Non-intrusive."
                 ),
                 parameters={
                     "type": "object",
-                    "properties": {
-                        "url": {"type": "string", "description": "Absolute http(s) URL"},
-                        "method": {"type": "string", "enum": ["GET", "POST"], "description": "HTTP method (default GET)"},
-                        "body": {"type": "string", "description": "Request body for POST (e.g. 'username=admin&password=test')"},
-                        "content_type": {"type": "string", "description": "Content-Type header for POST (default: application/x-www-form-urlencoded)"},
-                    },
+                    "properties": {"url": {"type": "string", "description": "Absolute http(s) URL"}},
                     "required": ["url"],
                     "additionalProperties": False,
                 },
             ),
             _fetch_url,
+            target_args=("url",),
+        ),
+        Tool(
+            ToolDef(
+                name="submit_form",
+                description=(
+                    "HTTP POST a body (e.g. login, search) to a URL on a discovered host and "
+                    "return status, key headers, and a body snippet. Not proxy-filtered — goes "
+                    "directly from the worker. Intrusive: requires the 'aggressive' capability "
+                    "and operator approval in guided mode."
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "url": {"type": "string", "description": "Absolute http(s) URL"},
+                        "body": {"type": "string", "description": "Request body (e.g. 'username=admin&password=test')"},
+                        "content_type": {"type": "string", "description": "Content-Type header (default: application/x-www-form-urlencoded)"},
+                    },
+                    "required": ["url"],
+                    "additionalProperties": False,
+                },
+            ),
+            _submit_form,
+            intrusive=True,
+            required_capability="aggressive",
             target_args=("url",),
         ),
     ]

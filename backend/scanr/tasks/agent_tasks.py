@@ -72,9 +72,13 @@ async def _run_agent_async(run_id: str, resume: bool = False) -> dict:
                     allow_command_exec=bool(caps.get("allow_command_exec")),
                 )
                 # None = engine default; 0 = unlimited (operator stops manually).
-                # Per-minute input token cap: defaults to 0 (no limit), set to
-                # respect provider rate limits. Anthropic free-tier = 10K/min.
-                rpm_cap = run.rate_limit_tokens_per_min or max(settings.ai_rate_limit_tokens_per_min, 0)
+                # Per-minute input token cap: None on the run falls back to the
+                # global setting, 0 explicitly disables the cap for this run.
+                rpm_cap = (
+                    run.rate_limit_tokens_per_min
+                    if run.rate_limit_tokens_per_min is not None
+                    else max(settings.ai_rate_limit_tokens_per_min, 0)
+                )
                 budget = Budget(
                     max_tokens=(
                         run.max_tokens
