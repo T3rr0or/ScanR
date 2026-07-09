@@ -566,6 +566,10 @@ class ApprovalBody(BaseModel):
 
 class ChatBody(BaseModel):
     message: str = Field(..., min_length=1, max_length=4000)
+    # Optionally switch the model/provider for this and subsequent turns
+    # (e.g. start with Claude, continue with DeepSeek).
+    provider: str | None = None
+    model: str | None = None
 
 
 @router.post("/agent/runs/{run_id}/chat")
@@ -589,6 +593,21 @@ async def agent_chat(
         raise HTTPException(status_code=409, detail="Agent is queued — wait for it to start.")
     if run.status in ("failed", "cancelled"):
         raise HTTPException(status_code=400, detail=f"Cannot chat with a {run.status} run. Start a new one.")
+
+    # Optional mid-conversation model/provider switch — validate it's usable so
+    # the user gets an immediate error instead of a failed background turn.
+    if body.provider:
+        if body.provider not in SUPPORTED_PROVIDERS:
+            raise HTTPException(status_code=400, detail=f"Unknown provider {body.provider!r}.")
+        if not await store.resolve_api_key(db, body.provider):
+            raise HTTPException(
+                status_code=400,
+                detail=f"No API key configured for provider {body.provider!r}. Add one in Settings → AI.",
+            )
+        run.provider = body.provider
+        run.model = body.model  # None → provider's default/override
+    elif body.model:
+        run.model = body.model
 
     # Append user message to conversation.
     import json as _json

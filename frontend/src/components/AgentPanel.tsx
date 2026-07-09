@@ -8,6 +8,7 @@ import { Plus } from "lucide-react";
 import api from "@/api/client";
 import { useAuthStore } from "@/store/auth";
 import { StatusPill } from "@/components/ui";
+import Markdown from "@/components/Markdown";
 
 /* ── Types ──────────────────────────────────── */
 export interface AgentRun {
@@ -85,6 +86,12 @@ const CAP_LABEL: Record<string, string> = {
 	full: "Full",
 };
 
+const PROVIDER_LABEL: Record<string, string> = {
+	anthropic: "Claude",
+	openai: "ChatGPT",
+	deepseek: "DeepSeek",
+};
+
 const SETTINGS_KEY = "scanr_agent_settings";
 
 function loadSettings(): {
@@ -92,10 +99,11 @@ function loadSettings(): {
 	capability: "analyze" | "active" | "full";
 	maxIterations: number;
 	maxTokens: number;
+	provider: string;
 } {
 	try {
 		const raw = localStorage.getItem(SETTINGS_KEY);
-		if (raw) return JSON.parse(raw);
+		if (raw) return { provider: "", ...JSON.parse(raw) };
 	} catch {
 		/* ignore */
 	}
@@ -104,6 +112,7 @@ function loadSettings(): {
 		capability: "analyze",
 		maxIterations: 25,
 		maxTokens: 200000,
+		provider: "",
 	};
 }
 
@@ -112,6 +121,7 @@ function saveSettings(s: {
 	capability: string;
 	maxIterations: number;
 	maxTokens: number;
+	provider: string;
 }) {
 	try {
 		localStorage.setItem(SETTINGS_KEY, JSON.stringify(s));
@@ -145,15 +155,29 @@ export default function AgentPanel({
 	const [capability, setCapability] = useState<"analyze" | "active" | "full">(
 		saved.capability,
 	);
+	const [provider, setProvider] = useState(saved.provider);
 	const [showSettings, setShowSettings] = useState(false);
+
+	// Configured providers, for the model switcher (provider with a key set).
+	const { data: aiStatus } = useQuery<{
+		providers: string[];
+		configured: Record<string, boolean>;
+		default_provider: string;
+	}>({
+		queryKey: ["ai-status"],
+		queryFn: () => api.get("/ai/status").then((r) => r.data),
+	});
+	const availableProviders = (aiStatus?.providers ?? []).filter(
+		(p) => aiStatus?.configured?.[p],
+	);
 	const [forceNew, setForceNew] = useState(false);
 	const [sending, setSending] = useState(false);
 	const chatRef = useRef<HTMLDivElement>(null);
 
 	// Persist settings whenever they change.
 	useEffect(() => {
-		saveSettings({ mode, capability, maxIterations, maxTokens });
-	}, [mode, capability, maxIterations, maxTokens]);
+		saveSettings({ mode, capability, maxIterations, maxTokens, provider });
+	}, [mode, capability, maxIterations, maxTokens, provider]);
 
 	const { data: runs = [] } = useQuery<AgentRun[]>({
 		queryKey: ["ai-agent-runs", scanId],
@@ -174,6 +198,7 @@ export default function AgentPanel({
 					objective: msg.trim(),
 					max_iterations: maxIterations,
 					max_tokens: maxTokens,
+					provider: provider || undefined,
 					aggressive: isAdmin && c.aggressive,
 					allow_exploitation: isAdmin && c.allow_exploitation,
 					allow_privilege_escalation: isAdmin && c.allow_privilege_escalation,
@@ -191,7 +216,10 @@ export default function AgentPanel({
 	const chatMut = useMutation({
 		mutationFn: ({ runId, msg }: { runId: string; msg: string }) =>
 			api
-				.post(`/ai/agent/runs/${runId}/chat`, { message: msg })
+				.post(`/ai/agent/runs/${runId}/chat`, {
+					message: msg,
+					provider: provider || undefined,
+				})
 				.then((r) => r.data),
 		onSuccess: () => {
 			setMessage("");
@@ -282,6 +310,7 @@ export default function AgentPanel({
 						onClick={() => setShowSettings((s) => !s)}
 						style={{ fontSize: 11 }}
 					>
+						{provider ? `${PROVIDER_LABEL[provider] ?? provider} · ` : ""}
 						{mode} · {CAP_LABEL[capability]} ·{" "}
 						{maxIterations === 0 ? "∞" : maxIterations} steps ·{" "}
 						{maxTokens === 0 ? "∞" : `${Math.round(maxTokens / 1000)}k`} tok{" "}
@@ -313,6 +342,32 @@ export default function AgentPanel({
 							</button>
 						))}
 					</div>
+					{availableProviders.length > 0 && (
+						<div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+							<span style={{ fontSize: 11, color: "var(--text-3)" }}>
+								Model:
+							</span>
+							<select
+								className="input"
+								value={provider}
+								onChange={(e) => setProvider(e.target.value)}
+								style={{ fontSize: 11.5, flex: 1 }}
+								title="Switch the AI model — applies to the next message, including mid-conversation"
+							>
+								<option value="">
+									Default
+									{aiStatus?.default_provider
+										? ` (${PROVIDER_LABEL[aiStatus.default_provider] ?? aiStatus.default_provider})`
+										: ""}
+								</option>
+								{availableProviders.map((p) => (
+									<option key={p} value={p}>
+										{PROVIDER_LABEL[p] ?? p}
+									</option>
+								))}
+							</select>
+						</div>
+					)}
 					<div
 						style={{
 							display: "flex",
@@ -468,13 +523,9 @@ export default function AgentPanel({
 												borderBottomLeftRadius: 4,
 												background: "var(--bg-2)",
 												border: "1px solid var(--border)",
-												fontSize: 13,
-												lineHeight: 1.5,
-												color: "var(--text-1)",
-												whiteSpace: "pre-wrap",
 											}}
 										>
-											{msg.content}
+											<Markdown>{msg.content}</Markdown>
 										</div>
 									)}
 									{hasTools && (
@@ -659,7 +710,7 @@ function ToolCallsBlock({
 									wordBreak: "break-all",
 								}}
 							>
-								🔧 {tc.name}({JSON.stringify(tc.arguments).slice(0, 120)})
+								🔧 {tc.name}({JSON.stringify(tc.arguments)})
 							</div>
 							{results[tc.id] !== undefined && (
 								<div
@@ -905,16 +956,7 @@ function AgentRunCard({ run, scanId }: { run: AgentRun; scanId: string }) {
 					>
 						📝 Agent report
 					</div>
-					<div
-						style={{
-							whiteSpace: "pre-wrap",
-							fontSize: 13,
-							lineHeight: 1.6,
-							color: "var(--text-1)",
-						}}
-					>
-						{run.final_text}
-					</div>
+					<Markdown>{run.final_text}</Markdown>
 				</div>
 			)}
 

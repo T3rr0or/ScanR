@@ -148,12 +148,36 @@ class DirBruteforcePlugin(PluginBase):
         profile = getattr(context, "profile", "standard")
         wordlist = self._pick_wordlist(profile)
         findings = []
+        shot_targets: list[tuple[int, str]] = []  # (port, url) of discovered pages to screenshot
         for port in host.ports:
             if not is_web_port(port):
                 continue
             scheme = web_scheme(port)
-            port_findings = await self._scan(host.ip, port.number, scheme, wordlist, context)
+            port_findings, port_shots = await self._scan(host.ip, port.number, scheme, wordlist, context)
             findings.extend(port_findings)
+            shot_targets.extend(port_shots)
+
+        # Capture screenshots of the discovered sub-directories/endpoints so they
+        # appear in the Screenshots tab (not just the host:port roots), when the
+        # screenshots capability is enabled.
+        screenshots_on = bool(
+            (context.profile_json().get("enumeration") or {}).get("screenshots", True)
+        )
+        if screenshots_on and shot_targets:
+            try:
+                from scanr.plugins.web.screenshot import capture_urls
+
+                # de-dupe by URL, keep order
+                seen: set[str] = set()
+                unique = [(p, u) for p, u in shot_targets if not (u in seen or seen.add(u))]
+                n = await capture_urls(context, host, unique)
+                if n:
+                    await context.log.info(
+                        f"Captured {n} screenshot(s) of discovered endpoints on {host.ip}",
+                        phase="plugin", host=host.ip,
+                    )
+            except Exception as exc:  # noqa: BLE001 - screenshots are best-effort
+                await context.log.debug(f"Endpoint screenshots skipped: {exc}", phase="plugin", host=host.ip)
         return findings
 
     def _pick_wordlist(self, profile: str) -> list[str]:
@@ -172,7 +196,9 @@ class DirBruteforcePlugin(PluginBase):
         logger.debug("dir_bruteforce: SecLists not found, using embedded wordlist")
         return COMMON_PATHS
 
-    async def _scan(self, ip: str, port: int, scheme: str, wordlist: list[str], context: "ScanContext") -> list[FindingData]:
+    async def _scan(
+        self, ip: str, port: int, scheme: str, wordlist: list[str], context: "ScanContext"
+    ) -> tuple[list[FindingData], list[tuple[int, str]]]:
         base = f"{scheme}://{ip}:{port}/"
         found: list[tuple[str, int, int]] = []  # (path, status, size)
         sem = asyncio.Semaphore(20)
@@ -286,4 +312,13 @@ class DirBruteforcePlugin(PluginBase):
                 port_number=port,
                 protocol="tcp",
             ))
-        return findings
+
+        # Renderable discovered pages to screenshot (management first, then other
+        # 200/redirect hits). 401/403/204 are skipped — nothing useful renders.
+        renderable = {200, 201, 301, 302, 307, 308}
+        shot_targets: list[tuple[int, str]] = [
+            (port, base + path.lstrip("/"))
+            for path, status, _size in (management_paths + informational_paths)
+            if status in renderable
+        ]
+        return findings, shot_targets

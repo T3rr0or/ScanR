@@ -92,69 +92,114 @@ class ScreenshotPlugin(PluginBase):
         scheme = web_scheme(port)
         url = f"{scheme}://{host.ip}:{port.number}"
         out_path = screenshots_dir / f"{host.ip}_{port.number}.png"
+        await _capture_to(browser, context, host, port.number, url, out_path)
 
-        ctx = None
+
+async def capture_urls(context: "ScanContext", host: "Host", targets: list[tuple[int, str]], *, limit: int = 15) -> int:
+    """Screenshot specific URLs discovered during enumeration (e.g. directory
+    bruteforce hits) so they show up in the Screenshots tab alongside the
+    host:port roots. ``targets`` is a list of (port_number, url). Best-effort:
+    never raises; returns how many were captured."""
+    import hashlib
+
+    targets = targets[:limit]
+    if not targets:
+        return 0
+    try:
+        from playwright.async_api import async_playwright
+    except ImportError:
+        return 0
+
+    screenshots_dir = _screenshots_dir(context.scan_id)
+    screenshots_dir.mkdir(parents=True, exist_ok=True)
+    captured = 0
+    async with async_playwright() as pw:
         try:
-            # Each target gets its own browser context — full cookie/storage isolation
-            ctx = await browser.new_context(
-                viewport={"width": 1280, "height": 800},
-                ignore_https_errors=True,
-                java_script_enabled=False,  # static snapshot only; avoids JS from hostile targets
-                extra_http_headers={"User-Agent": "Mozilla/5.0 ScanR/0.1"},
+            browser = await pw.chromium.launch(
+                args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
+                headless=True,
             )
-            page = await ctx.new_page()
-
-            resp = await page.goto(url, timeout=20_000, wait_until="load")
-
-            # Extra wait for SPA rendering (JS frameworks, lazy images)
-            await asyncio.sleep(2.0)
-
-            title = await page.title()
-            status = resp.status if resp else None
-            content_type = (resp.headers.get("content-type", "") if resp else "")
-
-            await page.screenshot(path=str(out_path), full_page=False)
-            await page.close()
-
-            await _save_screenshot(
-                context=context,
-                host=host,
-                port_number=port.number,
-                url=url,
-                file_path=str(out_path),
-                title=title,
-                status_code=status,
-                content_type=content_type,
-            )
-            await context.log.info(
-                f"Screenshot: {url} [{status}] \"{title}\"",
-                phase="plugin",
-                host=host.ip,
-            )
-
         except Exception as exc:
-            await _save_screenshot(
-                context=context,
-                host=host,
-                port_number=port.number,
-                url=url,
-                file_path=None,
-                title=None,
-                status_code=None,
-                content_type=None,
-                error=str(exc)[:256],
-            )
-            await context.log.debug(
-                f"Screenshot failed {url}: {exc}",
-                phase="plugin",
-                host=host.ip,
-            )
+            await context.log.warn(f"playwright unavailable — endpoint screenshots skipped: {exc}", phase="plugin")
+            return 0
+        try:
+            for port_number, url in targets:
+                slug = hashlib.md5(url.encode()).hexdigest()[:8]
+                out_path = screenshots_dir / f"{host.ip}_{port_number}_{slug}.png"
+                if await _capture_to(browser, context, host, port_number, url, out_path):
+                    captured += 1
         finally:
-            if ctx:
-                try:
-                    await ctx.close()
-                except Exception:
-                    pass
+            await browser.close()
+    return captured
+
+
+async def _capture_to(browser, context: "ScanContext", host, port_number: int, url: str, out_path: Path) -> bool:
+    """Render one URL to ``out_path`` and persist a Screenshot row. Returns True
+    on a successful capture, False on failure."""
+    ctx = None
+    try:
+        # Each target gets its own browser context — full cookie/storage isolation
+        ctx = await browser.new_context(
+            viewport={"width": 1280, "height": 800},
+            ignore_https_errors=True,
+            java_script_enabled=False,  # static snapshot only; avoids JS from hostile targets
+            extra_http_headers={"User-Agent": "Mozilla/5.0 ScanR/0.1"},
+        )
+        page = await ctx.new_page()
+
+        resp = await page.goto(url, timeout=20_000, wait_until="load")
+
+        # Extra wait for SPA rendering (JS frameworks, lazy images)
+        await asyncio.sleep(2.0)
+
+        title = await page.title()
+        status = resp.status if resp else None
+        content_type = (resp.headers.get("content-type", "") if resp else "")
+
+        await page.screenshot(path=str(out_path), full_page=False)
+        await page.close()
+
+        await _save_screenshot(
+            context=context,
+            host=host,
+            port_number=port_number,
+            url=url,
+            file_path=str(out_path),
+            title=title,
+            status_code=status,
+            content_type=content_type,
+        )
+        await context.log.info(
+            f"Screenshot: {url} [{status}] \"{title}\"",
+            phase="plugin",
+            host=host.ip,
+        )
+        return True
+
+    except Exception as exc:
+        await _save_screenshot(
+            context=context,
+            host=host,
+            port_number=port_number,
+            url=url,
+            file_path=None,
+            title=None,
+            status_code=None,
+            content_type=None,
+            error=str(exc)[:256],
+        )
+        await context.log.debug(
+            f"Screenshot failed {url}: {exc}",
+            phase="plugin",
+            host=host.ip,
+        )
+        return False
+    finally:
+        if ctx:
+            try:
+                await ctx.close()
+            except Exception:
+                pass
 
 
 async def _save_screenshot(*, context, host, port_number, url,
