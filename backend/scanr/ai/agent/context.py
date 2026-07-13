@@ -43,6 +43,17 @@ class AgentContext(ABC):
         iteration. Default False; the DB-backed impl checks a cancel flag."""
         return False
 
+    async def note_web_url(self, url: str) -> None:
+        """Record a renderable URL the agent fetched so it can be screenshotted
+        into the Screenshots tab. Default no-op; the DB-backed impl collects them
+        and flushes at run end."""
+        return None
+
+    async def flush_web_screenshots(self) -> None:
+        """Capture screenshots of the URLs collected via note_web_url. Default
+        no-op; called by the agent task when the run finishes."""
+        return None
+
     async def is_in_scope(self, host: str) -> bool:
         """Whether ``host`` (an IP or hostname) belongs to this scan's authorized
         scope — a discovered host, an exact target, a subdomain of a target

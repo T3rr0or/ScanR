@@ -48,6 +48,7 @@ class DbAgentContext(AgentContext):
         self._run_id = run_id
         self._approval_timeout = approval_timeout
         self._collector: "ResultCollector | None" = None  # lazily built; persists agent findings
+        self._web_urls: list[str] = []  # renderable URLs the agent fetched, screenshotted at run end
 
     async def list_hosts(self) -> list[dict]:
         rows = await self._db.execute(
@@ -293,6 +294,59 @@ class DbAgentContext(AgentContext):
             return "deny"  # timeout — fail closed
         finally:
             await r.aclose()
+
+    async def note_web_url(self, url: str) -> None:
+        """Remember a renderable URL the agent fetched (deduped, capped) so it can
+        be screenshotted at run end."""
+        if url and url not in self._web_urls and len(self._web_urls) < 30:
+            self._web_urls.append(url)
+
+    async def flush_web_screenshots(self) -> None:
+        """Screenshot the agent's fetched pages into the Screenshots tab.
+
+        Groups the collected URLs by their discovered host (needed for the
+        Screenshot.host_id FK), then reuses the plugin screenshot machinery via a
+        tiny adapter that exposes the (scan_id, db, log, db_lock) it expects.
+        Best-effort — a failure here never affects the run."""
+        if not self._web_urls:
+            return
+        import asyncio
+        from typing import Any, cast
+        from urllib.parse import urlparse
+
+        from scanr.plugins.web.screenshot import capture_urls
+
+        rows = await self._db.execute(select(Host).where(Host.scan_id == self.scan_id))
+        hosts = list(rows.scalars().all())
+        by_ip = {h.ip: h for h in hosts}
+        by_name = {h.hostname.lower(): h for h in hosts if h.hostname}
+
+        by_host: dict = {}
+        for url in self._web_urls:
+            p = urlparse(url)
+            hostname = (p.hostname or "").lower()
+            host = by_ip.get(p.hostname) or by_name.get(hostname)
+            if host is None:
+                continue  # no discovered Host row to attach the screenshot to
+            port = p.port or (443 if p.scheme == "https" else 80)
+            by_host.setdefault(host.id, (host, []))[1].append((port, url))
+
+        if not by_host:
+            return
+
+        class _ShotCtx:
+            def __init__(self, scan_id, db, log):
+                self.scan_id = scan_id
+                self.db = db
+                self.log = log
+                self.db_lock = asyncio.Lock()
+
+        shot_ctx = _ShotCtx(self.scan_id, self._db, self._log)
+        for host, targets in by_host.values():
+            try:
+                await capture_urls(cast(Any, shot_ctx), host, targets)
+            except Exception as exc:  # noqa: BLE001 - best-effort
+                await self._log.debug(f"agent endpoint screenshots failed: {exc}", phase="ai_agent")
 
     async def run_plugin(self, plugin_id: str, host_ip: str) -> dict:
         from scanr.core import plugin_manager

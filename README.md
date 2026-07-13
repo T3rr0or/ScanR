@@ -325,7 +325,9 @@ Tools available to the agent today: read the scan's hosts/findings/evidence,
 non-intrusive), `list_plugins`, `run_plugin` (run a ScanR plugin against a
 discovered host), `run_port_scan` (nmap a host), `submit_form` (HTTP POST —
 intrusive, aggressive-gated), and `run_command` (sandboxed shell — see below).
-Active tools are intrusive, so they are approval-gated in guided mode.
+Active tools are intrusive, so they are approval-gated in guided mode. Pages the
+agent fetches with `fetch_url` are also screenshotted into the Screenshots tab,
+so its discoveries are captured visually alongside the scan's.
 
 The agent is **conversational**: after a run finishes you can send follow-up
 messages to continue it (the full transcript is kept), and switch the model

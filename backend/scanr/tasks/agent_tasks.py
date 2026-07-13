@@ -255,6 +255,11 @@ async def _run_agent_async(run_id: str, resume: bool = False) -> dict:
                 run.error = str(exc)
                 await slog.error(f"AI agent error: {exc}", phase="ai_agent")
             finally:
+                # Screenshot the pages the agent fetched into the Screenshots tab.
+                try:
+                    await ctx.flush_web_screenshots()
+                except Exception:  # noqa: BLE001 - best-effort (incl. early-failure NameError)
+                    pass
                 # Clear any stop flag so a later resume doesn't stop immediately.
                 try:
                     import redis.asyncio as aioredis

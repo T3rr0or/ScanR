@@ -202,7 +202,18 @@ async def _fetch_url(ctx: AgentContext, args: dict) -> str:
         raise ToolError("url is required")
     if not url.startswith(("http://", "https://")):
         raise ToolError("url must start with http:// or https://")
-    return await _http_request(url, "GET", None, "")
+    result = await _http_request(url, "GET", None, "")
+    # Note renderable pages so the agent's discoveries get screenshotted into the
+    # Screenshots tab (batched at run end by the DB-backed context).
+    try:
+        data = json.loads(result)
+        status = int(data.get("status") or 0)
+        ctype = str((data.get("headers") or {}).get("content-type", "")).lower()
+        if status in (200, 301, 302, 307, 308) and ("html" in ctype or ctype == ""):
+            await ctx.note_web_url(url)
+    except Exception:  # noqa: BLE001 - screenshotting is best-effort, never fail the tool
+        pass
+    return result
 
 
 async def _submit_form(ctx: AgentContext, args: dict) -> str:

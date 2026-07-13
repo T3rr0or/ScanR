@@ -46,6 +46,34 @@ async def test_is_in_scope_confines_to_scan(client, auth_headers, db):
     assert await ctx.is_in_scope("evil.example.com") is False
 
 
+@pytest.mark.asyncio
+async def test_agent_collects_web_urls_for_screenshots(client, auth_headers, db):
+    """note_web_url dedupes/caps the agent's fetched pages, and flush groups them
+    by discovered host without error (capture itself needs Playwright)."""
+    from scanr.ai.agent.db_context import DbAgentContext
+    from scanr.ai.agent.policy import AgentPolicy, AutonomyMode, Budget
+    from scanr.core.scan_logger import ScanLogger
+
+    scan_id = await _make_scan(client, auth_headers, ["192.0.2.30"])
+    db.add(Host(id=new_uuid(), scan_id=scan_id, ip="192.0.2.30", hostname=None))
+    await db.commit()
+
+    ctx = DbAgentContext(
+        scan_id=scan_id,
+        db=db,
+        policy=AgentPolicy(mode=AutonomyMode.autonomous),
+        budget=Budget(),
+        denylist=set(),
+        logger=ScanLogger(scan_id),
+    )
+    await ctx.note_web_url("http://192.0.2.30/admin")
+    await ctx.note_web_url("http://192.0.2.30/admin")  # duplicate ignored
+    await ctx.note_web_url("http://192.0.2.30/login")
+    assert ctx._web_urls == ["http://192.0.2.30/admin", "http://192.0.2.30/login"]
+    # Must resolve the host and run cleanly even when Playwright is unavailable.
+    await ctx.flush_web_screenshots()
+
+
 def _seed_run(scan_id, status="completed"):
     conv = [
         {"role": "user", "content": "investigate"},
