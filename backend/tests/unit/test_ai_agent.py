@@ -347,6 +347,26 @@ async def test_loop_stops_on_iteration_budget():
     assert run.iterations == 3
 
 
+def test_budget_rate_limit_waits_minimally():
+    import time
+
+    # No cap / empty window / under cap → never wait.
+    assert Budget(max_input_tokens_per_minute=0).check_rate() == 0.0
+    assert Budget(max_input_tokens_per_minute=100).check_rate() == 0.0  # empty window
+    now = time.monotonic()
+    under = Budget(max_input_tokens_per_minute=100)
+    under._window = [(now - 10, 50)]
+    assert under.check_rate() == 0.0
+
+    # Over cap: must wait until *enough* of the oldest entries expire — here the
+    # first entry alone isn't enough, so the wait is keyed off the 2nd entry
+    # (~10s), not the oldest (~5s, which would under-wait).
+    b = Budget(max_input_tokens_per_minute=100)
+    b._window = [(now - 55, 10), (now - 50, 10), (now - 45, 90)]  # total 110 > 100
+    wait = b.check_rate()
+    assert 8.0 <= wait <= 11.0
+
+
 @pytest.mark.asyncio
 async def test_resume_does_not_reinject_objective():
     """On resume (messages given), the loop must answer the latest user turn,

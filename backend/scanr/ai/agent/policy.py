@@ -82,19 +82,38 @@ class Budget:
 
     def check_rate(self) -> float:
         """Return seconds to wait before the next call fits under the rate limit.
-        0 = go ahead. Only enforced when max_input_tokens_per_minute > 0."""
-        if self.max_input_tokens_per_minute <= 0:
+        0 = go ahead. Only enforced when max_input_tokens_per_minute > 0.
+
+        Waits the *minimal* time for the trailing-60s input total to drop back
+        under the cap — i.e. until exactly enough of the oldest entries expire —
+        instead of a blunt "until the oldest entry expires" (which under-waits
+        with many small calls) or a flat 60s. An empty window is always allowed,
+        so the run keeps making forward progress even if a single call's input
+        alone exceeds the cap."""
+        cap = self.max_input_tokens_per_minute
+        if cap <= 0:
             return 0.0
         now = time.monotonic()
         cutoff = now - 60.0
-        # Prune expired entries
+        # Prune expired entries (oldest first stays ordered by timestamp).
         self._window = [(ts, tk) for ts, tk in self._window if ts > cutoff]
+        if not self._window:
+            return 0.0  # nothing in the window — always allow at least one call
         total = sum(tk for _, tk in self._window)
-        if total < self.max_input_tokens_per_minute:
+        if total < cap:
             return 0.0
-        # Wait until the oldest entry expires from the 60s window
-        oldest = self._window[0][0]
-        return max(oldest + 60.0 - now, 1.0)
+        # Over the cap: find how many of the oldest entries must expire for the
+        # remaining total to fall below the cap, and wait until that entry ages
+        # out of the 60s window.
+        must_free = total - cap + 1
+        freed = 0
+        for ts, tk in self._window:
+            freed += tk
+            if freed >= must_free:
+                return max(ts + 60.0 - now, 1.0)
+        # Unreachable (freeing the whole window frees `total` >= must_free), but
+        # be safe: wait for the window to fully clear.
+        return max(self._window[-1][0] + 60.0 - now, 1.0)
 
     @property
     def total_tokens(self) -> int:
