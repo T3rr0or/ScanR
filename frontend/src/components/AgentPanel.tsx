@@ -272,6 +272,21 @@ export default function AgentPanel({
 			chatRef.current.scrollTop = chatRef.current.scrollHeight;
 	}, [runs]);
 
+	const exportTrace = async (runId: string) => {
+		const resp = await api.get(`/ai/agent/runs/${runId}/export`, {
+			params: { format: "md" },
+			responseType: "blob",
+		});
+		const url = URL.createObjectURL(resp.data as Blob);
+		const a = document.createElement("a");
+		a.href = url;
+		a.download = `agent-trace-${runId.slice(0, 8)}.md`;
+		document.body.appendChild(a);
+		a.click();
+		a.remove();
+		URL.revokeObjectURL(url);
+	};
+
 	// Map tool results back to the calls that produced them
 	const toolResults: Record<string, string> = {};
 	for (const m of latestRun?.conversation ?? []) {
@@ -293,6 +308,16 @@ export default function AgentPanel({
 			<div className="panel-head" style={{ justifyContent: "space-between" }}>
 				<span className="panel-title">AI Agent</span>
 				<div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+					{!!latestRun?.conversation?.length && (
+						<button
+							className="btn btn-ghost btn-sm"
+							onClick={() => exportTrace(latestRun.id)}
+							title="Download the full agent trace (every command + result) for audit / cleanup"
+							style={{ fontSize: 11 }}
+						>
+							⬇ Export
+						</button>
+					)}
 					{canChat && (
 						<button
 							className="btn btn-primary btn-sm"

@@ -559,6 +559,107 @@ async def get_agent_run(
     return _agent_run_dict(run)
 
 
+@router.get("/agent/runs/{run_id}/export")
+async def export_agent_run(
+    run_id: str,
+    format: str = "md",
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_scope("findings:read")),
+):
+    """Export the full agent trace (every command + result) for an audit trail /
+    client cleanup. ``format`` = ``md`` (human-readable) or ``json`` (structured).
+    Downloaded as an attachment."""
+    from fastapi import Response
+
+    run = await db.get(AiAgentRun, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Agent run not found")
+    scan = await _own_scan(db, run.scan_id, current_user.id)
+    conv = _json_loads(run.conversation) or []
+
+    if format == "json":
+        body = _json_dumps(_agent_run_dict(run), indent=2)
+        media = "application/json"
+        ext = "json"
+    else:
+        body = _render_trace_markdown(run, scan, conv)
+        media = "text/markdown; charset=utf-8"
+        ext = "md"
+
+    filename = f"agent-trace-{run_id[:8]}.{ext}"
+    return Response(
+        content=body,
+        media_type=media,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+def _json_loads(raw):
+    import json as _json
+    return _json.loads(raw) if raw else None
+
+
+def _json_dumps(obj, indent=None):
+    import json as _json
+    return _json.dumps(obj, indent=indent, default=str)
+
+
+def _render_trace_markdown(run: AiAgentRun, scan, conv: list) -> str:
+    """Human-readable audit trail: every tool call with its full arguments and
+    result, in order, so a customer can see exactly what the agent did."""
+    import json as _json
+
+    # Map tool results back to the call that produced them.
+    results: dict[str, str] = {
+        m.get("tool_call_id"): m.get("content", "")
+        for m in conv
+        if m.get("role") == "tool" and m.get("tool_call_id")
+    }
+    lines: list[str] = [
+        f"# AI agent trace — {getattr(scan, 'name', run.scan_id)}",
+        "",
+        f"- **Run:** `{run.id}`",
+        f"- **Scan:** `{run.scan_id}`",
+        f"- **Mode:** {run.mode}",
+        f"- **Provider/model:** {run.provider or '?'}/{run.model or '?'}",
+        f"- **Status:** {run.status}" + (f" ({run.stop_reason})" if run.stop_reason else ""),
+        f"- **Capabilities:** {run.capabilities or 'none'}",
+        f"- **Objective:** {run.objective}",
+        "",
+        "---",
+        "",
+    ]
+    step = 0
+    for m in conv:
+        role = m.get("role")
+        if role == "user":
+            lines += ["### 🧑 User", "", (m.get("content") or "").strip(), ""]
+        elif role == "assistant":
+            if m.get("content"):
+                lines += ["### 🤖 Assistant", "", m["content"].strip(), ""]
+            for tc in m.get("tool_calls") or []:
+                step += 1
+                args = _json.dumps(tc.get("arguments", {}), ensure_ascii=False, default=str)
+                res = results.get(tc.get("id"), "")
+                lines += [
+                    f"**Command {step}: `{tc.get('name')}`**",
+                    "",
+                    "```json",
+                    args,
+                    "```",
+                    "",
+                    "Result:",
+                    "",
+                    "```",
+                    res.strip() or "(no output)",
+                    "```",
+                    "",
+                ]
+    if run.final_text:
+        lines += ["---", "", "## Final report", "", run.final_text.strip(), ""]
+    return "\n".join(lines)
+
+
 class ApprovalBody(BaseModel):
     approval_id: str
     decision: str = Field(pattern="^(allow|deny)$")

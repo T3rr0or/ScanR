@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from sqlalchemy import ForeignKey, String, Text
+from datetime import datetime
+
+from sqlalchemy import DateTime, ForeignKey, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .base import Base, TimestampMixin, new_uuid
@@ -17,6 +19,9 @@ class AiAgentRun(Base, TimestampMixin):
     )
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="queued", index=True)
     # queued | running | completed | failed | cancelled
+    # Bumped periodically while running; a watchdog fails runs whose heartbeat
+    # has gone stale (worker died mid-run) so they don't hang "running" forever.
+    last_heartbeat: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     mode: Mapped[str] = mapped_column(String(20), nullable=False)  # guided | autonomous
     # Max reasoning iterations before the run stops (None = engine default).
     max_iterations: Mapped[int | None] = mapped_column(nullable=True)

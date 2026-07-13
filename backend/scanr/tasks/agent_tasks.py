@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from datetime import datetime, timezone
 
 from scanr.ai.llm.base import Msg, Usage
 
@@ -22,6 +23,65 @@ def run_ai_agent_task(run_id: str, resume: bool = False) -> dict:
         return loop.run_until_complete(_run_agent_async(run_id, resume=resume))
     finally:
         loop.close()
+
+
+@celery_app.task(name="scanr.reap_stale_agent_runs")
+def reap_stale_agent_runs() -> dict:
+    """Watchdog: fail agent runs whose worker died mid-run.
+
+    Without this, a run whose worker was OOM/SIGKILLed stays "running" forever —
+    the chat endpoint then rejects every follow-up with 409 and the UI spins
+    indefinitely. Runs whose heartbeat (or, for queued rows that never started,
+    creation time) is older than ``ai_agent_heartbeat_timeout`` are marked failed.
+    """
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        return loop.run_until_complete(_reap_stale_agent_runs_async())
+    finally:
+        loop.close()
+
+
+async def _reap_stale_agent_runs_async() -> dict:
+    from datetime import timedelta
+
+    from sqlalchemy import or_, select, update
+
+    from scanr.config import get_settings
+    from scanr.models import AiAgentRun
+
+    settings = get_settings()
+    now = datetime.now(tz=timezone.utc)
+    cutoff = now - timedelta(seconds=settings.ai_agent_heartbeat_timeout)
+
+    engine, SessionLocal = _make_engine_and_session()
+    try:
+        async with SessionLocal() as db:
+            result = await db.execute(
+                select(AiAgentRun.id).where(
+                    AiAgentRun.status.in_(("running", "queued")),
+                    or_(
+                        AiAgentRun.last_heartbeat < cutoff,
+                        (AiAgentRun.last_heartbeat.is_(None)) & (AiAgentRun.created_at < cutoff),
+                    ),
+                )
+            )
+            stale_ids = [row[0] for row in result.all()]
+            if stale_ids:
+                await db.execute(
+                    update(AiAgentRun)
+                    .where(AiAgentRun.id.in_(stale_ids), AiAgentRun.status.in_(("running", "queued")))
+                    .values(
+                        status="failed",
+                        error="Agent run timed out — the worker went unresponsive (stale heartbeat).",
+                        pending_approval=None,
+                    )
+                )
+                await db.commit()
+                logger.warning("reaped %d stale agent run(s): %s", len(stale_ids), stale_ids)
+            return {"reaped": len(stale_ids)}
+    finally:
+        await engine.dispose()
 
 
 async def _run_agent_async(run_id: str, resume: bool = False) -> dict:
@@ -42,6 +102,7 @@ async def _run_agent_async(run_id: str, resume: bool = False) -> dict:
             if run is None:
                 return {"error": "run not found"}
             run.status = "running"
+            run.last_heartbeat = datetime.now(tz=timezone.utc)
             await db.commit()
 
             # Drop any stale cancel flag from a prior run so a fresh/resumed run
@@ -111,12 +172,14 @@ async def _run_agent_async(run_id: str, resume: bool = False) -> dict:
                 async def _on_action(a):
                     acc.append({"tool": a.tool, "arguments": a.arguments, "result": a.result[:4000]})
                     run.actions = json.dumps(acc)
+                    run.last_heartbeat = datetime.now(tz=timezone.utc)
                     await db.commit()
 
                 async def _on_step(msgs):
                     # Stream the conversation to the DB after each turn so the
                     # chat UI updates live, not only when the run finishes.
                     run.conversation = json.dumps(_serialize_conversation(msgs))
+                    run.last_heartbeat = datetime.now(tz=timezone.utc)
                     await db.commit()
 
                 # On resume, load conversation + previous usage to continue from

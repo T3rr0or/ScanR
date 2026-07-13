@@ -34,6 +34,10 @@ celery_app.conf.update(
             "task": "scanr.reap_stale_scans",
             "schedule": 120.0,
         },
+        "reap-stale-agent-runs-every-2-minutes": {
+            "task": "scanr.reap_stale_agent_runs",
+            "schedule": 120.0,
+        },
     },
 )
 

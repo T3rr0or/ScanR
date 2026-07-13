@@ -77,6 +77,9 @@ class Settings(BaseSettings):
     # Per-minute input token cap for agent loop. 0 = no limit.
     # Anthropic free tier = 10,000/min. Set to 0 for pay-as-you-go plans.
     ai_rate_limit_tokens_per_min: int = 0
+    # Seconds before a running agent run with a stale heartbeat is auto-failed
+    # (worker died mid-run). Generous: LLM calls + rate/command sleeps take time.
+    ai_agent_heartbeat_timeout: int = 900
     openai_api_key: str = ""
     deepseek_api_key: str = ""
     anthropic_api_key: str = ""
