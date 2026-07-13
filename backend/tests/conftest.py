@@ -53,6 +53,18 @@ def event_loop():
 @pytest.fixture(scope="session")
 async def db_engine():
     engine = create_async_engine(TEST_DB_URL, connect_args={"check_same_thread": False})
+
+    # SQLite doesn't enforce foreign keys unless asked per-connection. Turn it on
+    # so tests actually exercise FK constraints (e.g. the user-delete cascade
+    # order) the way Postgres would in production.
+    from sqlalchemy import event
+
+    @event.listens_for(engine.sync_engine, "connect")
+    def _fk_pragma(dbapi_conn, _rec):
+        cur = dbapi_conn.cursor()
+        cur.execute("PRAGMA foreign_keys=ON")
+        cur.close()
+
     yield engine
     await engine.dispose()
 
@@ -83,6 +95,16 @@ async def test_app(db_engine):
 async def client(test_app):
     async with AsyncClient(transport=ASGITransport(app=test_app), base_url="http://test") as c:
         yield c
+
+
+@pytest.fixture
+async def db(test_app):
+    """A DB session for tests that need to set up rows directly (e.g. agent runs
+    that can't be created via the API without a live provider key)."""
+    import scanr.db.session as session_module
+
+    async with session_module.AsyncSessionLocal() as session:
+        yield session
 
 
 @pytest.fixture
