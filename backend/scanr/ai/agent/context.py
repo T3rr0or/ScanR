@@ -43,6 +43,15 @@ class AgentContext(ABC):
         iteration. Default False; the DB-backed impl checks a cancel flag."""
         return False
 
+    async def is_in_scope(self, host: str) -> bool:
+        """Whether ``host`` (an IP or hostname) belongs to this scan's authorized
+        scope — a discovered host, an exact target, a subdomain of a target
+        domain, or an IP inside a target CIDR/range. Target-bearing tool calls
+        are denied when this is False, so the agent can't reach out to hosts the
+        scan was never authorized against. Default True (the in-memory fake used
+        by tests is unconstrained); the DB-backed impl does the real check."""
+        return True
+
     @abstractmethod
     async def request_approval(self, tool: str, args: dict, reason: str) -> bool:
         """Ask the operator to approve an intrusive action. Returns True to run.

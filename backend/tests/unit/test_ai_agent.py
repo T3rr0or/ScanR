@@ -139,6 +139,27 @@ async def test_scope_denied_for_forbidden_target():
 
 
 @pytest.mark.asyncio
+async def test_scope_denied_when_target_not_in_scan_scope():
+    """A routable, non-forbidden host that isn't part of the scan's scope is
+    still denied — the agent can't reach arbitrary third-party hosts."""
+    class OutOfScopeCtx(FakeContext):
+        async def is_in_scope(self, host: str) -> bool:
+            return host == "192.0.2.10"
+
+    probe = Tool(
+        ToolDef(name="probe", description="x", parameters={"type": "object", "properties": {"url": {"type": "string"}}}),
+        handler=_ok_handler,
+        target_args=("url",),
+    )
+    ctx = OutOfScopeCtx(AgentPolicy(mode=AutonomyMode.autonomous))
+    reg = _reg_with(probe)
+    out = await reg.dispatch(ctx, "probe", {"url": "http://198.51.100.9/"})
+    assert out.startswith("DENIED") and "scope" in out.lower()
+    # the in-scope host still goes through
+    assert await reg.dispatch(ctx, "probe", {"url": "http://192.0.2.10/"}) == "OK"
+
+
+@pytest.mark.asyncio
 async def test_capability_denied_without_optin():
     privesc = Tool(
         ToolDef(name="privesc", description="x", parameters={"type": "object", "properties": {}}),

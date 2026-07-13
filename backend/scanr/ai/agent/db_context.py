@@ -194,6 +194,55 @@ class DbAgentContext(AgentContext):
         finally:
             await r.aclose()
 
+    async def is_in_scope(self, host: str) -> bool:
+        """Confine target-bearing tools to the scan's authorized scope: a
+        discovered host, an exact target, a subdomain of a target domain, or an
+        IP inside a target CIDR/range."""
+        import ipaddress
+
+        from scanr.models import Target
+        from scanr.utils.ip_utils import expand_targets
+
+        host = (host or "").strip().lower()
+        if not host:
+            return False
+
+        # Discovered hosts (by IP or hostname).
+        hrows = await self._db.execute(
+            select(Host.ip, Host.hostname).where(Host.scan_id == self.scan_id)
+        )
+        for ip, hostname in hrows.all():
+            if host == str(ip).strip().lower() or (hostname and host == str(hostname).strip().lower()):
+                return True
+
+        trows = await self._db.execute(select(Target.value).where(Target.scan_id == self.scan_id))
+        targets = [str(t).strip().lower() for t in trows.scalars().all() if t]
+
+        # Exact match or subdomain of a target domain (e.g. api.example.com ⊂ example.com).
+        for t in targets:
+            if host == t or host.endswith("." + t):
+                return True
+
+        # IP-in-CIDR / IP-in-range membership.
+        try:
+            ip_obj = ipaddress.ip_address(host)
+        except ValueError:
+            return False  # a hostname that matched no target/discovered host
+        for t in targets:
+            if "/" in t:
+                try:
+                    if ip_obj in ipaddress.ip_network(t, strict=False):
+                        return True
+                except ValueError:
+                    continue
+            elif "-" in t:
+                try:
+                    if any(host == c for c in expand_targets(t)):
+                        return True
+                except ValueError:
+                    continue
+        return False
+
     async def request_approval(self, tool: str, args: dict, reason: str) -> bool:
         """Pause the run, surface the pending action on the run row, and wait for
         an operator allow/deny (signalled via Redis). Times out to deny (safe)."""

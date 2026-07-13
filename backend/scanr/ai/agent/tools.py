@@ -446,13 +446,23 @@ class ToolRegistry:
         if tool is None:
             return f"ERROR: unknown tool {name!r}"
 
-        # 1. scope — never let a target point at forbidden infrastructure
+        # 1. scope — targets must be neither forbidden infra NOR outside the
+        #    scan's authorized scope (so the agent can't GET/POST to arbitrary
+        #    third-party hosts, only the scan's own targets/hosts).
         for arg in tool.target_args:
             value = str(args.get(arg, "")).strip()
             target = _host_of(value)
-            if target and is_forbidden_target(target, ctx.denylist):
+            if not target:
+                continue
+            if is_forbidden_target(target, ctx.denylist):
                 await ctx.log(f"blocked out-of-scope target {target!r} for {name}")
                 return f"DENIED: target {target!r} is out of scope (loopback / metadata / scanner infrastructure)."
+            if not await ctx.is_in_scope(target):
+                await ctx.log(f"blocked out-of-scope target {target!r} for {name}")
+                return (
+                    f"DENIED: target {target!r} is not in this scan's scope. "
+                    "Only the scan's own targets and discovered hosts may be acted on."
+                )
 
         # 2. capability — aggressive tools need the matching opt-in
         if not ctx.policy.allows_capability(tool.required_capability):
