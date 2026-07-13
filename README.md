@@ -24,7 +24,7 @@ ScanR is a self-hosted vulnerability scanner for authorized internal and externa
 - **Templates and schedules** - save reusable scan profiles and run them on a schedule.
 - **Reports** - export executive and technical reports in multiple formats.
 - **API keys, webhooks, and agents** - integrate ScanR into automated workflows and scan from different network vantage points.
-- **AI assist (optional)** - LLM-generated findings summaries today, with report narrative, false-positive testing, and autonomous modes on the roadmap. Bring your own ChatGPT, DeepSeek, or Anthropic key.
+- **AI-augmented pentesting (optional)** - findings summaries, report narratives, and false-positive testing, plus a gated guided/autonomous agent that actively investigates a scan (with an optional sandboxed shell). Conversational with follow-ups and mid-chat model switching. Bring your own ChatGPT, DeepSeek, or Anthropic key.
 
 ## Screenshots
 
@@ -275,8 +275,8 @@ or call the API directly.
 
 - **Findings summary** - executive + technical narrative of a scan's findings:
   `POST /api/v1/scans/{scan_id}/summary`.
-- **Report narrative** - structured engagement-report sections (executive
-  summary, risk assessment, key findings, prioritized remediation):
+- **Report narrative** (API only) - structured engagement-report sections
+  (executive summary, risk assessment, key findings, prioritized remediation):
   `POST /api/v1/scans/{scan_id}/report`.
 - **False-positive testing** - the model reviews each finding's evidence and
   flags the ones likely to be false positives, with confidence and a reason, for
@@ -307,10 +307,12 @@ opt-ins). The scan engine then runs the agent at the enumeration phase boundary
 follow-up checks (targeted plugins / port scans) that become part of the scan,
 rather than requiring a manual launch afterward. The same safety gating applies.
 
-Safety is enforced in code, not by the model: every tool call is scope-checked
-(`is_forbidden_target` blocks loopback / link-local / metadata / scanner infra),
-aggressive capabilities each require their own opt-in, the run has a token +
-iteration budget, and every action is streamed to the scan console and persisted.
+Safety is enforced in code, not by the model: every tool call is scope-checked —
+targets are confined to the scan's own targets and discovered hosts, and
+forbidden infra (loopback / link-local / metadata / scanner) is always blocked —
+aggressive capabilities each require their own opt-in, the run has token +
+iteration + per-minute rate budgets, and every action (with its full arguments)
+is streamed to the scan console and persisted for audit.
 
 The AI tab exposes the run's limits directly — **Max steps** (reasoning
 iterations) and **Max tokens** (safety cap) — and a **Stop** button cancels an
@@ -319,9 +321,16 @@ either limit ends the run cleanly and is labelled as such (e.g. "Reached step
 limit").
 
 Tools available to the agent today: read the scan's hosts/findings/evidence,
-`fetch_url` (HTTP GET, non-intrusive), `list_plugins`, `run_plugin` (run a ScanR
-plugin against a discovered host), and `run_port_scan` (nmap a host). Active
-tools are intrusive, so they are approval-gated in guided mode.
+`create_finding` (record what it discovers), `fetch_url` (HTTP GET,
+non-intrusive), `list_plugins`, `run_plugin` (run a ScanR plugin against a
+discovered host), `run_port_scan` (nmap a host), `submit_form` (HTTP POST —
+intrusive, aggressive-gated), and `run_command` (sandboxed shell — see below).
+Active tools are intrusive, so they are approval-gated in guided mode.
+
+The agent is **conversational**: after a run finishes you can send follow-up
+messages to continue it (the full transcript is kept), and switch the model
+mid-conversation — e.g. start on Claude, continue on DeepSeek. Replies render as
+markdown in the AI tab.
 
 **Aggressive capabilities** (admin-only opt-in at launch): enabling *aggressive*
 unlocks intrusive/destructive actions; *allow exploitation* lets the agent run
@@ -434,6 +443,7 @@ API docs are available at **http://localhost:8000/docs**.
 | `AI_PROVIDER` | `anthropic` | Default AI provider: `anthropic`, `openai`, or `deepseek` |
 | `AI_MODEL` | provider default | Override the model id used for AI features |
 | `AI_MAX_TOKENS` | `2048` | Max output tokens per AI request |
+| `AI_RATE_LIMIT_TOKENS_PER_MIN` | `0` | Per-minute input-token cap for agent runs (0 = no limit; the loop throttles to stay under it) |
 | `ANTHROPIC_API_KEY` | empty | Key for the Anthropic provider (enables AI when set) |
 | `OPENAI_API_KEY` | empty | Key for the OpenAI/ChatGPT provider |
 | `DEEPSEEK_API_KEY` | empty | Key for the DeepSeek provider |
