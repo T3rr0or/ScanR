@@ -60,7 +60,7 @@ _V = r"(\d+\.\d+(?:\.\d+)?)"  # semver-ish version capture
 _LIBS: list[_Lib] = [
     _Lib("jquery-ui", "jQuery UI",
          _p(rf"jquery[-.]ui(?:[-.][a-z]+)*[-.]{_V}", rf"/jqueryui/{_V}/", rf"/jquery\.ui/{_V}/"),
-         _p(rf"jQuery UI[ -]v?{_V}")),
+         _p(rf"jQuery UI[ -]v?{_V}", rf"\.ui\.version\s*=\s*[\"']{_V}[\"']")),
     _Lib("jquery-migrate", "jQuery Migrate",
          _p(rf"jquery[-.]migrate[-.]{_V}"),
          _p(rf"jQuery Migrate[ -]v?{_V}")),
@@ -211,15 +211,21 @@ class JsLibrariesPlugin(PluginBase):
 
     async def check(self, context: "ScanContext", host: "Host") -> list[FindingData]:
         findings: list[FindingData] = []
+        # Prefer the hostname so name-based virtual hosts return the real app
+        # (fetching by IP often hits a default/placeholder vhost with no scripts).
+        authority = host.hostname or host.ip
         # Dedupe across ports: one finding per (library, version) per host.
         seen: set[tuple[str, str]] = set()
         for port in host.ports:
             if not is_web_port(port):
                 continue
             scheme = web_scheme(port)
-            base = f"{scheme}://{host.ip}:{port.number}/"
+            base = f"{scheme}://{authority}:{port.number}/"
             try:
                 detected = await self._scan_page(context, base)
+                # If the vhost gave nothing but we used a hostname, retry by IP.
+                if not detected and authority != host.ip:
+                    detected = await self._scan_page(context, f"{scheme}://{host.ip}:{port.number}/")
             except Exception as exc:  # noqa: BLE001 - never let one port break the scan
                 logger.debug("js_libraries: %s failed: %s", base, exc)
                 continue
@@ -254,12 +260,15 @@ class JsLibrariesPlugin(PluginBase):
                 if len(srcs) >= _MAX_SCRIPTS:
                     break
 
+            # Any src not identified by URL gets its content fetched. We do NOT
+            # require a .js extension — script bodies are always JS, and JSF/
+            # framework resources are served as .xhtml/.faces/.js.xhtml etc.
             need_fetch: list[str] = []
             for src in srcs:
                 hit = _detect(src, None)
                 if hit:
                     results.append((hit[0], hit[1], src))
-                elif src.split("?")[0].endswith(".js"):
+                else:
                     need_fetch.append(src)
 
             await self._fetch_and_detect(client, need_fetch[:_MAX_FETCHED], results)

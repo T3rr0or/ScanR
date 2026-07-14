@@ -28,6 +28,9 @@ def test_detect_from_content():
     assert _detect("", "/*! jQuery JavaScript Library v1.12.4 */") == ("jquery", "1.12.4")
     assert _detect("", "/*! Bootstrap v4.3.1 (https://getbootstrap.com/) */") == ("bootstrap", "4.3.1")
     assert _detect("", 'Handlebars.VERSION = "4.7.6";') == ("handlebars", "4.7.6")
+    # minified libraries (no banner, version in a property) — e.g. bundled JSF
+    assert _detect("", 'a.fn.jquery="1.12.4",') == ("jquery", "1.12.4")
+    assert _detect("", 't.ui.version="1.12.1";') == ("jquery-ui", "1.12.1")
 
 
 def test_version_ranges():
