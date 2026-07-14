@@ -6,6 +6,7 @@ import ssl
 from typing import TYPE_CHECKING
 
 from scanr.core.plugin_base import FindingData, PluginBase, PluginCategory, Severity
+from scanr.plugins.ssl_tls._ports import is_tls_port
 
 if TYPE_CHECKING:
     from scanr.core.context import ScanContext
@@ -32,7 +33,7 @@ class CipherAuditPlugin(PluginBase):
     async def check(self, context: "ScanContext", host: "Host") -> list[FindingData]:
         findings = []
         for port in host.ports:
-            if port.number not in SSL_PORTS or port.state != "open":
+            if not is_tls_port(port):
                 continue
             weak = await self._check_ciphers(host.ip, port.number)
             if weak:

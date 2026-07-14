@@ -20,6 +20,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 from scanr.core.plugin_base import FindingData, PluginBase, PluginCategory, Severity
+from scanr.plugins.ssl_tls._ports import is_tls_port
 
 if TYPE_CHECKING:
     from scanr.core.context import ScanContext
@@ -58,7 +59,7 @@ class CertInspectorPlugin(PluginBase):
         findings: list[FindingData] = []
         sni = host.hostname or None  # SNI so name-based vhosts present the real cert
         for port in host.ports:
-            if port.number not in SSL_PORTS or port.state != "open":
+            if not is_tls_port(port):
                 continue
             der = await self._get_cert(host.ip, port.number, sni)
             if not der:

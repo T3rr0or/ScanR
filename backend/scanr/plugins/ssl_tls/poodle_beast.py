@@ -15,6 +15,7 @@ import ssl
 from typing import TYPE_CHECKING
 
 from scanr.core.plugin_base import FindingData, PluginBase, PluginCategory, Severity
+from scanr.plugins.ssl_tls._ports import is_tls_port
 
 if TYPE_CHECKING:
     from scanr.core.context import ScanContext
@@ -37,7 +38,7 @@ class PoodleBeastPlugin(PluginBase):
         findings = []
         loop = asyncio.get_running_loop()
         for port in host.ports:
-            if port.number not in SSL_PORTS or port.state != "open":
+            if not is_tls_port(port):
                 continue
 
             # POODLE: test SSLv3

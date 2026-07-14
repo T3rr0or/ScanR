@@ -17,6 +17,7 @@ from scanr.core.result_collector import ResultCollector
 from scanr.core.scan_logger import ScanLogger
 from scanr.models import Credential, Host, Plugin, Scan, ScanCredential, Target
 from scanr.models.base import new_uuid
+from scanr.plugins.ssl_tls._ports import is_tls_port_data
 from scanr.plugins.web._ports import is_web_port_data
 from scanr.utils.ip_utils import classify_target, is_valid_ip
 
@@ -49,9 +50,11 @@ def _plugin_allowed(plugin_id: str, filters: list[str]) -> bool:
 def _plugin_applies_to_host_data(plugin, ports: list[dict]) -> bool:
     if plugin.ports is None:
         return True
-    if getattr(plugin, "category", None) == PluginCategory.web and any(
-        is_web_port_data(p) for p in ports
-    ):
+    category = getattr(plugin, "category", None)
+    if category == PluginCategory.web and any(is_web_port_data(p) for p in ports):
+        return True
+    # TLS checks run on any port nmap flagged as TLS-wrapped, not just 443/8443/…
+    if category == PluginCategory.ssl_tls and any(is_tls_port_data(p) for p in ports):
         return True
     return any(p["number"] in plugin.ports and p["state"] == "open" for p in ports)
 
