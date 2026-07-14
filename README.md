@@ -15,7 +15,7 @@ ScanR is a self-hosted vulnerability scanner for authorized internal and externa
 - **Template-assisted scanning** - start from intent-based presets, then tune the actual capabilities.
 - **Context-aware targets** - internal, external, or custom context with automatic target handling for IPs, CIDR blocks, IP ranges, hostnames, and domains.
 - **Capability controls** - discovery, ports, service/web enumeration, depth, safety, and performance are exposed directly.
-- **Nmap, masscan, Nuclei, and native plugins** - host discovery, port scanning, service detection, CVE checks, web checks, TLS checks, and service misconfiguration checks.
+- **Nmap, masscan, Nuclei, and native plugins** - host discovery, port scanning, service detection, CVE checks, web checks, TLS checks, vulnerable JS library detection (retire.js-style), and service misconfiguration checks.
 - **Live console and persisted history** - stream scan progress while the scan runs and replay it later.
 - **Findings triage** - false positive, accepted risk, analyst notes, compliance tags, MITRE ATT&CK tags, and evidence.
 - **Peer-review evidence** - findings can include command/probe evidence so another tester can validate the result.
