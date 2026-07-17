@@ -25,6 +25,7 @@ import api from "@/api/client";
 import { relTime } from "@/components/ui";
 import AutonomyModeInfo from "@/components/AutonomyModeInfo";
 import { useAuthStore } from "@/store/auth";
+import { parseJwtRole } from "@/utils/jwt";
 
 type Tab =
 	| "profile"
@@ -55,11 +56,7 @@ export default function Settings() {
 	const token = useAuthStore((s) => s.token);
 
 	// Decode role from JWT to show admin-only tabs
-	let role = "analyst";
-	try {
-		const payload = JSON.parse(atob(token!.split(".")[1]));
-		role = payload.role ?? "analyst";
-	} catch {}
+	const role = parseJwtRole(token);
 
 	const visibleTabs = TABS.filter((t) => !t.adminOnly || role === "admin");
 

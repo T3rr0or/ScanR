@@ -674,7 +674,9 @@ class ChatBody(BaseModel):
 
 
 @router.post("/agent/runs/{run_id}/chat")
+@limiter.limit("10/minute")
 async def agent_chat(
+    request: Request,
     run_id: str,
     body: ChatBody,
     db: AsyncSession = Depends(get_db),
@@ -726,7 +728,9 @@ async def agent_chat(
 
 
 @router.post("/agent/runs/{run_id}/stop")
+@limiter.limit("30/minute")
 async def agent_stop(
+    request: Request,
     run_id: str,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_scope("scans:write")),
@@ -752,7 +756,9 @@ async def agent_stop(
 
 
 @router.post("/agent/runs/{run_id}/approval")
+@limiter.limit("30/minute")
 async def decide_agent_approval(
+    request: Request,
     run_id: str,
     body: ApprovalBody,
     db: AsyncSession = Depends(get_db),
@@ -786,7 +792,9 @@ async def decide_agent_approval(
 
 
 @router.post("/agent/runs/{run_id}/cancel")
+@limiter.limit("30/minute")
 async def cancel_agent_run(
+    request: Request,
     run_id: str,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_scope("scans:write")),

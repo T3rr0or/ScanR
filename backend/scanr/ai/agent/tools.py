@@ -174,6 +174,22 @@ def read_only_tools() -> list[Tool]:
 
 async def _http_request(url: str, method: str, body_raw: str | None, content_type: str) -> str:
     import httpx
+    from urllib.parse import urlparse
+
+    from scanr.utils.ip_utils import resolve_and_check_target
+
+    # DNS-rebinding guard: the dispatch scope check is string-based, so a
+    # hostname that passes the string check could still resolve to loopback /
+    # link-local (cloud metadata) / reserved infrastructure. Resolve before
+    # connecting and refuse if any resolved address is forbidden.
+    # Residual TOCTOU: a hostile DNS server could rebind between this
+    # resolution and httpx's own connect-time resolution; closing that fully
+    # would require connecting to the pre-resolved IP.
+    host = urlparse(url).hostname or ""
+    if host and await resolve_and_check_target(host):
+        raise ToolError(
+            f"request target {host!r} resolves to a forbidden address (loopback / metadata / reserved)"
+        )
 
     try:
         async with httpx.AsyncClient(timeout=10.0, follow_redirects=False, verify=False) as client:

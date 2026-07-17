@@ -28,10 +28,12 @@ export function useScanConsole(scanId: string | null) {
   const wsRef = useRef<WebSocket | null>(null)
   const attemptsRef = useRef(0)
   const pingRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const reconnectRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const disposedRef = useRef(false)
   const token = useAuthStore(s => s.token)
 
   const connect = useCallback(() => {
-    if (!scanId || !token) return
+    if (!scanId || !token || disposedRef.current) return
 
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
     const url = `${protocol}//${window.location.host}/ws/scans/${scanId}/progress`
@@ -41,6 +43,7 @@ export function useScanConsole(scanId: string | null) {
     ws.onopen = () => {
       setConnected(true)
       attemptsRef.current = 0
+      if (reconnectRef.current) { clearTimeout(reconnectRef.current); reconnectRef.current = null }
       pingRef.current = setInterval(() => {
         if (ws.readyState === WebSocket.OPEN) ws.send('ping')
       }, 25_000)
@@ -54,7 +57,7 @@ export function useScanConsole(scanId: string | null) {
       if (attemptsRef.current >= MAX_RECONNECT) return
       const delay = Math.min(1000 * 2 ** attemptsRef.current, 30_000)
       attemptsRef.current++
-      setTimeout(connect, delay)
+      reconnectRef.current = setTimeout(connect, delay)
     }
 
     ws.onmessage = (e) => {
@@ -93,10 +96,13 @@ export function useScanConsole(scanId: string | null) {
     setEvents([])
     setScanStatus(null)
     attemptsRef.current = 0
+    disposedRef.current = false
     connect()
 
     return () => {
+      disposedRef.current = true
       if (pingRef.current) { clearInterval(pingRef.current); pingRef.current = null }
+      if (reconnectRef.current) { clearTimeout(reconnectRef.current); reconnectRef.current = null }
       wsRef.current?.close(1000)
     }
   }, [scanId, token, connect])

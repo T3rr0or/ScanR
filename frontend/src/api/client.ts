@@ -1,9 +1,17 @@
-import axios from 'axios'
+import axios, { type AxiosError } from 'axios'
 import { useAuthStore } from '@/store/auth'
+
+declare module 'axios' {
+  interface InternalAxiosRequestConfig {
+    /** Set once a request has already been retried after a token refresh. */
+    _retry?: boolean
+  }
+}
 
 const api = axios.create({
   baseURL: '/api/v1',
   withCredentials: true, // send HttpOnly refresh token cookie automatically
+  timeout: 30_000, // fail hung requests instead of blocking the UI forever
 })
 
 api.interceptors.request.use((config) => {
@@ -23,9 +31,9 @@ function drainQueue(token: string | null) {
 
 api.interceptors.response.use(
   (r) => r,
-  async (err) => {
+  async (err: AxiosError) => {
     const originalRequest = err.config
-    if (err.response?.status !== 401 || originalRequest._retry) {
+    if (!originalRequest || err.response?.status !== 401 || originalRequest._retry) {
       return Promise.reject(err)
     }
 

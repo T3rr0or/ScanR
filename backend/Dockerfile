@@ -1,4 +1,4 @@
-FROM python:3.12-slim
+FROM python:3.12-slim@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de
 
 # System deps
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -14,6 +14,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     wget \
     unzip \
     libcap2-bin \
+    # docker-compose: required by the OPTIONAL in-app self-update feature
+    # (docker-compose.self-update.yml) — the update command runs `docker
+    # compose` inside the api container against the mounted host socket.
+    # Off by default; drop this package if you never enable self-update.
     docker-compose \
     gosu \
     && rm -rf /var/lib/apt/lists/*
@@ -42,10 +46,15 @@ WORKDIR /app
 # while the image build may install them under root's cache.
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
-# Install Python deps after copying package source. Editable installs need scanr/ present.
-# Include the [ai] extra so the AI provider SDKs ship in the image; AI features
-# stay disabled at runtime until a provider API key is configured.
-COPY pyproject.toml .
+# Install Python deps from the pinned, hash-verified lock file (generated from
+# pyproject.toml incl. the [ai] extra — regenerate with:
+#   uv pip compile pyproject.toml --extra ai --python-version 3.12 --generate-hashes -o requirements.txt
+# ). The editable install afterwards only adds the scanr package itself; every
+# dependency is already satisfied by the lock, so pip changes nothing.
+# AI features stay disabled at runtime until a provider API key is configured.
+COPY pyproject.toml requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt
+# Editable installs need scanr/ present.
 COPY scanr/ ./scanr/
 RUN pip install --no-cache-dir -e ".[ai]"
 

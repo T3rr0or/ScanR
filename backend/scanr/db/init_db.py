@@ -5,6 +5,7 @@ import json
 import logging
 import os
 from pathlib import Path
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -70,7 +71,7 @@ async def seed_plugins(session: AsyncSession) -> None:
     """Insert plugin metadata rows if not present."""
     from sqlalchemy import select
 
-    BUILTIN_PLUGINS = [
+    BUILTIN_PLUGINS: list[dict[str, Any]] = [
         # SSL/TLS
         dict(id="ssl_tls.cert_inspector", name="SSL Certificate Inspector", category="ssl_tls", default_severity="medium", description="Check certificate expiry, weak signature, and CN mismatch"),
         dict(id="ssl_tls.cipher_audit", name="Weak Cipher Suite Detection", category="ssl_tls", default_severity="high", description="Detect RC4, DES, NULL, and export cipher suites"),
@@ -290,7 +291,7 @@ async def seed_templates(session: AsyncSession) -> None:
     slow_perf = {"max_concurrent_hosts": 8, "max_concurrent_plugins": 10, "timeout": 90, "masscan_rate": 5000, "nuclei_rate": 15}
     fast_perf = {"max_concurrent_hosts": 40, "max_concurrent_plugins": 30, "timeout": 45, "masscan_rate": 25000, "nuclei_rate": 50}
 
-    SYSTEM_TEMPLATES = [
+    SYSTEM_TEMPLATES: list[dict[str, Any]] = [
         {
             "name": "External Attack Surface",
             "description": "Internet-facing domain recon with DNS, subdomains, web exposure, TLS, screenshots, and Nuclei.",

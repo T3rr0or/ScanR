@@ -85,12 +85,26 @@ async function exportPng(svgEl: SVGSVGElement, filename: string): Promise<string
   })
 }
 
+export function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
 function printPdf(dataUrl: string, scanName: string, hostCount: number, date: string) {
+  // scanName/date are user-controlled and interpolated into raw HTML written to
+  // a same-origin window — escape them. dataUrl is a canvas-generated base64
+  // PNG data URL (safe alphabet, cannot break out of the attribute).
+  const safeName = escapeHtml(scanName)
+  const safeDate = escapeHtml(date)
   const html = `<!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8">
-<title>Network Topology — ${scanName}</title>
+<title>Network Topology — ${safeName}</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body { font-family: Arial, sans-serif; background: #fff; color: #111; padding: 32px; }
@@ -103,8 +117,8 @@ function printPdf(dataUrl: string, scanName: string, hostCount: number, date: st
 </style>
 </head>
 <body>
-<h1>Network Topology — ${scanName}</h1>
-<div class="meta">${hostCount} host${hostCount !== 1 ? 's' : ''} discovered · Generated ${date}</div>
+<h1>Network Topology — ${safeName}</h1>
+<div class="meta">${hostCount} host${hostCount !== 1 ? 's' : ''} discovered · Generated ${safeDate}</div>
 <img src="${dataUrl}" alt="Network topology diagram">
 <div class="legend">
   <span><span class="dot" style="background:#f43f5e"></span>Critical</span>

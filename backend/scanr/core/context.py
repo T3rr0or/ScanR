@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from dataclasses import dataclass, field
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from scanr.core.scan_logger import ScanLogger
 from scanr.core.rate_limiter import RateLimiter
-from scanr.models import Scan
+from scanr.models import Scan, ScanStatus
+
+logger = logging.getLogger(__name__)
 
 
 _BUILTIN_PROFILES: dict[str, dict] = {
@@ -111,9 +114,40 @@ class ScanContext:
         self._pause_event.set()
         self._pause_event.clear()
 
+    async def refresh_control_state(self) -> None:
+        """Re-read scan status from the DB and sync local pause/cancel flags.
+
+        The API flips ``scans.status`` via atomic transitions (pause / resume /
+        cancel endpoints). The worker polls it here so those controls actually
+        take effect mid-scan instead of being cosmetic.
+        """
+        try:
+            from sqlalchemy import select as _select
+            async with self.db_lock:
+                result = await self.db.execute(
+                    _select(Scan.status).where(Scan.id == self.scan_id)
+                )
+                status = result.scalar_one_or_none()
+        except Exception:
+            logger.exception("control-state refresh failed for scan %s", self.scan_id)
+            return
+        if status == ScanStatus.cancelled:
+            self.request_cancel()
+        elif status == ScanStatus.paused:
+            self.request_pause()
+        elif status:
+            self.request_resume()
+
     async def wait_if_paused(self) -> None:
+        """Block while the scan is paused; also picks up cancel requests.
+
+        Polls the DB while parked so an API-side resume/cancel takes effect
+        even when no host boundary is crossed.
+        """
+        await self.refresh_control_state()
         while self._paused and not self.cancelled:
-            await asyncio.sleep(1.0)
+            await asyncio.sleep(2.0)
+            await self.refresh_control_state()
 
     def request_cancel(self) -> None:
         self.cancelled = True

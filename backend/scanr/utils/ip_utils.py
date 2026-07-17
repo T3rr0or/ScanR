@@ -1,8 +1,25 @@
 from __future__ import annotations
 
+import asyncio
 import ipaddress
 import re
+import socket
 from typing import Iterator
+
+
+_HOSTNAME_LABEL_RE = re.compile(r"^[a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?$")
+
+
+def is_valid_hostname(value: str) -> bool:
+    """RFC-1123 hostname: dot-separated labels of 1-63 chars, each starting and
+    ending with an alphanumeric, hyphens only inside a label. A trailing dot
+    (FQDN form) is allowed. This rejects option-injection values like '-Pn',
+    '--banners', or 'foo-' that would otherwise be passed as argv to scanner
+    subprocesses."""
+    v = value.strip().rstrip(".")
+    if not v or len(v) > 253:
+        return False
+    return all(_HOSTNAME_LABEL_RE.match(label) for label in v.split("."))
 
 
 def expand_targets(value: str) -> Iterator[str]:
@@ -46,8 +63,9 @@ def expand_targets(value: str) -> Iterator[str]:
     except ValueError:
         pass
 
-    # Hostname — validate before yielding (defence against future shell=True regressions)
-    if not re.match(r'^[a-zA-Z0-9.\-]{1,253}$', value):
+    # Hostname — validate before yielding (defence against option injection and
+    # future shell=True regressions)
+    if not is_valid_hostname(value):
         raise ValueError(f"Invalid target: {value!r}")
     yield value
 
@@ -104,6 +122,26 @@ def is_forbidden_target(value: str, extra_denylist: set[str] | None = None) -> b
         or addr.is_multicast
         or addr.is_reserved
     )
+
+
+async def resolve_and_check_target(hostname: str, extra_denylist: set[str] | None = None) -> bool:
+    """Resolve a hostname via system DNS and return True if ANY address it
+    resolves to is forbidden (loopback / link-local incl. cloud metadata /
+    unspecified / multicast / reserved).
+
+    The string-based is_forbidden_target check alone misses hostnames that
+    resolve to internal infrastructure (e.g. a hostname pointing at 127.0.0.1
+    or 169.254.169.254). Unresolvable hostnames return False — the connection
+    itself will fail later (consistent with webhook URL validation).
+    """
+    try:
+        infos = await asyncio.get_running_loop().getaddrinfo(hostname, None, type=socket.SOCK_STREAM)
+    except (OSError, UnicodeError):  # gaierror is an OSError subclass
+        return False  # cannot resolve — connection will fail at scan time anyway
+    for info in infos:
+        if is_forbidden_target(info[4][0], extra_denylist):
+            return True
+    return False
 
 
 def classify_target(value: str) -> str:

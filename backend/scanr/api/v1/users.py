@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel, Field
 from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -70,14 +70,35 @@ async def update_profile(
 @router.post("/me/change-password", status_code=204)
 async def change_password(
     body: PasswordChange,
+    response: Response,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     if not verify_password(body.current_password, current_user.hashed_password):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Current password is incorrect")
+
+    # Invalidate all existing refresh tokens BEFORE committing the new
+    # password. If Redis is unavailable, abort (fail closed) rather than
+    # leave tokens issued against the old password valid for days.
+    from scanr.api.v1 import auth as auth_api
+    from scanr.auth import create_refresh_token
+
+    try:
+        await auth_api._bump_pw_epoch(current_user.id)
+    except Exception:
+        logger.error("Redis unavailable during password change for user=%s", current_user.email)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Token service unavailable, please try again",
+        )
+
     current_user.hashed_password = hash_password(body.new_password)
     await db.commit()
-    logger.info("Password changed for user=%s", current_user.email)
+
+    # Keep the current session alive with a fresh refresh cookie; every other
+    # outstanding refresh token now predates the epoch and will be rejected.
+    auth_api._set_refresh_cookie(response, create_refresh_token(current_user.id))
+    logger.info("Password changed for user=%s — existing refresh tokens revoked", current_user.email)
 
 
 # ── Admin user management ─────────────────────────────────────────────────────

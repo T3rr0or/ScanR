@@ -12,7 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from scanr.db import get_db
-from scanr.deps import get_current_user
+from scanr.deps import require_scope
 from scanr.models.base import new_uuid
 from scanr.models.user import User
 from scanr.models.webhook import Webhook
@@ -99,7 +99,7 @@ def _to_read(w: Webhook) -> WebhookRead:
 @router.get("", response_model=list[WebhookRead])
 async def list_webhooks(
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_scope("webhooks:read")),
 ):
     result = await db.execute(select(Webhook).where(Webhook.user_id == current_user.id))
     return [_to_read(w) for w in result.scalars().all()]
@@ -109,7 +109,7 @@ async def list_webhooks(
 async def create_webhook(
     body: WebhookCreate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_scope("webhooks:write")),
 ):
     webhook = Webhook(
         id=new_uuid(),
@@ -131,7 +131,7 @@ async def update_webhook(
     webhook_id: str,
     body: WebhookUpdate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_scope("webhooks:write")),
 ):
     result = await db.execute(select(Webhook).where(Webhook.id == webhook_id, Webhook.user_id == current_user.id))
     webhook = result.scalar_one_or_none()
@@ -158,7 +158,7 @@ async def update_webhook(
 async def delete_webhook(
     webhook_id: str,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_scope("webhooks:write")),
 ):
     result = await db.execute(select(Webhook).where(Webhook.id == webhook_id, Webhook.user_id == current_user.id))
     webhook = result.scalar_one_or_none()
@@ -172,7 +172,7 @@ async def delete_webhook(
 async def test_webhook(
     webhook_id: str,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_scope("webhooks:write")),
 ):
     result = await db.execute(select(Webhook).where(Webhook.id == webhook_id, Webhook.user_id == current_user.id))
     webhook = result.scalar_one_or_none()

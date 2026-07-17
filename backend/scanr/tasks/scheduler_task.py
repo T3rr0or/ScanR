@@ -46,7 +46,10 @@ async def _async_run_due_schedules() -> None:
     engine = create_async_engine(settings.database_url, poolclass=NullPool)
     now = datetime.now(timezone.utc)
 
-    async with AsyncSession(engine) as session:
+    # expire_on_commit=False: _fire_schedule commits mid-loop, and the default
+    # expire-on-commit would make attribute access on the remaining schedule
+    # objects raise MissingGreenlet in this async context.
+    async with AsyncSession(engine, expire_on_commit=False) as session:
         result = await session.execute(
             select(Schedule).where(
                 Schedule.enabled == True,
@@ -69,16 +72,59 @@ async def _async_run_due_schedules() -> None:
 
 async def _fire_schedule(sched, session, now: datetime) -> None:
 
+    from sqlalchemy import select
+
+    from scanr.config import get_settings
     from scanr.models import Scan, ScanStatus, Target
     from scanr.models.base import new_uuid
-    from scanr.utils.ip_utils import classify_target
+    from scanr.models.credential import Credential
+    from scanr.utils.ip_utils import classify_target, expand_targets, is_forbidden_target
 
     targets_raw: list[str] = json.loads(sched.targets) if sched.targets else []
     if not targets_raw:
         logger.warning("Schedule %s has no targets — skipping", sched.id)
         return
 
+    # Defense in depth: re-validate at fire time. Targets are checked against
+    # the denylist again and the referenced credential must still belong to the
+    # schedule owner — both may have changed since the schedule was saved.
+    denylist = get_settings().scan_denylist
+    for raw in targets_raw:
+        value = raw.strip()
+        try:
+            expanded = list(expand_targets(value))
+        except ValueError:
+            expanded = []
+        if (
+            not expanded
+            or is_forbidden_target(value, denylist)
+            or any(is_forbidden_target(ip, denylist) for ip in expanded)
+        ):
+            logger.warning(
+                "Schedule %s target %r failed validation at fire time — skipping fire",
+                sched.id, value,
+            )
+            sched.next_run = _calc_next_run(sched.cron_expr)
+            await session.commit()
+            return
+
     profile_data = json.loads(sched.scan_profile_json) if sched.scan_profile_json else {}
+
+    credential_id = profile_data.get("credential_id")
+    if credential_id:
+        res = await session.execute(
+            select(Credential.id).where(
+                Credential.id == credential_id, Credential.user_id == sched.user_id
+            )
+        )
+        if res.scalar_one_or_none() is None:
+            logger.warning(
+                "Schedule %s references a missing or foreign credential — skipping fire",
+                sched.id,
+            )
+            sched.next_run = _calc_next_run(sched.cron_expr)
+            await session.commit()
+            return
 
     scan = Scan(
         id=new_uuid(),
@@ -87,7 +133,7 @@ async def _fire_schedule(sched, session, now: datetime) -> None:
         profile=profile_data.get("profile", "standard"),
         profile_json=sched.scan_profile_json,
         user_id=sched.user_id,
-        credential_id=profile_data.get("credential_id"),
+        credential_id=credential_id,
         template_id=profile_data.get("template_id"),
     )
     session.add(scan)
@@ -102,13 +148,21 @@ async def _fire_schedule(sched, session, now: datetime) -> None:
 
     await session.flush()
 
-    from scanr.tasks.scan_tasks import run_scan_task
-    task = run_scan_task.delay(scan.id)
-    scan.status = ScanStatus.running
-    scan.celery_task_id = task.id
-
     sched.last_run = now
     sched.last_scan_id = scan.id
     sched.next_run = _calc_next_run(sched.cron_expr)
 
-    logger.info("Fired schedule %r → scan %s (next: %s)", sched.name, scan.id, sched.next_run)
+    # Commit BEFORE dispatching: the Celery worker must be able to see the scan
+    # row. Dispatching against an uncommitted row races the worker and leaves
+    # the scan stuck in 'pending' if the worker wins.
+    scan_id = scan.id
+    await session.commit()
+
+    from scanr.tasks.scan_tasks import run_scan_task
+    task = run_scan_task.delay(scan_id)
+
+    scan.status = ScanStatus.running
+    scan.celery_task_id = task.id
+    await session.commit()
+
+    logger.info("Fired schedule %r → scan %s (next: %s)", sched.name, scan_id, sched.next_run)

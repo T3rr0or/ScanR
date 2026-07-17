@@ -14,7 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from scanr.db import get_db
-from scanr.deps import get_current_user
+from scanr.deps import require_scope
 from scanr.models.base import new_uuid
 from scanr.models.scan_agent import ScanAgent
 from scanr.models.user import User
@@ -56,7 +56,7 @@ class AgentCreated(AgentRead):
 async def list_agents(
     include_disabled: bool = False,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_scope("agents:read")),
 ):
     q = select(ScanAgent).where(ScanAgent.user_id == current_user.id)
     if not include_disabled:
@@ -69,7 +69,7 @@ async def list_agents(
 async def register_agent(
     body: AgentCreate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_scope("agents:write")),
 ):
     raw, token_hash, prefix = _generate_agent_token()
     agent = ScanAgent(
@@ -100,7 +100,7 @@ async def update_agent(
     agent_id: str,
     body: AgentUpdate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_scope("agents:write")),
 ):
     result = await db.execute(
         select(ScanAgent).where(ScanAgent.id == agent_id, ScanAgent.user_id == current_user.id)
@@ -123,7 +123,7 @@ async def update_agent(
 async def delete_agent(
     agent_id: str,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_scope("agents:write")),
 ):
     result = await db.execute(
         select(ScanAgent).where(ScanAgent.id == agent_id, ScanAgent.user_id == current_user.id)

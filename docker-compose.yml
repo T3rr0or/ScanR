@@ -1,6 +1,6 @@
 services:
   redis:
-    image: redis:7-alpine
+    image: redis:7-alpine@sha256:6ab0b6e7381779332f97b8ca76193e45b0756f38d4c0dcda72dbb3c32061ab99
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
@@ -11,7 +11,7 @@ services:
       - redis_data:/data
 
   postgres:
-    image: postgres:16-alpine
+    image: postgres:16-alpine@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777
     restart: unless-stopped
     environment:
       POSTGRES_USER: scanr
@@ -86,8 +86,10 @@ services:
       - reports_data:/app/reports
       - nvd_data:/app/nvd_cache
       - wordlists_data:/app/wordlists
+    # Bind to localhost by default — the frontend nginx proxies /api and /ws.
+    # Set SCANR_API_BIND=0.0.0.0 in .env only if you need direct API access.
     ports:
-      - "8000:8000"
+      - "${SCANR_API_BIND:-127.0.0.1}:8000:8000"
     command: uvicorn scanr.main:app --host 0.0.0.0 --port 8000
 
   worker:
@@ -100,6 +102,10 @@ services:
       postgres:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      # Wait for the API to be healthy: only the API runs DB migrations (app
+      # lifespan), so the worker must not start against an unmigrated schema.
+      api:
         condition: service_healthy
     environment:
       DATABASE_URL: postgresql+asyncpg://scanr:${POSTGRES_PASSWORD}@postgres/scanr
@@ -172,14 +178,22 @@ services:
       - sandbox_net
 
   # Filtering forward-proxy: package installs reach allowlisted mirrors only.
+  # Self-built minimal image (replaces third-party vimagick/tinyproxy:latest).
+  # Dual-homed: it is the ONLY component bridging the internal sandbox_net and
+  # the egress network, so sandboxed containers can only reach the internet
+  # through this allowlist filter.
   sandbox-proxy:
-    image: vimagick/tinyproxy:latest
+    image: ghcr.io/t3rr0or/scanr-sandbox-proxy:${SCANR_VERSION:-latest}
+    build:
+      context: ./backend
+      dockerfile: sandbox/Dockerfile.proxy
     restart: unless-stopped
     volumes:
       - ./backend/sandbox/proxy/tinyproxy.conf:/etc/tinyproxy/tinyproxy.conf:ro
       - ./backend/sandbox/proxy/filter:/etc/tinyproxy/filter:ro
     networks:
       - sandbox_net
+      - sandbox_egress
 
 volumes:
   redis_data:
@@ -189,5 +203,11 @@ volumes:
   wordlists_data:
 
 networks:
+  # Internal: containers on this network have NO direct internet/LAN route.
+  # Sandboxed agent containers are attached here by the runner and can only
+  # reach the outside through sandbox-proxy's allowlist.
   sandbox_net:
     name: scanr_sandbox
+    internal: true
+  # Egress leg for sandbox-proxy only. Never attach sandboxed containers here.
+  sandbox_egress:

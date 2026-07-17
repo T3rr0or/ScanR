@@ -4,6 +4,7 @@ import base64
 import logging
 from collections import defaultdict
 from pathlib import Path
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -48,7 +49,7 @@ class ReportEngine:
         # Enrich findings with host_ip (avoids extra joins in template)
         ip_map = {h.id: h.ip for h in hosts}
         for f in findings:
-            f.host_ip = ip_map.get(f.host_id) or ""  # type: ignore[attr-defined]
+            f.host_ip = ip_map.get(f.host_id or "") or ""  # type: ignore[attr-defined]
 
         # Load ALL screenshots (even those without a saved file — shown as error entries)
         screenshots_result = await self.db.execute(
@@ -62,7 +63,7 @@ class ReportEngine:
         from scanr.reporting.executive_summary import generate_summary
         exec_summary = generate_summary(scan, hosts, findings)
 
-        context = {
+        context: dict[str, Any] = {
             "scan": scan,
             "hosts": hosts,
             "findings": findings,

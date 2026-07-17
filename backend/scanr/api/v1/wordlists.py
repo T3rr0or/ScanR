@@ -10,7 +10,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from scanr.db import get_db
-from scanr.deps import get_current_user
+from scanr.deps import require_scope
 from scanr.models.user import User
 from scanr.models.wordlist import Wordlist
 from scanr.models.base import new_uuid
@@ -35,7 +35,7 @@ class WordlistRead(BaseModel):
 @router.get("", response_model=list[WordlistRead])
 async def list_wordlists(
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_scope("wordlists:read")),
 ):
     """List built-in wordlists and user's own wordlists."""
     result = await db.execute(
@@ -53,7 +53,7 @@ async def upload_wordlist(
     type: str = Form(...),  # "usernames" | "passwords" | "credentials" | "paths"
     description: str = Form(""),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_scope("wordlists:write")),
 ):
     if type not in ("usernames", "passwords", "credentials", "paths"):
         raise HTTPException(status_code=400, detail="type must be usernames, passwords, credentials, or paths")
@@ -103,7 +103,7 @@ async def preview_wordlist(
     wordlist_id: str,
     limit: int = 100,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_scope("wordlists:read")),
 ):
     wl = await _get_accessible(wordlist_id, current_user.id, db)
     path = Path(wl.file_path).resolve()
@@ -126,7 +126,7 @@ async def preview_wordlist(
 async def delete_wordlist(
     wordlist_id: str,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_scope("wordlists:write")),
 ):
     wl = await _get_accessible(wordlist_id, current_user.id, db)
     if wl.is_builtin:

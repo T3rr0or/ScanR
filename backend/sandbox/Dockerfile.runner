@@ -1,14 +1,22 @@
 # ScanR sandbox-runner image.
 # The ONLY component granted Docker socket access. Minimal: the docker CLI plus
 # the runner app. NO ScanR secrets are injected into this service.
-FROM python:3.12-slim
+FROM python:3.12-slim@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de
 
 # Install Docker CLI (static binary — the Debian docker.io package only ships
 # dockerd, not the CLI client, since Trixie).
+# Version pinned; sha256 verified against the tarball published at
+# download.docker.com (they publish no checksum file — sum pinned on first
+# trusted observation, same pattern as the nuclei install in the main image).
+ARG DOCKER_CLI_VERSION=27.5.1
+ARG DOCKER_CLI_SHA256=4f798b3ee1e0140eab5bf30b0edc4e84f4cdb53255a429dc3bbae9524845d640
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates curl \
-    && curl -fsSL https://download.docker.com/linux/static/stable/x86_64/docker-27.5.1.tgz \
-    | tar xz -C /usr/local/bin --strip-components=1 \
+    && curl -fsSL -o /tmp/docker.tgz \
+       "https://download.docker.com/linux/static/stable/x86_64/docker-${DOCKER_CLI_VERSION}.tgz" \
+    && echo "${DOCKER_CLI_SHA256}  /tmp/docker.tgz" | sha256sum -c - \
+    && tar xz -C /usr/local/bin --strip-components=1 -f /tmp/docker.tgz \
+    && rm /tmp/docker.tgz \
     && rm -rf /var/lib/apt/lists/*
 
 RUN pip install --no-cache-dir "fastapi>=0.115.0" "uvicorn[standard]>=0.30.0" "pydantic>=2.0.0"

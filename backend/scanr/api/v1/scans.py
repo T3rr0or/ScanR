@@ -426,7 +426,7 @@ async def update_scan(
     """Update a pending scan's settings (name, targets, profile). Only allowed before launch."""
     scan = await _get_own_scan(scan_id, current_user.id, db)
     if scan.status not in (ScanStatus.pending,):
-        raise HTTPException(status_code=409, detail=f"Cannot edit scan in '{scan.status.value}' status — only pending scans can be modified")
+        raise HTTPException(status_code=409, detail=f"Cannot edit scan in '{scan.status}' status — only pending scans can be modified")
 
     if body.name is not None:
         scan.name = body.name
@@ -438,12 +438,9 @@ async def update_scan(
     if body.targets is not None:
         if not body.targets:
             raise HTTPException(status_code=400, detail="At least one target required")
-        from scanr.utils.ip_utils import expand_targets as _expand
-        for raw in body.targets:
-            try:
-                list(_expand(raw.strip()))
-            except ValueError as exc:
-                raise HTTPException(status_code=400, detail=f"Invalid target: {exc}")
+        # Same denylist + expansion validation as create_scan — a PATCH must
+        # not be able to point a scan at scanner infrastructure.
+        await _validate_targets(body.targets)
         # Replace targets: delete old, insert new
         await db.execute(text("DELETE FROM targets WHERE scan_id = :sid"), {"sid": scan_id})
         for raw in body.targets:
@@ -498,13 +495,32 @@ async def launch_scan(
     current_user: User = Depends(require_scope("scans:write")),
 ):
     scan = await _get_own_scan(scan_id, current_user.id, db)
-    if scan.status == ScanStatus.running:
-        raise HTTPException(status_code=409, detail="Scan already running")
+
+    # Atomic transition: a single conditional UPDATE makes only one concurrent
+    # launch win. A check-then-set would let two parallel requests both
+    # dispatch Celery tasks for the same scan. Paused scans must be resumed
+    # via /resume, not re-launched (would double-dispatch).
+    result = await db.execute(
+        update(Scan)
+        .where(
+            Scan.id == scan_id,
+            Scan.user_id == current_user.id,
+            Scan.status.notin_([ScanStatus.running, ScanStatus.paused]),
+        )
+        .values(status=ScanStatus.running)
+    )
+    await db.commit()
+    if result.rowcount != 1:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Cannot launch scan in '{scan.status}' status",
+        )
 
     from scanr.tasks.scan_tasks import run_scan_task
     task = run_scan_task.delay(scan_id)
-    scan.status = ScanStatus.running
-    scan.celery_task_id = task.id
+    await db.execute(
+        update(Scan).where(Scan.id == scan_id).values(celery_task_id=task.id)
+    )
     await db.commit()
     return {"task_id": task.id, "scan_id": scan_id}
 
@@ -518,7 +534,7 @@ async def cancel_scan(
     scan = await _get_own_scan(scan_id, current_user.id, db)
 
     if scan.status not in (ScanStatus.pending, ScanStatus.running):
-        raise HTTPException(status_code=409, detail=f"Scan is already {scan.status.value}")
+        raise HTTPException(status_code=409, detail=f"Scan is already {scan.status}")
 
     if scan.celery_task_id:
         from scanr.tasks.celery_app import celery_app
@@ -622,7 +638,7 @@ async def rerun_scan(
     """Clone a completed scan and launch it immediately with the same config."""
     source = await _get_own_scan(scan_id, current_user.id, db)
     if source.status not in (ScanStatus.completed, ScanStatus.failed, ScanStatus.cancelled):
-        raise HTTPException(status_code=409, detail=f"Cannot rerun scan in status '{source.status.value}'")
+        raise HTTPException(status_code=409, detail=f"Cannot rerun scan in status '{source.status}'")
 
     targets_result = await db.execute(
         select(Target.value).where(Target.scan_id == scan_id)
@@ -755,7 +771,10 @@ async def import_findings(
     """Import findings from Burp Suite XML or ZAP JSON report."""
     scan = await _get_own_scan(scan_id, current_user.id, db)
     if scan.status not in (ScanStatus.completed, ScanStatus.failed, ScanStatus.pending):
-        raise HTTPException(status_code=409, detail=f"Cannot import to scan in status '{scan.status.value}'")
+        raise HTTPException(status_code=409, detail=f"Cannot import to scan in status '{scan.status}'")
+
+    if len(body.report.encode("utf-8", errors="ignore")) > _MAX_IMPORT_BYTES:
+        raise HTTPException(status_code=413, detail="Report too large (max 50 MB)")
 
     import xml.etree.ElementTree as ET
     imported = 0
@@ -811,8 +830,11 @@ async def import_findings(
     return {"imported": imported}
 
 
+_MAX_IMPORT_BYTES = 50 * 1024 * 1024  # 50 MB cap on imported report bodies
+
+
 class _ImportBody(BaseModel):
-    report: str  # XML/JSON report body
+    report: str = Field(max_length=_MAX_IMPORT_BYTES)  # XML/JSON report body
 
 
 @router.post("/{scan_id}/findings/manual", status_code=status.HTTP_201_CREATED)
@@ -825,7 +847,7 @@ async def add_manual_finding(
     """Add a manually verified finding to a scan."""
     scan = await _get_own_scan(scan_id, current_user.id, db)
     if scan.status not in (ScanStatus.completed, ScanStatus.failed, ScanStatus.pending):
-        raise HTTPException(status_code=409, detail=f"Cannot add findings to scan in status '{scan.status.value}'")
+        raise HTTPException(status_code=409, detail=f"Cannot add findings to scan in status '{scan.status}'")
 
     finding = Finding(
         id=new_uuid(),

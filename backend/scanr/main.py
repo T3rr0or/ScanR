@@ -79,7 +79,9 @@ def create_app() -> FastAPI:
         )
 
     app.state.limiter = limiter
-    app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+    # slowapi's handler is sync-Response typed; Starlette expects a broader
+    # signature — this is the wiring pattern from slowapi's own docs.
+    app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)  # type: ignore[arg-type]
     app.add_middleware(SlowAPIMiddleware)
     app.add_middleware(SecurityHeadersMiddleware)
     app.add_middleware(

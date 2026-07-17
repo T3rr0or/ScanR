@@ -213,8 +213,9 @@ async def stats(
 
 
 @router.get("/version")
-async def version_check():
-    """Return current version and latest GitHub release."""
+async def version_check(current_user: User = Depends(get_current_user)):
+    """Return current version and latest GitHub release. Authenticated: the
+    exact running version is useful reconnaissance for an attacker."""
     import httpx
     current = settings.app_version
     latest = None

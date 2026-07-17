@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import socket
 import logging
 import time
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -15,11 +16,11 @@ from scanr.core.plugin_manager import get_enabled_plugins
 from scanr.core.rate_limiter import RateLimiter
 from scanr.core.result_collector import ResultCollector
 from scanr.core.scan_logger import ScanLogger
-from scanr.models import Credential, Host, Plugin, Scan, ScanCredential, Target
+from scanr.models import Credential, Host, Plugin, Scan, ScanCredential, ScanStatus, Target
 from scanr.models.base import new_uuid
 from scanr.plugins.ssl_tls._ports import is_tls_port_data
 from scanr.plugins.web._ports import is_web_port_data
-from scanr.utils.ip_utils import classify_target, is_valid_ip
+from scanr.utils.ip_utils import classify_target, is_forbidden_target, is_valid_ip
 
 logger = logging.getLogger(__name__)
 
@@ -186,6 +187,37 @@ async def _resolve_common_subdomains(domains: list[str], limit: int) -> list[str
     return found
 
 
+async def _find_forbidden_resolved_targets(targets: list[str]) -> list[str]:
+    """Return targets whose direct or DNS-resolved IP hits the denylist.
+
+    IP targets are checked as-is; hostname targets are resolved and every
+    returned address is checked. Unresolvable hostnames are skipped — host
+    discovery reports those later.
+    """
+    loop = asyncio.get_running_loop()
+    sem = asyncio.Semaphore(50)
+    forbidden: list[str] = []
+
+    async def check(target: str) -> None:
+        if is_valid_ip(target):
+            if is_forbidden_target(target):
+                forbidden.append(target)
+            return
+        async with sem:
+            try:
+                infos = await asyncio.wait_for(loop.getaddrinfo(target, None), timeout=5.0)
+            except Exception:
+                return
+        for info in infos:
+            resolved_ip = info[4][0]
+            if is_forbidden_target(resolved_ip):
+                forbidden.append(f"{target} -> {resolved_ip}")
+                return
+
+    await asyncio.gather(*(check(t) for t in targets))
+    return forbidden
+
+
 def _hostname_for_host(input_target: str, host_data: dict) -> str | None:
     if not is_valid_ip(input_target):
         return input_target
@@ -229,12 +261,11 @@ class ScanEngine:
         )
         scan = result.scalar_one()
 
-        # Parse profile flags — done here so we only query scan once
-        import json as _j
+        # Parse profile flags once — done here so we only query scan once
         _pj: dict = {}
         try:
             if scan.profile_json:
-                _pj = _j.loads(scan.profile_json)
+                _pj = json.loads(scan.profile_json) if isinstance(scan.profile_json, str) else scan.profile_json
                 scan_log._debug = _pj.get("debug", False)
         except Exception:
             pass
@@ -300,22 +331,21 @@ class ScanEngine:
         if scan_creds:
             await scan_log.info(f"Scan-scoped credentials loaded: {len(scan_creds)}", phase="engine")
 
-        # Load wordlist paths for brute_force config
-        import json as _json_bf
-        brute_cfg = {}
-        if scan.profile_json:
-            try:
-                _pj = _json_bf.loads(scan.profile_json) if isinstance(scan.profile_json, str) else scan.profile_json
-                brute_cfg = _pj.get("brute_force", {})
-            except Exception:
-                pass
+        # Load wordlist paths for brute_force config (profile already parsed above)
+        brute_cfg = _pj.get("brute_force", {}) if isinstance(_pj, dict) else {}
 
         wl_ids = [v for k, v in brute_cfg.items() if k.endswith("_wordlist_id") and v]
         if wl_ids:
             from scanr.models.wordlist import Wordlist as _Wordlist
+            # IDOR guard: only the scan owner's wordlists or global/built-in
+            # ones (NULL user_id) may be referenced by a scan profile.
             wl_result = await self.db.execute(
                 select(_Wordlist).where(
-                    _Wordlist.id.in_(wl_ids)
+                    _Wordlist.id.in_(wl_ids),
+                    or_(
+                        _Wordlist.user_id == scan.user_id,
+                        _Wordlist.user_id.is_(None),
+                    ),
                 )
             )
             for wl in wl_result.scalars().all():
@@ -345,16 +375,10 @@ class ScanEngine:
         # Filter plugins by profile_json.plugins list (e.g. ["web.*", "ssl_tls.*"]).
         # This must happen after target normalization so domain defaults can
         # enable DNS/subdomain workflows before capability filtering.
-        import json as _json
         profile_filter: list[str] | None = None
-        if scan.profile_json:
-            try:
-                pj = _json.loads(scan.profile_json) if isinstance(scan.profile_json, str) else scan.profile_json
-                raw = pj.get("plugins", ["*"])
-                if raw != ["*"]:
-                    profile_filter = raw
-            except Exception:
-                pass
+        raw_filter = _pj.get("plugins", ["*"])
+        if raw_filter != ["*"]:
+            profile_filter = raw_filter
 
         if profile_filter:
             plugins = [p for p in plugins if _plugin_allowed(p.id, profile_filter)]
@@ -379,12 +403,29 @@ class ScanEngine:
         if domain_mode:
             if _pj.get("port_range") in {"1-65535", "-p-", "-p -"} and not _pj.get("allow_full_port_scan", False):
                 _pj["port_range"] = BUG_BOUNTY_PORT_RANGE
-                scan.profile_json = _j.dumps(_pj)
+                scan.profile_json = json.dumps(_pj)
                 await scan_log.info(
                     f"Domain target detected — using external web port range {_pj['port_range']} instead of full internal port sweep",
                     phase="recon",
                 )
             all_targets = await _expand_domain_targets(all_targets, scan_log, _pj)
+
+        # Defense-in-depth: re-validate targets at execution time. The API checks
+        # the denylist when a scan is created, but DNS answers can change (or be
+        # attacker-controlled) after validation, and non-creation paths (target
+        # edits, schedules) may not re-validate. Resolve every hostname target and
+        # refuse to run if any resolved IP is forbidden.
+        forbidden = await _find_forbidden_resolved_targets(all_targets)
+        if forbidden:
+            sample = ", ".join(forbidden[:10])
+            await scan_log.error(
+                f"Target(s) resolve to forbidden address(es): {sample} — aborting scan",
+                phase="engine",
+            )
+            scan.status = ScanStatus.failed
+            scan.error_message = f"Forbidden target resolved: {sample}"
+            await self.db.commit()
+            return
 
         scan.hosts_total = len(all_targets)
         await self.db.commit()
@@ -397,13 +438,13 @@ class ScanEngine:
         # Phase 1: Host discovery
         #
         # For large IP ranges (>1024 hosts) when masscan is available, use masscan for
-        # discovery instead of TCP connect. Masscan scans the full CIDR for all ports
-        # simultaneously — it finds hosts that have any port open regardless of which
-        # specific ports they use (e.g. Windows boxes on 445/3389, printers on 9100,
-        # IoT on custom ports). TCP connect with a fixed probe list misses these.
+        # discovery instead of TCP connect. Masscan scans the full CIDR for a small
+        # set of common probe ports simultaneously — it finds hosts that have any of
+        # those ports open (e.g. Windows boxes on 445/3389, printers on 9100).
         #
-        # Masscan discovery also produces port data, so we reuse those results in the
-        # port-scan phase (no separate masscan pass needed).
+        # Discovery port data is NOT reused for the port-scan phase: discovery only
+        # probed common ports, so the port-scan phase runs a full-range masscan
+        # below — but only on the (much smaller) set of live hosts.
         from scanr.scanner.port_scanner.masscan_wrapper import MasscanWrapper
         port_scan_cfg = context.port_scanning_config()
         scanners = port_scan_cfg.get("scanners", ["tcp_connect"])
@@ -462,20 +503,27 @@ class ScanEngine:
                 # Mutate profile_json so subsequent config reads pick up the override
                 _pj.setdefault("discovery", {})["assume_up"] = True
                 _pj.setdefault("port_scanning", {})["firewall_strategy"] = "skip_ping"
-                import json as _json
-                context.scan.profile_json = _json.dumps(_pj)
+                context.scan.profile_json = json.dumps(_pj)
                 live_targets = all_targets[:]
             else:
                 await scan_log.warn("No live hosts found — scan complete", phase="engine")
                 return
+
+        # Phase boundary: pick up API-side pause/cancel before launching host tasks.
+        # A cancel here propagates CancelledError to the task wrapper, which
+        # finalizes the scan as cancelled.
+        await context.refresh_control_state()
+        await context.wait_if_paused()
+        context.check_cancelled()
 
         await scan_log.phase_start(
             "portscan",
             f"Port scanning {len(live_targets)} host(s) ...",
         )
 
-        # Masscan port scan (runs full port range on live hosts)
-        # Only skip if discovery masscan already did the full port scan
+        # Masscan port scan (runs the full port range on the live hosts only).
+        # When discovery already used masscan, use_masscan is necessarily True, so
+        # this is the single masscan port pass — discovery only probed common ports.
         use_masscan = (
             MasscanWrapper.is_available()
             and not _pj.get("disable_masscan", False)
@@ -493,11 +541,6 @@ class ScanEngine:
             await scan_log.info(
                 f"masscan complete: {sum(len(v) for v in masscan_results.values())} open ports across "
                 f"{len(masscan_results)} hosts",
-                phase="portscan",
-            )
-        elif use_masscan_discovery:
-            await scan_log.info(
-                f"masscan already used for discovery — running nmap with full port range on {len(live_targets)} hosts",
                 phase="portscan",
             )
         else:
@@ -528,6 +571,20 @@ class ScanEngine:
         # Update hosts_up to reflect actually scanned hosts (not just discovery projection)
         scan.hosts_up = context.hosts_scanned
         await self.db.commit()
+
+        # Cancel control plane: host tasks aborted via context flags at their
+        # boundaries. Finalize as cancelled, keep partial results, and skip the
+        # credential-chain / AI / completion-webhook phases. The task wrapper
+        # preserves this status instead of overwriting it with completed/failed.
+        if context.cancelled:
+            await scan_log.warn(
+                f"Scan cancelled by user — keeping partial results "
+                f"({context.hosts_scanned} hosts scanned, {context.findings_count} findings)",
+                phase="engine",
+            )
+            scan.status = ScanStatus.cancelled
+            await self.db.commit()
+            return
 
         # Warn if nothing was scanned AND masscan also found nothing — strong signal
         # of a privilege/network problem. Don't raise: zero open ports is a valid
@@ -566,25 +623,34 @@ class ScanEngine:
             f"{context.findings_count} findings",
         )
 
-        # Fire scan.completed webhook
+        # Fire scan.completed webhook. scan.status is a plain str (String
+        # column) — never call .value on it. The ORM select refreshes the
+        # in-memory row, so a scan cancelled/failed externally while the AI
+        # phase ran is detected here and gets no false completion webhook.
         scan_result = await self.db.execute(select(Scan).where(Scan.id == self.scan_id))
         scan = scan_result.scalar_one()
-        try:
-            from scanr.core.webhook_dispatcher import dispatch
-            await dispatch("scan.completed", {
-                "scan_id": self.scan_id,
-                "scan_name": scan.name,
-                "status": scan.status.value,
-                "hosts_scanned": context.hosts_scanned,
-                "hosts_up": scan.hosts_up,
-                "findings_total": context.findings_count,
-                "findings_critical": scan.findings_critical,
-                "findings_high": scan.findings_high,
-                "findings_medium": scan.findings_medium,
-                "findings_low": scan.findings_low,
-            }, scan.user_id, self.db)
-        except Exception as exc:
-            logger.error("scan.completed webhook dispatch failed: %s", exc)
+        if scan.status == ScanStatus.running:
+            try:
+                from scanr.core.webhook_dispatcher import dispatch
+                await dispatch("scan.completed", {
+                    "scan_id": self.scan_id,
+                    "scan_name": scan.name,
+                    "status": scan.status,
+                    "hosts_scanned": context.hosts_scanned,
+                    "hosts_up": scan.hosts_up,
+                    "findings_total": context.findings_count,
+                    "findings_critical": scan.findings_critical,
+                    "findings_high": scan.findings_high,
+                    "findings_medium": scan.findings_medium,
+                    "findings_low": scan.findings_low,
+                }, scan.user_id, self.db)
+            except Exception as exc:
+                logger.error("scan.completed webhook dispatch failed: %s", exc)
+        else:
+            await scan_log.info(
+                f"Scan ended with status '{scan.status}' — skipping completion webhook",
+                phase="engine",
+            )
 
     async def _run_ai_phase(self, scan, scan_log: ScanLogger) -> None:
         """Let the opted-in AI agent steer the scan once enumeration is done.

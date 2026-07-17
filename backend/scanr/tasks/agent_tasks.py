@@ -107,11 +107,16 @@ async def _run_agent_async(run_id: str, resume: bool = False) -> dict:
 
             # Drop any stale cancel flag from a prior run so a fresh/resumed run
             # isn't stopped on its first iteration. Stop sets this flag.
+            # NOTE: get_redis()'s pool only exists in the API process lifespan —
+            # in this Celery worker it always raises RuntimeError. Open a throwaway
+            # client instead (same pattern as the post-run cleanup below).
             try:
-                from scanr.db.redis import get_redis
+                import redis.asyncio as aioredis
 
-                await get_redis().delete(f"scanr:ai:cancel:{run_id}")
-            except Exception:
+                r = aioredis.from_url(get_settings().redis_url, decode_responses=True)
+                await r.delete(f"scanr:ai:cancel:{run_id}")
+                await r.aclose()
+            except Exception:  # noqa: BLE001 - best-effort
                 pass
 
             scan = await db.get(Scan, run.scan_id)

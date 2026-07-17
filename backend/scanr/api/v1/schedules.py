@@ -9,10 +9,14 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from scanr.db import get_db
-from scanr.deps import get_current_user
+from scanr.deps import require_scope
 from scanr.models import Schedule
 from scanr.models.base import new_uuid
 from scanr.models.user import User
+
+# Schedules launch scans, so they reuse the scans scopes. Target denylist and
+# credential-ownership validation mirror the scans create path — a schedule
+# must not be a way to bypass either.
 
 router = APIRouter(prefix="/schedules", tags=["schedules"])
 
@@ -85,6 +89,29 @@ class ScheduleRead(BaseModel):
     model_config = {"from_attributes": True}
 
 
+def _parse_schedule_profile(raw: str) -> dict:
+    try:
+        data = json.loads(raw or "{}")
+    except Exception:
+        raise HTTPException(status_code=400, detail="scan_profile_json is not valid JSON")
+    if not isinstance(data, dict):
+        raise HTTPException(status_code=400, detail="scan_profile_json must be a JSON object")
+    return data
+
+
+async def _validate_schedule_inputs(
+    targets: list[str], scan_profile_json: str, user_id: str, db: AsyncSession
+) -> None:
+    """Apply the same target denylist and credential-ownership checks as scan creation."""
+    from scanr.api.v1.scans import _validate_targets, _verify_credential_owner
+
+    if not targets:
+        raise HTTPException(status_code=400, detail="At least one target required")
+    await _validate_targets(targets)
+    profile_data = _parse_schedule_profile(scan_profile_json)
+    await _verify_credential_owner(profile_data.get("credential_id"), user_id, db)
+
+
 def _to_read(s: Schedule) -> ScheduleRead:
     targets = json.loads(s.targets) if s.targets else []
     return ScheduleRead(
@@ -105,7 +132,7 @@ def _to_read(s: Schedule) -> ScheduleRead:
 @router.get("", response_model=list[ScheduleRead])
 async def list_schedules(
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_scope("scans:read")),
 ):
     result = await db.execute(
         select(Schedule)
@@ -119,8 +146,10 @@ async def list_schedules(
 async def create_schedule(
     body: ScheduleCreate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_scope("scans:write")),
 ):
+    await _validate_schedule_inputs(body.targets, body.scan_profile_json, current_user.id, db)
+
     # Enforce per-user schedule quota
     count_result = await db.execute(
         select(Schedule).where(Schedule.user_id == current_user.id)
@@ -156,7 +185,7 @@ async def update_schedule(
     schedule_id: str,
     body: ScheduleUpdate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_scope("scans:write")),
 ):
     result = await db.execute(
         select(Schedule).where(Schedule.id == schedule_id, Schedule.user_id == current_user.id)
@@ -169,10 +198,13 @@ async def update_schedule(
         sched.name = body.name
     if body.description is not None:
         sched.description = body.description
-    if body.targets is not None:
-        sched.targets = json.dumps(body.targets)
-    if body.scan_profile_json is not None:
-        sched.scan_profile_json = body.scan_profile_json
+    if body.targets is not None or body.scan_profile_json is not None:
+        # Validate the effective post-update combination, not just the delta.
+        new_targets = body.targets if body.targets is not None else json.loads(sched.targets or "[]")
+        new_profile = body.scan_profile_json if body.scan_profile_json is not None else (sched.scan_profile_json or "{}")
+        await _validate_schedule_inputs(new_targets, new_profile, current_user.id, db)
+        sched.targets = json.dumps(new_targets)
+        sched.scan_profile_json = new_profile
     if body.cron_expr is not None:
         next_run = _calc_next_run(body.cron_expr)
         if next_run is None:
@@ -192,7 +224,7 @@ async def update_schedule(
 async def delete_schedule(
     schedule_id: str,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_scope("scans:write")),
 ):
     result = await db.execute(
         select(Schedule).where(Schedule.id == schedule_id, Schedule.user_id == current_user.id)

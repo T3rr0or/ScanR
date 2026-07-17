@@ -20,7 +20,7 @@ dependencies = [
   "asyncpg>=0.29.0",
   "alembic>=1.13.0",
   # Auth
-  "python-jose[cryptography]>=3.3.0",
+  "python-jose[cryptography]>=3.5.0", # >=3.5.0: CVE-2024-33663/33664
   "passlib[bcrypt]>=1.7.4",
   "pydantic-settings>=2.0.0",
   # Task queue
@@ -71,8 +71,9 @@ dev = [
   "anyio>=4.0.0",
   "fakeredis>=2.20.0",
   "aiosqlite>=0.20.0",
-  "ruff>=0.8.0",
-  "mypy>=1.13.0",
+  # pinned to installed minors: major/minor drift broke CI silently before
+  "ruff>=0.15,<0.16",
+  "mypy>=2.1,<2.2",
 ]
 
 [project.scripts]
@@ -106,22 +107,19 @@ check_untyped_defs = true
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
-# Keep mypy active for models/schemas/auth/utils while the scanner/plugin/API
-# surface is typed incrementally.
+# Remaining exemptions (2026-07):
+#  - scanr.api.*    11 errors — files under active edit by other work streams
+#  - scanr.core.*    4 errors — files under active edit by other work streams
+#  - scanr.plugins.* 50 errors — legacy plugin surface, typed incrementally
+# Everything else (agent, cli, db, deps, main, reporting, scanner, tasks,
+# models, schemas, auth, utils) is now type-checked.
 module = [
-  "scanr.agent.*",
   "scanr.api.*",
-  "scanr.cli.*",
   "scanr.core.*",
-  "scanr.db.*",
-  "scanr.deps",
-  "scanr.main",
   "scanr.plugins.*",
-  "scanr.reporting.*",
-  "scanr.scanner.*",
-  "scanr.tasks.*",
 ]
 ignore_errors = true
+
 
 [tool.hatch.metadata]
 allow-direct-references = true

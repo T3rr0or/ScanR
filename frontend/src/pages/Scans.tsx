@@ -10,6 +10,7 @@ import { scansApi, type ScanCreate, type ScanCredentialIn } from '@/api/scans'
 import { templatesApi, type ScanTemplate } from '@/api/templates'
 import { wordlistsApi } from '@/api/wordlists'
 import { useAuthStore } from '@/store/auth'
+import { isAdminToken } from '@/utils/jwt'
 import { ALL_CATEGORIES, PORT_RANGES, configToJson, defaultProfileConfig, jsonToConfig, type ProfileConfig } from '@/components/ProfileEditor'
 import ScanDelta from './ScanDelta'
 import { StatusPill, SeverityBar, CHML, Meter, fmtDuration, relTime } from '@/components/ui'
@@ -721,8 +722,7 @@ function NewScanModal({
 
   // Opt-in AI agent that runs concurrently while the scan executes.
   const authToken = useAuthStore(s => s.token)
-  let isAdmin = false
-  try { isAdmin = JSON.parse(atob(authToken!.split('.')[1])).role === 'admin' } catch { /* not admin */ }
+  const isAdmin = isAdminToken(authToken)
   const [ai, setAi] = useState({
     enabled: false,
     mode: 'guided' as 'guided' | 'autonomous',

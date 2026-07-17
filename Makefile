@@ -13,6 +13,12 @@ help:
 	@echo "  make nvd-update         Download/update NVD CVE feeds"
 
 install:
+	@if [ -z "$$VIRTUAL_ENV" ] && [ -z "$$CONDA_PREFIX" ]; then \
+		echo "ERROR: no Python virtual environment active." >&2; \
+		echo "Create and activate one first, e.g.:" >&2; \
+		echo "  cd backend && python -m venv .venv && source .venv/bin/activate" >&2; \
+		exit 1; \
+	fi
 	cd backend && pip install -e ".[dev]"
 	cd frontend && npm install
 

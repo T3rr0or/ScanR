@@ -3,14 +3,14 @@ from __future__ import annotations
 import json
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from scanr.auth.api_key_auth import generate_api_key
 from scanr.db import get_db
-from scanr.deps import get_current_user
+from scanr.deps import ALL_SCOPES, require_scope
 from scanr.models.api_key import APIKey
 from scanr.models.base import new_uuid
 from scanr.models.user import User
@@ -44,7 +44,7 @@ class APIKeyCreated(APIKeyRead):
 @router.get("", response_model=list[APIKeyRead])
 async def list_api_keys(
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_scope("api_keys:read")),
 ):
     result = await db.execute(
         select(APIKey).where(APIKey.user_id == current_user.id, APIKey.revoked == False)
@@ -69,9 +69,24 @@ async def list_api_keys(
 @router.post("", response_model=APIKeyCreated, status_code=201)
 async def create_api_key(
     body: APIKeyCreate,
+    request: Request,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_scope("api_keys:write")),
 ):
+    requested = set(body.scopes)
+    invalid = requested - ALL_SCOPES
+    if invalid:
+        raise HTTPException(status_code=400, detail=f"Unknown scopes: {sorted(invalid)}")
+    # An API-key-authenticated caller may only mint keys within its own scope
+    # set, otherwise a low-scope key could self-escalate to '*' by creating a
+    # new key. Session (browser) users hold '*' and are unrestricted here.
+    caller_scopes = set(getattr(request.state, "scopes", []) or [])
+    if "*" not in caller_scopes and not requested <= caller_scopes:
+        raise HTTPException(
+            status_code=403,
+            detail="Cannot grant scopes beyond the calling API key's own scopes",
+        )
+
     raw, key_hash, prefix = generate_api_key()
     api_key = APIKey(
         id=new_uuid(),
@@ -105,7 +120,7 @@ async def create_api_key(
 async def revoke_api_key(
     key_id: str,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_scope("api_keys:write")),
 ):
     result = await db.execute(select(APIKey).where(APIKey.id == key_id, APIKey.user_id == current_user.id))
     api_key = result.scalar_one_or_none()

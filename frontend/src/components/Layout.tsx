@@ -28,6 +28,7 @@ import {
 	ShieldAlert,
 } from "lucide-react";
 import { useAuthStore } from "@/store/auth";
+import { parseJwtRole } from "@/utils/jwt";
 import api from "@/api/client";
 type PageProps = {
 	onOpenScan?: (id: string) => void;
@@ -148,13 +149,7 @@ export default function Layout() {
 
 	const token = useAuthStore((s) => s.token);
 	const _storeLogout = useAuthStore((s) => s.logout);
-	let role = "analyst";
-	try {
-		const payload = JSON.parse(atob(token!.split(".")[1]));
-		role = payload.role ?? "analyst";
-	} catch {
-		role = "analyst";
-	}
+	const role = parseJwtRole(token);
 
 	const logout = async () => {
 		try {

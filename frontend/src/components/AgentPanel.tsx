@@ -7,6 +7,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Plus } from "lucide-react";
 import api from "@/api/client";
 import { useAuthStore } from "@/store/auth";
+import { isAdminToken } from "@/utils/jwt";
 import { StatusPill } from "@/components/ui";
 import Markdown from "@/components/Markdown";
 
@@ -140,14 +141,9 @@ export default function AgentPanel({
 }) {
 	const qc = useQueryClient();
 	const token = useAuthStore((s) => s.token);
-	let isAdmin = false;
-	try {
-		isAdmin = JSON.parse(atob(token!.split(".")[1])).role === "admin";
-	} catch {
-		/* not admin */
-	}
+	const isAdmin = isAdminToken(token);
 
-	const saved = loadSettings();
+	const [saved] = useState(loadSettings);
 	const [message, setMessage] = useState("");
 	const [mode, setMode] = useState<"guided" | "autonomous">(saved.mode);
 	const [maxIterations, setMaxIterations] = useState(saved.maxIterations);
@@ -208,9 +204,9 @@ export default function AgentPanel({
 		},
 		onSuccess: () => {
 			setMessage("");
-			setSending(false);
 			qc.invalidateQueries({ queryKey: ["ai-agent-runs", scanId] });
 		},
+		onSettled: () => setSending(false),
 	});
 
 	const chatMut = useMutation({
@@ -223,9 +219,9 @@ export default function AgentPanel({
 				.then((r) => r.data),
 		onSuccess: () => {
 			setMessage("");
-			setSending(false);
 			qc.invalidateQueries({ queryKey: ["ai-agent-runs", scanId] });
 		},
+		onSettled: () => setSending(false),
 	});
 
 	const stopMut = useMutation({

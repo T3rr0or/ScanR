@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 settings = get_settings()
 
 _REVOKE_PREFIX = "scanr:revoked_jti:"
+_PW_EPOCH_PREFIX = "scanr:pw_epoch:"
 _COOKIE_NAME = "scanr_rt"
 _COOKIE_PATH = "/api/v1/auth"
 
@@ -31,30 +32,66 @@ def _get_redis():
     return get_redis()
 
 
-async def _revoke_jti(jti: str, exp: int, db: AsyncSession | None = None) -> None:
+async def _revoke_jti(jti: str, exp: int) -> None:
+    """Best-effort JTI revocation, used on logout. The refresh rotation path
+    uses _claim_jti instead (atomic check-and-set, fails closed)."""
     ttl = max(1, exp - int(datetime.now(timezone.utc).timestamp()))
-    r = _get_redis()
-    try:
-        await r.set(f"{_REVOKE_PREFIX}{jti}", "1", ex=ttl)
-    except Exception:
-        # Redis unavailable — fall back to DB-based revocation
-        logger.warning("Redis unavailable for JTI revocation, using DB fallback")
-        if db is not None:
-            # Store revocation in a simple approach: flag on user row (not ideal but works)
-            # Better: just fail open — token expires naturally within ttl anyway
-            pass
-
-
-async def _is_jti_revoked(jti: str, db: AsyncSession | None = None) -> bool:
     try:
         r = _get_redis()
-        return bool(await r.exists(f"{_REVOKE_PREFIX}{jti}"))
+        await r.set(f"{_REVOKE_PREFIX}{jti}", "1", ex=ttl)
     except Exception:
-        # Redis down — can't check revocation. Token is still valid per JWT expiry.
-        # This is acceptable: attacker can't revoke a stolen token, but token
-        # expires within access_token_expire_minutes (default 15 min).
-        logger.warning("Redis unavailable for JTI revocation check — allowing token")
-        return False
+        logger.warning("Redis unavailable — could not revoke refresh token JTI on logout")
+
+
+async def _claim_jti(jti: str, exp: int) -> bool:
+    """Atomically mark a refresh-token JTI as used. Returns False if it was
+    already claimed. SET NX makes check-and-set a single operation, so two
+    concurrent /refresh calls with the same token cannot both succeed.
+    Raises on Redis failure so the caller can fail closed."""
+    ttl = max(1, exp - int(datetime.now(timezone.utc).timestamp()))
+    r = _get_redis()
+    return bool(await r.set(f"{_REVOKE_PREFIX}{jti}", "1", ex=ttl, nx=True))
+
+
+async def _bump_pw_epoch(user_id: str) -> None:
+    """Invalidate every refresh token issued before now for a user.
+    Called on password change. Raises on Redis failure so the caller can
+    abort rather than leave stale tokens valid."""
+    now_ts = int(datetime.now(timezone.utc).timestamp())
+    r = _get_redis()
+    # The key only needs to outlive the longest-lived outstanding refresh token.
+    await r.set(
+        f"{_PW_EPOCH_PREFIX}{user_id}",
+        str(now_ts),
+        ex=settings.refresh_token_expire_days * 86400 + 60,
+    )
+
+
+async def _get_pw_epoch(user_id: str) -> int:
+    r = _get_redis()
+    val = await r.get(f"{_PW_EPOCH_PREFIX}{user_id}")
+    return int(val) if val else 0
+
+
+async def _assert_not_pre_password_change(user_id: str, payload: dict) -> None:
+    """Reject refresh tokens issued before the user's last password change.
+    Fails closed when Redis is unavailable."""
+    try:
+        epoch = await _get_pw_epoch(user_id)
+    except Exception:
+        logger.error("Redis unavailable during refresh epoch check — failing closed")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Token service unavailable, please try again",
+        )
+    # Refresh tokens carry no iat claim; derive issue time from exp minus the
+    # configured lifetime.
+    issued_at = int(payload["exp"]) - settings.refresh_token_expire_days * 86400
+    if epoch and issued_at < epoch:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Session expired — please log in again",
+        )
 
 
 def _set_refresh_cookie(response: Response, refresh_token: str) -> None:
@@ -97,11 +134,11 @@ async def login(
     user = result.scalar_one_or_none()
 
     if user and user.locked_until and user.locked_until > now:
-        remaining = int((user.locked_until - now).total_seconds() / 60) + 1
         logger.warning("Locked account login attempt: email=%s ip=%s", body.email, ip)
+        # Generic detail: a distinctive message would confirm the account exists.
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail=f"Account locked due to too many failed attempts. Try again in {remaining} minute(s).",
+            detail="Too many failed attempts. Please try again later.",
         )
 
     if not user or not verify_password(body.password, user.hashed_password):
@@ -162,7 +199,17 @@ async def refresh(
     if not jti:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid refresh token")
 
-    if await _is_jti_revoked(jti):
+    # Atomically claim the JTI: first use wins, reuse is rejected. Fails closed
+    # when Redis is unavailable rather than allowing unrevoked rotation.
+    try:
+        claimed = await _claim_jti(jti, payload["exp"])
+    except Exception:
+        logger.error("Redis unavailable during refresh — failing closed")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Token service unavailable, please try again",
+        )
+    if not claimed:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Refresh token already used or revoked")
 
     result = await db.execute(select(User).where(User.id == payload["sub"], User.is_active == True))
@@ -170,7 +217,7 @@ async def refresh(
     if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
 
-    await _revoke_jti(jti, payload["exp"])
+    await _assert_not_pre_password_change(user.id, payload)
 
     new_refresh = create_refresh_token(user.id)
     _set_refresh_cookie(response, new_refresh)

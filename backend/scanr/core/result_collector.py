@@ -29,13 +29,13 @@ _PEER_REVIEW_LABEL = "Peer review command:"
 _URL_RE = re.compile(r"https?://[^\s)'\"<>]+")
 
 
-def _compute_vpr(cvss_score: float | None, cve_ids: list[str] | None) -> float | None:
+async def _compute_vpr(cvss_score: float | None, cve_ids: list[str] | None) -> float | None:
     """Vulnerability Priority Rating: CVSS × KEV multiplier, capped at 10."""
     if cvss_score is None:
         return None
     try:
-        from scanr.plugins.cve.nvd_loader import get_kev_cve_ids
-        kev = get_kev_cve_ids()
+        from scanr.plugins.cve.kev_cache import aget_kev_cve_ids
+        kev = await aget_kev_cve_ids()
         is_kev = bool(cve_ids and any(c in kev for c in cve_ids))
     except Exception:
         is_kev = False
@@ -92,7 +92,7 @@ class ResultCollector:
                 references=json.dumps(data.references) if data.references else None,
                 cvss_score=data.cvss_score,
                 cvss_vector=data.cvss_vector,
-                vpr_score=_compute_vpr(data.cvss_score, cve_ids_list),
+                vpr_score=await _compute_vpr(data.cvss_score, cve_ids_list),
                 cve_ids=json.dumps(cve_ids_list) if cve_ids_list else None,
                 port_number=data.port_number,
                 protocol=data.protocol,
@@ -139,16 +139,24 @@ class ResultCollector:
                     logger.debug("Webhook dispatch error: %s", exc)
 
     async def _find_prior_triage(self, host_id: str | None, data: "FindingData") -> "Finding | None":
-        """Look up the most recent triaged finding with the same canonical key."""
+        """Look up the most recent triaged finding with the same canonical key.
+
+        Triage only carries over for the SAME host (matched by IP) — a false
+        positive marked on one host must not bleed onto the same plugin+port
+        finding on a different host.
+        """
         if not host_id:
+            return None
+        host_ip = await self._host_ip(host_id)
+        if not host_ip:
             return None
         try:
             from sqlalchemy import select
-            from scanr.models import Host
             result = await self.db.execute(
                 select(Finding)
                 .join(Host, Finding.host_id == Host.id)
                 .where(
+                    Host.ip == host_ip,
                     Finding.plugin_id == data.plugin_id,
                     Finding.port_number == data.port_number,
                     Finding.scan_id != self.scan_id,
@@ -161,6 +169,10 @@ class ResultCollector:
             )
             return result.scalar_one_or_none()
         except Exception:
+            logger.exception(
+                "Prior-triage lookup failed for host %s plugin %s port %s",
+                host_id, data.plugin_id, data.port_number,
+            )
             return None
 
     async def _evidence_with_peer_review_command(self, host_id: str | None, data: FindingData) -> str:

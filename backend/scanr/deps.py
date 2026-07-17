@@ -25,6 +25,14 @@ ALL_SCOPES = frozenset({
     "plugins:write",
     "agents:read",
     "agents:write",
+    "api_keys:read",
+    "api_keys:write",
+    "webhooks:read",
+    "webhooks:write",
+    "wordlists:read",
+    "wordlists:write",
+    "host_tags:read",
+    "host_tags:write",
     "*",
 })
 

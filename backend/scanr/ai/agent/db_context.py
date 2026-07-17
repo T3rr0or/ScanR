@@ -325,7 +325,7 @@ class DbAgentContext(AgentContext):
         for url in self._web_urls:
             p = urlparse(url)
             hostname = (p.hostname or "").lower()
-            host = by_ip.get(p.hostname) or by_name.get(hostname)
+            host = by_ip.get(p.hostname or "") or by_name.get(hostname)
             if host is None:
                 continue  # no discovered Host row to attach the screenshot to
             port = p.port or (443 if p.scheme == "https" else 80)

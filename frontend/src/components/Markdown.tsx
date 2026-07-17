@@ -12,7 +12,8 @@ export default function Markdown({ children }: { children: string }) {
 			<ReactMarkdown
 				remarkPlugins={[remarkGfm]}
 				components={{
-					a: ({ ...props }) => (
+					// Strip react-markdown's `node` prop — it is not a valid DOM attribute.
+					a: ({ node: _node, ...props }) => (
 						<a {...props} target="_blank" rel="noopener noreferrer" />
 					),
 				}}

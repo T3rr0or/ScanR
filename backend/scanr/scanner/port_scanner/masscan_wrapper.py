@@ -110,6 +110,7 @@ class MasscanWrapper:
             async def _stream_stderr() -> bytes:
                 chunks: list[bytes] = []
                 assert proc is not None
+                assert proc.stderr is not None  # stderr=PIPE set at spawn
                 pending = ""
                 while True:
                     chunk = await proc.stderr.read(4096)

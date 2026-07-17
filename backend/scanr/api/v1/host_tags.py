@@ -7,7 +7,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy import String, ForeignKey, DateTime, func, UniqueConstraint
 
 from scanr.db import get_db
-from scanr.deps import get_current_user
+from scanr.deps import require_scope
 from scanr.models.base import Base, new_uuid
 from scanr.models.user import User
 
@@ -31,7 +31,7 @@ router = APIRouter(prefix="/host-tags", tags=["host-tags"])
 async def list_tags(
     ip: str = Query(..., description="Host IP address"),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_scope("host_tags:read")),
 ):
     """List all tags for a given IP."""
     result = await db.execute(
@@ -43,7 +43,7 @@ async def list_tags(
 @router.get("/all")
 async def all_tags(
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_scope("host_tags:read")),
 ):
     """Return all {ip: [tags]} for the current user — used to populate filter dropdowns."""
     result = await db.execute(
@@ -62,7 +62,7 @@ async def add_tag(
     ip: str = Query(...),
     tag: str = Query(..., min_length=1, max_length=100),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_scope("host_tags:write")),
 ):
     """Add a tag to a host IP. Idempotent — duplicate tags are silently ignored."""
     tag = tag.strip().lower()
@@ -82,7 +82,7 @@ async def remove_tag(
     ip: str = Query(...),
     tag: str = Query(...),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_scope("host_tags:write")),
 ):
     """Remove a tag from a host IP."""
     await db.execute(

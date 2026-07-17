@@ -201,6 +201,12 @@ async def _run_scan_async(task, scan_id: str) -> dict:
                 logger.error("Scan %s not found", scan_id)
                 return {"error": "scan not found"}
 
+            # A revoked-and-redelivered (or duplicated) task must not resurrect a
+            # scan the user already cancelled.
+            if scan.status == ScanStatus.cancelled:
+                logger.info("Scan %s already cancelled — refusing to run redelivered task", scan_id)
+                return {"scan_id": scan_id, "status": "cancelled"}
+
             now = datetime.now(tz=timezone.utc)
             scan.started_at = now
             scan.last_heartbeat = now
@@ -216,8 +222,14 @@ async def _run_scan_async(task, scan_id: str) -> dict:
             try:
                 scan_engine = ScanEngine(scan_id=scan_id, db=db)
                 await scan_engine.run()
-                scan.status = ScanStatus.completed
-                scan.error_message = None
+                # The engine may have finalized the scan itself (cancelled via
+                # the pause/cancel control plane, or failed on a forbidden
+                # target resolution) using this same session. Re-read and only
+                # flip to completed when the scan is still marked running.
+                await db.refresh(scan)
+                if scan.status == ScanStatus.running:
+                    scan.status = ScanStatus.completed
+                    scan.error_message = None
             except asyncio.CancelledError:
                 scan.status = ScanStatus.cancelled
                 raise
@@ -234,18 +246,20 @@ async def _run_scan_async(task, scan_id: str) -> dict:
                 scan.finished_at = datetime.now(tz=timezone.utc)
                 await db.commit()
 
-            # Fire webhooks
+            # Fire webhooks. A user-cancelled scan is neither completed nor
+            # failed — subscribers get no false failure notification.
             try:
-                from scanr.core.webhook_dispatcher import dispatch
-                event = "scan.completed" if scan.status == ScanStatus.completed else "scan.failed"
-                await dispatch(event, {
-                    "scan_id": scan_id,
-                    "name": scan.name,
-                    "status": scan.status,
-                    "hosts_up": scan.hosts_up,
-                    "findings_critical": scan.findings_critical,
-                    "findings_high": scan.findings_high,
-                }, user_id, db)
+                if scan.status != ScanStatus.cancelled:
+                    from scanr.core.webhook_dispatcher import dispatch
+                    event = "scan.completed" if scan.status == ScanStatus.completed else "scan.failed"
+                    await dispatch(event, {
+                        "scan_id": scan_id,
+                        "name": scan.name,
+                        "status": scan.status,
+                        "hosts_up": scan.hosts_up,
+                        "findings_critical": scan.findings_critical,
+                        "findings_high": scan.findings_high,
+                    }, user_id, db)
             except Exception as exc:
                 logger.warning("Webhook dispatch failed for scan %s: %s", scan_id, exc)
     finally:

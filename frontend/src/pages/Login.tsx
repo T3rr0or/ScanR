@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
+import axios from 'axios'
 import { useAuthStore } from '@/store/auth'
 import api from '@/api/client'
 
@@ -19,8 +20,12 @@ export default function Login() {
       const { data } = await api.post('/auth/login', { email, password })
       qc.clear()  // purge any stale cached data from a previous session
       setToken(data.access_token)
-    } catch {
-      setError('Invalid credentials')
+    } catch (err) {
+      if (axios.isAxiosError(err) && err.response?.status === 401) {
+        setError('Invalid credentials')
+      } else {
+        setError('Server unavailable — please try again')
+      }
     } finally {
       setLoading(false)
     }

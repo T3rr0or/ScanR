@@ -160,4 +160,6 @@ async def scan_progress_ws(
             await pubsub.aclose()
         except Exception:
             pass
-        await redis_client.aclose()
+        # Do NOT close redis_client here: it is the shared client from
+        # get_redis() — closing it kills the pool for every other WS client
+        # and API caller. Pubsub cleanup above is sufficient.

@@ -4,7 +4,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -30,6 +30,15 @@ class ScreenshotRead(BaseModel):
     error: str | None
 
     model_config = {"from_attributes": True}
+
+    @field_validator("file_path", mode="before")
+    @classmethod
+    def _basename_only(cls, v: object) -> object:
+        # Never expose absolute server filesystem paths to API clients —
+        # return only the file name. Images are fetched via /{id}/image.
+        if isinstance(v, str) and v:
+            return Path(v).name
+        return v
 
 
 @router.get("", response_model=list[ScreenshotRead])

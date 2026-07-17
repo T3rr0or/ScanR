@@ -3,7 +3,7 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import model_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -120,6 +120,17 @@ class Settings(BaseSettings):
     @property
     def trusted_proxy_list(self) -> list[str]:
         return [p.strip() for p in self.trusted_proxies.split(",") if p.strip()]
+
+    @field_validator("algorithm")
+    @classmethod
+    def _check_algorithm(cls, v: str) -> str:
+        # Constrain JWT algorithm to an HMAC allowlist — an env misconfig to
+        # 'none' (or an asymmetric alg with a confused key) must fail fast at
+        # startup rather than silently weaken token verification.
+        allowed = {"HS256", "HS384", "HS512"}
+        if v not in allowed:
+            raise ValueError(f"ALGORITHM must be one of {sorted(allowed)} (got {v!r})")
+        return v
 
     @model_validator(mode="after")
     def _check_required_secrets(self) -> "Settings":

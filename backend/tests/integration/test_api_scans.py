@@ -251,7 +251,7 @@ async def test_users_admin_list(client, auth_headers):
 async def test_schedule_sub_hourly_rejected(client, auth_headers):
     resp = await client.post("/api/v1/schedules", headers=auth_headers, json={
         "name": "Too Frequent",
-        "targets": ["127.0.0.1"],
+        "targets": ["192.0.2.10"],  # valid target — schedules now denylist-check targets
         "cron_expr": "* * * * *",  # every minute
     })
     assert resp.status_code == 400

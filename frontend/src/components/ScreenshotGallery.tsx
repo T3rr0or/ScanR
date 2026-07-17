@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { ExternalLink, X } from 'lucide-react'
 import { screenshotsApi, type Screenshot } from '@/api/screenshots'
@@ -184,15 +184,33 @@ function extractHostPort(url: string): string {
 }
 
 function AuthImage({ src, alt, style }: { src: string; alt: string; style: React.CSSProperties }) {
-  const { data: blobUrl } = useQuery({
-    queryKey: ['img', src],
-    queryFn: async () => {
-      const { default: api } = await import('@/api/client')
-      const resp = await api.get(src.replace('/api/v1', ''), { responseType: 'blob' })
-      return URL.createObjectURL(resp.data)
-    },
-    staleTime: Infinity,
-  })
+  // Fetch the authed image per mount and revoke the object URL on unmount so
+  // blob URLs never outlive their component (previously cached forever with
+  // staleTime: Infinity and never revoked).
+  const [blobUrl, setBlobUrl] = useState<string | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    let url: string | null = null
+    ;(async () => {
+      try {
+        const { default: api } = await import('@/api/client')
+        const resp = await api.get(src.replace('/api/v1', ''), { responseType: 'blob' })
+        url = URL.createObjectURL(resp.data)
+        if (cancelled) {
+          URL.revokeObjectURL(url)
+        } else {
+          setBlobUrl(url)
+        }
+      } catch {
+        // leave placeholder on error
+      }
+    })()
+    return () => {
+      cancelled = true
+      if (url) URL.revokeObjectURL(url)
+    }
+  }, [src])
 
   if (!blobUrl) {
     return (

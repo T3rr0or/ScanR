@@ -1,6 +1,7 @@
 """Auto-generate a plain-English executive summary for a scan report."""
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import datetime, timezone
 import html as _html
 
@@ -9,7 +10,7 @@ def _esc(text: str | None) -> str:
     return _html.escape(text or "")
 
 
-def generate_summary(scan, hosts: list, findings: list) -> str:
+def generate_summary(scan, hosts: Sequence, findings: Sequence) -> str:
     """
     Returns an HTML string for the executive summary section.
     Uses only scan metadata, hosts, and findings — no LLM required.

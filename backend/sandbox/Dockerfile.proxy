@@ -1,0 +1,14 @@
+# Filtering forward-proxy for the AI sandbox (replaces vimagick/tinyproxy:latest).
+# Minimal self-built image on a digest-pinned base; default config is baked in
+# and can be overridden at runtime via the read-only compose mounts.
+FROM alpine:3.21@sha256:48b0309ca019d89d40f670aa1bc06e426dc0931948452e8491e3d65087abc07d
+
+RUN apk add --no-cache tinyproxy
+
+COPY sandbox/proxy/tinyproxy.conf /etc/tinyproxy/tinyproxy.conf
+COPY sandbox/proxy/filter /etc/tinyproxy/filter
+
+EXPOSE 8888
+
+# -d: run in the foreground and log to stderr (no syslog in the container).
+CMD ["tinyproxy", "-d", "-c", "/etc/tinyproxy/tinyproxy.conf"]

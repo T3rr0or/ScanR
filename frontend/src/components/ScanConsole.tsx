@@ -69,10 +69,12 @@ export default function ScanConsole({ events, connected, scanStatus }: Props) {
       .map(e => `${fmtTs(e.ts)}  ${(e.level ?? 'info').padEnd(8)}  ${e.msg ?? ''}`)
       .join('\n')
     const blob = new Blob([text], { type: 'text/plain' })
+    const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
-    a.href = URL.createObjectURL(blob)
+    a.href = url
     a.download = 'scan-console.log'
     a.click()
+    URL.revokeObjectURL(url)
   }
 
   return (

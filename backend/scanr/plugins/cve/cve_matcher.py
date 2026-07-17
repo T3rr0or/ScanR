@@ -22,15 +22,16 @@ class CveMatcherPlugin(PluginBase):
 
     async def check(self, context: "ScanContext", host: "Host") -> list[FindingData]:
         findings = []
+        # TTL-cached KEV id set, fetched once per host instead of per port.
+        from scanr.plugins.cve.kev_cache import aget_kev_cve_ids
+        kev_ids = await aget_kev_cve_ids()
+
         for port in host.ports:
             if port.state != "open" or not port.service:
                 continue
             svc = port.service
             if not svc.product or not svc.version:
                 continue
-
-            from scanr.plugins.cve.nvd_loader import get_kev_cve_ids
-            kev_ids = get_kev_cve_ids()
 
             matches = await self._match_cves(svc.product, svc.version)
             for cve in matches[:5]:  # cap at 5 CVEs per service

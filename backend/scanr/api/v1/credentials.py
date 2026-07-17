@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from scanr.credentials.vault import encrypt
 from scanr.db import get_db
-from scanr.deps import get_current_user
+from scanr.deps import require_scope
 from scanr.models import Credential
 from scanr.models.base import new_uuid
 from scanr.models.user import User
@@ -18,7 +18,7 @@ router = APIRouter(prefix="/credentials", tags=["credentials"])
 @router.get("", response_model=list[CredentialRead])
 async def list_credentials(
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_scope("credentials:read")),
 ):
     result = await db.execute(
         select(Credential)
@@ -32,7 +32,7 @@ async def list_credentials(
 async def create_credential(
     body: CredentialCreate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_scope("credentials:write")),
 ):
     # Enforce per-user unique name
     existing = await db.execute(
@@ -64,7 +64,7 @@ async def create_credential(
 async def delete_credential(
     credential_id: str,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_scope("credentials:write")),
 ):
     result = await db.execute(
         select(Credential).where(

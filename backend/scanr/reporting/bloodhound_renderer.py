@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from scanr.models import Finding, Scan
@@ -134,7 +134,7 @@ async def render_bloodhound_json(
         nodes[node_type] = deduped
 
     # Build BloodHound-format JSON
-    bh_data = {
+    bh_data: dict[str, Any] = {
         "data": [],
         "meta": {
             "methods": 0,
