@@ -38,6 +38,22 @@ class AgentContext(ABC):
     async def log(self, message: str) -> None:
         """Surface a line to the live scan console / audit trail."""
 
+    async def read_scratchpad(self) -> dict:
+        """The run's working memory: {"todos": [...], "notes": {topic: body}}.
+
+        Concrete rather than abstract, with an in-memory default: memory is a
+        convenience for the agent, not part of the scope/capability boundary this
+        class exists to enforce, so an implementation that does not persist it is
+        still correct. The DB-backed context overrides both to store it on the run.
+        """
+        from scanr.ai.agent.memory import empty_scratchpad
+
+        return getattr(self, "_scratchpad", None) or empty_scratchpad()
+
+    async def write_scratchpad(self, scratchpad: dict) -> None:
+        """Persist working memory, so it survives a restart and lands in the trace."""
+        self._scratchpad = scratchpad
+
     async def should_stop(self) -> bool:
         """Whether the operator has asked to stop the run. Checked each loop
         iteration. Default False; the DB-backed impl checks a cancel flag."""

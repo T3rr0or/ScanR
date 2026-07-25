@@ -464,6 +464,7 @@ def _agent_run_dict(run: AiAgentRun) -> dict:
         "error": run.error,
         "pending_approval": _json.loads(run.pending_approval) if run.pending_approval else None,
         "conversation": _json.loads(run.conversation) if run.conversation else [],
+        "scratchpad": _json.loads(run.scratchpad) if run.scratchpad else None,
         "created_at": run.created_at.isoformat() if run.created_at else None,
     }
 
@@ -665,6 +666,20 @@ def _render_trace_markdown(run: AiAgentRun, scan, conv: list) -> str:
                     "```",
                     "",
                 ]
+    # The agent's own plan and notes, so a reviewer can see what it intended and
+    # what it believed — not just the calls it made.
+    if run.scratchpad:
+        try:
+            pad = _json.loads(run.scratchpad)
+        except ValueError:
+            pad = None
+        if isinstance(pad, dict):
+            from scanr.ai.agent.memory import format_notes, format_todos
+
+            if pad.get("todos"):
+                lines += ["---", "", "## Plan", "", "```", format_todos(pad["todos"]), "```", ""]
+            if pad.get("notes"):
+                lines += ["---", "", "## Notes", "", format_notes(pad["notes"]), ""]
     if run.final_text:
         lines += ["---", "", "## Final report", "", run.final_text.strip(), ""]
     return "\n".join(lines)

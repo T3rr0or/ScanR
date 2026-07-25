@@ -482,6 +482,212 @@ def command_tools(policy=None) -> list[Tool]:
     ]
 
 
+
+# ── working memory + skills ──────────────────────────────────────────────────
+
+async def _todo_write(ctx: AgentContext, args: dict) -> str:
+    from scanr.ai.agent.memory import write_todos
+
+    try:
+        state, summary = write_todos(await ctx.read_scratchpad(), args.get("todos") or [])
+    except ValueError as exc:
+        raise ToolError(str(exc))
+    await ctx.write_scratchpad(state)
+    return summary
+
+
+async def _todo_read(ctx: AgentContext, args: dict) -> str:
+    from scanr.ai.agent.memory import format_todos
+
+    return format_todos((await ctx.read_scratchpad()).get("todos") or [])
+
+
+async def _note_write(ctx: AgentContext, args: dict) -> str:
+    from scanr.ai.agent.memory import upsert_note
+
+    try:
+        state, summary = upsert_note(
+            await ctx.read_scratchpad(),
+            str(args.get("topic", "")),
+            str(args.get("content", "")),
+        )
+    except ValueError as exc:
+        raise ToolError(str(exc))
+    await ctx.write_scratchpad(state)
+    return summary
+
+
+async def _note_read(ctx: AgentContext, args: dict) -> str:
+    from scanr.ai.agent.memory import format_notes
+
+    notes = (await ctx.read_scratchpad()).get("notes") or {}
+    topic = str(args.get("topic", "")).strip() or None
+    return format_notes(notes, topic)[:8000]
+
+
+async def _think(ctx: AgentContext, args: dict) -> str:
+    thought = str(args.get("thought", "")).strip()
+    if not thought:
+        raise ToolError("thought is required")
+    await ctx.log(f"thinking: {thought[:200]}")
+    return "Noted. Continue."
+
+
+async def _list_skills(ctx: AgentContext, args: dict) -> str:
+    from scanr.ai.skills import list_skills
+
+    skills = list_skills()
+    if not skills:
+        return "(no skills available)"
+    return "\n".join(f"- {s.name}: {s.description}" for s in skills)
+
+
+async def _load_skill(ctx: AgentContext, args: dict) -> str:
+    from scanr.ai.skills import get_skill, list_skills
+
+    name = str(args.get("name", "")).strip().lower()
+    skill = get_skill(name)
+    if skill is None:
+        available = ", ".join(s.name for s in list_skills()) or "none"
+        raise ToolError(f"unknown skill {name!r}; available: {available}")
+    await ctx.log(f"loaded skill: {skill.name}")
+    return skill.body[:12000]
+
+
+def memory_tools() -> list[Tool]:
+    """Working memory and loadable expertise.
+
+    None of these touch the network or the database beyond the run's own row, so
+    they need no capability and no approval — they are how the agent keeps a plan
+    and its findings straight across a long run.
+    """
+    return [
+        Tool(
+            ToolDef(
+                name="todo_write",
+                description=(
+                    "Record or update your plan. Pass the COMPLETE list every time — "
+                    "it replaces the previous one, so include finished items with "
+                    "status 'done'. Write a plan before starting multi-step work, and "
+                    "update it as you go; it is what keeps you on track once earlier "
+                    "turns fall out of context."
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "todos": {
+                            "type": "array",
+                            "description": "The full plan, in order.",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "title": {"type": "string"},
+                                    "status": {
+                                        "type": "string",
+                                        "enum": ["pending", "in_progress", "done"],
+                                    },
+                                },
+                                "required": ["title"],
+                                "additionalProperties": False,
+                            },
+                        }
+                    },
+                    "required": ["todos"],
+                    "additionalProperties": False,
+                },
+            ),
+            _todo_write,
+        ),
+        Tool(
+            ToolDef(
+                name="todo_read",
+                description="Re-read your current plan. Useful after a long detour.",
+                parameters={"type": "object", "properties": {}, "additionalProperties": False},
+            ),
+            _todo_read,
+        ),
+        Tool(
+            ToolDef(
+                name="note_write",
+                description=(
+                    "Save a durable fact under a topic, so it survives the conversation "
+                    "window: credentials that worked, the domain name, an endpoint worth "
+                    "returning to. Writing the same topic replaces it; writing empty "
+                    "content deletes it (use that to retract something you found to be "
+                    "wrong)."
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "topic": {"type": "string", "description": "Short key, e.g. 'domain' or '10.0.0.5'."},
+                        "content": {"type": "string", "description": "The fact. Empty deletes the note."},
+                    },
+                    "required": ["topic", "content"],
+                    "additionalProperties": False,
+                },
+            ),
+            _note_write,
+        ),
+        Tool(
+            ToolDef(
+                name="note_read",
+                description="Read one note by topic, or all of them when topic is omitted.",
+                parameters={
+                    "type": "object",
+                    "properties": {"topic": {"type": "string"}},
+                    "additionalProperties": False,
+                },
+            ),
+            _note_read,
+        ),
+        Tool(
+            ToolDef(
+                name="think",
+                description=(
+                    "Reason out loud without taking an action. Use before a decision "
+                    "with consequences — which host to pivot to, whether evidence is "
+                    "sufficient to file a finding. Records nothing and changes nothing."
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {"thought": {"type": "string"}},
+                    "required": ["thought"],
+                    "additionalProperties": False,
+                },
+            ),
+            _think,
+        ),
+        Tool(
+            ToolDef(
+                name="list_skills",
+                description=(
+                    "List available skills — methodology for a class of problem "
+                    "(Active Directory, web auth, TLS triage, pivoting, deciding whether "
+                    "a finding is real). Check this when you hit unfamiliar ground."
+                ),
+                parameters={"type": "object", "properties": {}, "additionalProperties": False},
+            ),
+            _list_skills,
+        ),
+        Tool(
+            ToolDef(
+                name="load_skill",
+                description=(
+                    "Load a skill's full guidance by name. Do this before working a "
+                    "domain it covers, rather than improvising."
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {"name": {"type": "string"}},
+                    "required": ["name"],
+                    "additionalProperties": False,
+                },
+            ),
+            _load_skill,
+        ),
+    ]
+
+
 def default_registry(policy=None) -> "ToolRegistry":
     """The tool set for a guided/autonomous run: read-only + web + plugins, and
     the sandbox shell only when the policy unlocks allow_command_exec (so the
@@ -490,7 +696,7 @@ def default_registry(policy=None) -> "ToolRegistry":
     list_plugins is read-only; run_plugin/run_port_scan are intrusive
     (approval-gated in guided mode; destructive plugins gated on exploitation).
     """
-    tools = read_only_tools() + web_tools() + plugin_tools()
+    tools = read_only_tools() + memory_tools() + web_tools() + plugin_tools()
     if policy is not None and policy.allows_capability("allow_command_exec"):
         tools += command_tools(policy)
     return ToolRegistry(tools)

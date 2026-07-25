@@ -480,10 +480,27 @@ Tools available to the agent today: read the scan's hosts/findings/evidence,
 `create_finding` (record what it discovers), `fetch_url` (HTTP GET,
 non-intrusive), `list_plugins`, `run_plugin` (run a ScanR plugin against a
 discovered host), `run_port_scan` (nmap a host), `submit_form` (HTTP POST —
-intrusive, aggressive-gated), and `run_command` (sandboxed shell — see below).
+intrusive, aggressive-gated), `run_command` (sandboxed shell — see below), and
+the working-memory/skill tools described below.
 Active tools are intrusive, so they are approval-gated in guided mode. Pages the
 agent fetches with `fetch_url` are also screenshotted into the Screenshots tab,
 so its discoveries are captured visually alongside the scan's.
+
+**Working memory.** The agent keeps a plan and durable notes on the run
+(`todo_write` / `todo_read`, `note_write` / `note_read`, plus `think` for
+reasoning without acting). A long run's early turns fall out of the model's
+context window; the plan and notes do not, so it stops re-deriving what it
+already established. Both are persisted on the run, survive a restart, and are
+included in the exported markdown trace — you can see what the agent intended
+and what it believed, not just the calls it made.
+
+**Skills.** Procedural expertise ships as markdown in
+`backend/scanr/ai/skills/` — Active Directory, web authentication, TLS triage,
+pivoting, and deciding whether a finding is real. Only the one-line index sits
+in the system prompt; the agent pulls a full body with `load_skill` when it hits
+that ground, so methodology it doesn't need costs nothing per turn. Adding a
+skill is dropping in a `.md` file with a `name`/`description` header — no code
+change.
 
 The agent is **conversational**: after a run finishes you can send follow-up
 messages to continue it (the full transcript is kept), and switch the model

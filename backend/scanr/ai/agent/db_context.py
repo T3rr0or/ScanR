@@ -295,6 +295,33 @@ class DbAgentContext(AgentContext):
         finally:
             await r.aclose()
 
+    async def read_scratchpad(self) -> dict:
+        from scanr.ai.agent.memory import empty_scratchpad
+        from scanr.models import AiAgentRun
+
+        if not self._run_id:
+            return empty_scratchpad()
+        run = await self._db.get(AiAgentRun, self._run_id)
+        if run is None or not run.scratchpad:
+            return empty_scratchpad()
+        try:
+            stored = json.loads(run.scratchpad)
+        except ValueError:
+            return empty_scratchpad()
+        # A stored value of the wrong shape is a bug, not a reason to fail the run.
+        return stored if isinstance(stored, dict) else empty_scratchpad()
+
+    async def write_scratchpad(self, scratchpad: dict) -> None:
+        from scanr.models import AiAgentRun
+
+        if not self._run_id:
+            return  # ad-hoc use with no run to attach memory to
+        run = await self._db.get(AiAgentRun, self._run_id)
+        if run is None:
+            return
+        run.scratchpad = json.dumps(scratchpad)
+        await self._db.commit()
+
     async def note_web_url(self, url: str) -> None:
         """Remember a renderable URL the agent fetched (deduped, capped) so it can
         be screenshotted at run end."""

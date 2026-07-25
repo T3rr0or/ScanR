@@ -310,6 +310,80 @@ def test_parse_ports():
         _parse_ports("1-3000")  # >2000 ports
 
 
+# ── working memory + skills ──────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_memory_tools_need_no_capability_or_approval():
+    """These are how the agent keeps a plan straight; gating them behind
+    aggressive/approval would make guided runs strictly dumber for no safety
+    gain — they touch nothing outside the run's own row."""
+    from scanr.ai.agent.tools import default_registry
+
+    reg = default_registry()
+    for name in ("todo_write", "todo_read", "note_write", "note_read", "think",
+                 "list_skills", "load_skill"):
+        assert name in reg.names(), name
+
+    # The most restrictive policy there is: guided, no capabilities, approval denied.
+    ctx = FakeContext(AgentPolicy(mode=AutonomyMode.guided), approve=False)
+    assert "[ ] enumerate" in await reg.dispatch(
+        ctx, "todo_write", {"todos": [{"title": "enumerate", "status": "pending"}]}
+    )
+    assert "saved note" in await reg.dispatch(
+        ctx, "note_write", {"topic": "domain", "content": "corp.local"}
+    )
+    assert "corp.local" in await reg.dispatch(ctx, "note_read", {"topic": "domain"})
+    assert ctx.approvals == [], "memory is not an intrusive action"
+
+
+@pytest.mark.asyncio
+async def test_memory_round_trips_through_the_context():
+    """Written on one turn, readable on the next — the whole point of the feature."""
+    from scanr.ai.agent.tools import default_registry
+
+    reg = default_registry()
+    ctx = FakeContext(AgentPolicy(mode=AutonomyMode.autonomous))
+    await reg.dispatch(ctx, "todo_write", {"todos": ["a", "b"]})
+    await reg.dispatch(ctx, "note_write", {"topic": "creds", "content": "admin:admin"})
+
+    assert "(2 of 2 remaining)" in await reg.dispatch(ctx, "todo_read", {})
+    assert "admin:admin" in await reg.dispatch(ctx, "note_read", {})
+
+    # a rewrite replaces the plan rather than appending to it
+    await reg.dispatch(ctx, "todo_write", {"todos": [{"title": "a", "status": "done"}]})
+    plan = await reg.dispatch(ctx, "todo_read", {})
+    assert "[x] a" in plan and " b" not in plan
+
+
+@pytest.mark.asyncio
+async def test_bad_memory_input_is_an_error_the_model_can_act_on():
+    """A ToolError comes back as text so the model retries; an unhandled
+    exception would kill the run."""
+    from scanr.ai.agent.tools import default_registry
+
+    reg = default_registry()
+    ctx = FakeContext(AgentPolicy(mode=AutonomyMode.autonomous))
+    assert (await reg.dispatch(ctx, "todo_write", {"todos": [{"status": "done"}]})).startswith("ERROR")
+    assert (await reg.dispatch(ctx, "note_write", {"topic": "", "content": "x"})).startswith("ERROR")
+    assert (await reg.dispatch(ctx, "think", {"thought": ""})).startswith("ERROR")
+
+
+@pytest.mark.asyncio
+async def test_load_skill_names_the_alternatives_when_it_misses():
+    from scanr.ai.agent.tools import default_registry
+
+    reg = default_registry()
+    ctx = FakeContext(AgentPolicy(mode=AutonomyMode.autonomous))
+    index = await reg.dispatch(ctx, "list_skills", {})
+    assert "active-directory" in index
+
+    body = await reg.dispatch(ctx, "load_skill", {"name": "Active-Directory"})
+    assert len(body) > 200 and not body.startswith("ERROR")
+
+    miss = await reg.dispatch(ctx, "load_skill", {"name": "../../../etc/passwd"})
+    assert miss.startswith("ERROR") and "active-directory" in miss
+
+
 # ── loop ─────────────────────────────────────────────────────────────────────
 
 @pytest.mark.asyncio

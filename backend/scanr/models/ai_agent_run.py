@@ -45,3 +45,6 @@ class AiAgentRun(Base, TimestampMixin):
     # Full chat conversation (JSON array of serialized messages) — enables
     # resuming the agent loop with follow-up user messages.
     conversation: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: Agent working memory: {"todos": [...], "notes": {topic: body}}. See
+    #: scanr.ai.agent.memory for why this is persisted rather than in-loop.
+    scratchpad: Mapped[str | None] = mapped_column(Text, nullable=True)
