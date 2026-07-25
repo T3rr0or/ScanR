@@ -24,7 +24,7 @@ ScanR is a self-hosted vulnerability scanner for authorized internal and externa
 - **Attack paths** - ranked routes from the attacker's position to a domain or privileged objective, built from findings rather than guesswork, with chokepoint analysis showing which single fix breaks the most routes.
 - **Scan deltas** - compare scans to see new, resolved, and persisting findings, plus host/port changes.
 - **Templates and schedules** - save reusable scan profiles and run them on a schedule.
-- **Reports** - export executive and technical reports in multiple formats.
+- **Reports** - export executive and technical reports as HTML, PDF, JSON, CSV, BloodHound JSON, or **SARIF 2.1.0** for GitHub code scanning, DefectDojo and other DevSecOps pipelines.
 - **API keys, webhooks, and agents** - integrate ScanR into automated workflows and scan from different network vantage points.
 - **AI-augmented pentesting (optional)** - findings summaries, report narratives, and false-positive testing, plus a gated guided/autonomous agent that actively investigates a scan (with an optional sandboxed shell). Conversational with follow-ups and mid-chat model switching. Bring your own ChatGPT, DeepSeek, or Anthropic key.
 
@@ -315,7 +315,21 @@ Reports can include:
 - compliance tags
 - analyst notes
 
-Supported exports include HTML, PDF, JSON, CSV, and SARIF where configured.
+Formats: **HTML**, **PDF**, **JSON**, **CSV**, **BloodHound JSON**, and
+**SARIF 2.1.0**.
+
+SARIF is the interchange format GitHub code scanning, DefectDojo and Azure DevOps
+ingest natively, so a scan's findings can land in an existing triage queue rather
+than a PDF someone has to read. ScanR's output is validated against the official
+2.1.0 schema in CI, and each result carries a `partialFingerprints` entry derived
+from plugin + host + port + title — so a consumer recognises the same finding
+across re-scans instead of treating every run as a fresh set of alerts.
+
+```bash
+curl -X POST -H "X-API-Key: sk_..." -H 'Content-Type: application/json' \
+  -d '{"scan_id":"<scan-id>","format":"sarif"}' \
+  http://localhost:8000/api/v1/reports
+```
 
 ---
 
