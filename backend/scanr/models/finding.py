@@ -9,6 +9,7 @@ if TYPE_CHECKING:
     from .finding_retest import FindingRetest
     from .host import Host
     from .scan import Scan
+    from .ticket_link import TicketLink
 
 from sqlalchemy import Boolean, DateTime, Float, ForeignKey, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -66,5 +67,8 @@ class Finding(Base, TimestampMixin):
     scan: Mapped["Scan"] = relationship(back_populates="findings", foreign_keys="Finding.scan_id")
     host: Mapped["Host | None"] = relationship(back_populates="findings")
     retests: Mapped[list["FindingRetest"]] = relationship(
+        back_populates="finding", cascade="all, delete-orphan",
+    )
+    ticket_links: Mapped[list["TicketLink"]] = relationship(
         back_populates="finding", cascade="all, delete-orphan",
     )

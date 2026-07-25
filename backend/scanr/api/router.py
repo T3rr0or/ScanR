@@ -13,6 +13,7 @@ from .v1 import (
     exclusions,
     findings,
     host_tags,
+    integrations,
     plugins,
     profile_suggest,
     reports,
@@ -52,6 +53,7 @@ api_router.include_router(users.router)
 api_router.include_router(assets.router)
 api_router.include_router(vulnerabilities.router)
 api_router.include_router(host_tags.router)
+api_router.include_router(integrations.router)
 api_router.include_router(wordlists.router)
 
 # WebSocket (no v1 prefix — cleaner WS URLs)

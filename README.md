@@ -25,6 +25,7 @@ ScanR is a self-hosted vulnerability scanner for authorized internal and externa
 - **Scan deltas** - compare scans to see new, resolved, and persisting findings, plus host/port changes.
 - **Templates and schedules** - save reusable scan profiles and run them on a schedule.
 - **Reports** - export executive and technical reports as HTML, PDF, JSON, CSV, BloodHound JSON, or **SARIF 2.1.0** for GitHub code scanning, DefectDojo and other DevSecOps pipelines.
+- **TOPdesk integration** - file a finding as a TOPdesk incident, deduplicated so a re-scan links the existing ticket instead of opening a second one.
 - **API keys, webhooks, and agents** - integrate ScanR into automated workflows and scan from different network vantage points.
 - **AI-augmented pentesting (optional)** - findings summaries, report narratives, and false-positive testing, plus a gated guided/autonomous agent that actively investigates a scan (with an optional sandboxed shell). Conversational with follow-ups and mid-chat model switching. Bring your own ChatGPT, DeepSeek, or Anthropic key.
 
@@ -77,6 +78,37 @@ curl -H "X-API-Key: sk_..." http://localhost:8000/api/v1/findings/<id>/retests
 
 Requires the `findings:triage` scope rather than `findings:read` — a retest sends
 live traffic to the target.
+
+### TOPdesk
+
+Findings can be filed straight into TOPdesk as incidents, so remediation is
+tracked where the service desk already works.
+
+Configure it under **Settings → Integrations** (admin only): instance base URL,
+username, and a TOPdesk **application password** — the per-integration credential
+TOPdesk issues under a user's settings, not an operator's own password. It is
+stored Fernet-encrypted and never returned by the API. *Test connection* makes one
+authenticated call so setup is confirmed there rather than discovered on first use.
+
+**Filing is idempotent.** Each incident is stamped with
+`externalNumber = scanr:<fingerprint>`, using the same plugin + host + port + title
+identity as the SARIF export. Before creating anything, ScanR searches TOPdesk for
+that number and adopts an existing incident if one is found — so pressing the
+button twice, restoring a database, or running a second ScanR instance links the
+same ticket instead of opening duplicates. The response says whether it created or
+adopted.
+
+Instance-specific fields (category, subcategory, call type, operator group,
+caller, priority names) come from an optional JSON defaults blob. Anything left
+unset is omitted rather than guessed, because an incident filed under the wrong
+taxonomy is one the service desk has to re-file by hand.
+
+```bash
+curl -X POST -H "X-API-Key: sk_..." \
+  http://localhost:8000/api/v1/integrations/topdesk/findings/<finding-id>/ticket
+```
+
+Requires `findings:triage` — it writes to a system outside ScanR.
 
 ### Attack Paths
 

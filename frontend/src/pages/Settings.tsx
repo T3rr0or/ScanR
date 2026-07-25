@@ -18,6 +18,7 @@ import {
 	ExternalLink,
 	Terminal,
 	Sparkles,
+	Ticket,
 } from "lucide-react";
 import { apiKeysApi, type APIKeyCreated } from "@/api/apiKeys";
 import { webhooksApi } from "@/api/webhooks";
@@ -25,6 +26,7 @@ import api from "@/api/client";
 import { relTime } from "@/components/ui";
 import AutonomyModeInfo from "@/components/AutonomyModeInfo";
 import { useAuthStore } from "@/store/auth";
+import { integrationsApi } from "@/api/integrations";
 import { parseJwtRole } from "@/utils/jwt";
 
 type Tab =
@@ -33,6 +35,7 @@ type Tab =
 	| "webhooks"
 	| "cve"
 	| "ai"
+	| "integrations"
 	| "users"
 	| "system";
 
@@ -47,6 +50,7 @@ const TABS: {
 	{ id: "webhooks", label: "Webhooks", Icon: Webhook },
 	{ id: "cve", label: "CVE Database", Icon: Database },
 	{ id: "ai", label: "AI", Icon: Sparkles, adminOnly: true },
+	{ id: "integrations", label: "Integrations", Icon: Ticket, adminOnly: true },
 	{ id: "system", label: "System", Icon: Monitor, adminOnly: true },
 	{ id: "users", label: "Users", Icon: Users, adminOnly: true },
 ];
@@ -130,6 +134,7 @@ export default function Settings() {
 					{activeTab === "webhooks" && <WebhooksSection />}
 					{activeTab === "cve" && <CveDatabaseSection />}
 					{activeTab === "ai" && role === "admin" && <AiSection />}
+					{activeTab === "integrations" && role === "admin" && <IntegrationsSection />}
 					{activeTab === "system" && role === "admin" && <SystemSection />}
 					{activeTab === "users" && role === "admin" && (
 						<UserManagementSection />
@@ -2327,6 +2332,153 @@ function WebhooksSection() {
 						No webhooks configured
 					</div>
 				)}
+			</div>
+		</div>
+	);
+}
+
+/* ── Integrations (TOPdesk) ─────────────────────────────────── */
+
+function IntegrationsSection() {
+	const qc = useQueryClient();
+	const [url, setUrl] = useState("");
+	const [username, setUsername] = useState("");
+	const [password, setPassword] = useState("");
+	const [defaultsText, setDefaultsText] = useState("{}");
+	const [msg, setMsg] = useState<string | null>(null);
+	const [err, setErr] = useState<string | null>(null);
+
+	const { data: status } = useQuery({
+		queryKey: ["topdesk-status"],
+		queryFn: integrationsApi.topdeskStatus,
+	});
+
+	useEffect(() => {
+		if (!status) return;
+		setUrl(status.url ?? "");
+		setUsername(status.username ?? "");
+	}, [status]);
+
+	const onErr = (e: unknown) => {
+		const detail =
+			(e as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+		setErr(detail ?? (e instanceof Error ? e.message : String(e)));
+		setMsg(null);
+	};
+
+	const save = useMutation({
+		mutationFn: () => {
+			let defaults: Record<string, unknown> = {};
+			try {
+				defaults = JSON.parse(defaultsText || "{}");
+			} catch {
+				throw new Error("Field defaults must be valid JSON");
+			}
+			return integrationsApi.saveTopdesk({
+				url,
+				username,
+				// Omitted when blank, so the stored secret survives a URL edit.
+				password: password || undefined,
+				defaults,
+			});
+		},
+		onSuccess: () => {
+			setPassword("");
+			setErr(null);
+			setMsg("Saved.");
+			qc.invalidateQueries({ queryKey: ["topdesk-status"] });
+		},
+		onError: onErr,
+	});
+
+	const test = useMutation({
+		mutationFn: integrationsApi.testTopdesk,
+		onSuccess: () => {
+			setErr(null);
+			setMsg("Connected — credentials accepted.");
+		},
+		onError: onErr,
+	});
+
+	const remove = useMutation({
+		mutationFn: integrationsApi.deleteTopdesk,
+		onSuccess: () => {
+			setUrl("");
+			setUsername("");
+			setPassword("");
+			setErr(null);
+			setMsg("Configuration removed.");
+			qc.invalidateQueries({ queryKey: ["topdesk-status"] });
+		},
+		onError: onErr,
+	});
+
+	return (
+		<div className="panel">
+			<div className="panel-head" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+				<Ticket size={13} style={{ color: "var(--accent)" }} />
+				<span className="panel-title">TOPdesk</span>
+				{status?.configured && <span className="pill pill-completed">Configured</span>}
+			</div>
+			<div style={{ padding: 14, display: "flex", flexDirection: "column", gap: 10 }}>
+				<p style={{ fontSize: 11.5, color: "var(--text-2)", margin: 0, lineHeight: 1.6 }}>
+					File findings into TOPdesk as incidents. Authenticate with an{" "}
+					<strong>application password</strong>, not an operator password — TOPdesk
+					issues these per integration under the user's settings. The password is
+					encrypted at rest and never shown again.
+				</p>
+
+				<label style={{ fontSize: 11.5 }}>
+					Instance URL
+					<input className="input" value={url} placeholder="https://example.topdesk.net"
+					       onChange={(e) => setUrl(e.target.value)} />
+					<span style={{ fontSize: 10.5, color: "var(--text-3)" }}>
+						The base URL, not a deep link.
+					</span>
+				</label>
+
+				<label style={{ fontSize: 11.5 }}>
+					Username
+					<input className="input" value={username} placeholder="scanr"
+					       onChange={(e) => setUsername(e.target.value)} />
+				</label>
+
+				<label style={{ fontSize: 11.5 }}>
+					Application password
+					<input className="input" type="password" value={password}
+					       placeholder={status?.has_password ? "•••••••• (leave blank to keep)" : ""}
+					       onChange={(e) => setPassword(e.target.value)} />
+				</label>
+
+				<label style={{ fontSize: 11.5 }}>
+					Field defaults (JSON, optional)
+					<textarea className="input" rows={4} value={defaultsText}
+					          onChange={(e) => setDefaultsText(e.target.value)}
+					          style={{ fontFamily: "var(--font-mono)", fontSize: 11 }} />
+					<span style={{ fontSize: 10.5, color: "var(--text-3)" }}>
+						e.g. {'{"category":"Security","caller_email":"sec@example.com"}'} — anything
+						left out is omitted rather than guessed, so incidents do not need re-filing.
+					</span>
+				</label>
+
+				<div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+					<button className="btn btn-primary btn-sm" disabled={save.isPending || !url || !username}
+					        onClick={() => save.mutate()}>
+						{save.isPending ? "Saving…" : "Save"}
+					</button>
+					<button className="btn btn-ghost btn-sm" disabled={!status?.configured || test.isPending}
+					        onClick={() => test.mutate()}>
+						{test.isPending ? "Testing…" : "Test connection"}
+					</button>
+					{status?.configured && (
+						<button className="btn btn-ghost btn-sm" onClick={() => remove.mutate()}>
+							<Trash2 size={11} /> Remove
+						</button>
+					)}
+				</div>
+
+				{msg && <div style={{ fontSize: 11.5, color: "var(--sev-low, #22c55e)" }}>{msg}</div>}
+				{err && <div style={{ fontSize: 11.5, color: "var(--sev-high)" }}>{err}</div>}
 			</div>
 		</div>
 	);

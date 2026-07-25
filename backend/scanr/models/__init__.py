@@ -6,6 +6,7 @@ from .credential import Credential, CredentialType
 from .exclusion import Exclusion
 from .finding import Finding, Severity
 from .finding_retest import FindingRetest, RetestStatus, RetestVerdict
+from .ticket_link import TicketLink
 from .host import Host, HostStatus
 from .plugin import Plugin
 from .plugin_run import PluginRun
@@ -45,6 +46,7 @@ __all__ = [
     "Service",
     "Finding",
     "FindingRetest",
+    "TicketLink",
     "RetestStatus",
     "RetestVerdict",
     "Severity",

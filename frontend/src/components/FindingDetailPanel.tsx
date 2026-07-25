@@ -6,6 +6,7 @@ import { X, ExternalLink } from 'lucide-react'
 import { SevTag } from '@/components/ui'
 import type { Finding } from '@/api/findings'
 import RetestPanel from "@/components/RetestPanel"
+import TicketPanel from "@/components/TicketPanel"
 import { safeUrl } from "@/utils/safeUrl"
 
 interface Props {
@@ -137,6 +138,10 @@ function PanelBody({ finding, onClose }: { finding: Finding; onClose: () => void
 
         <Section label="Verification">
           <RetestPanel findingId={finding.id} />
+        </Section>
+
+        <Section label="Ticket">
+          <TicketPanel findingId={finding.id} />
         </Section>
 
         {refs.length > 0 && (
