@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import sys
+from typing import NoReturn
 
 import click
 import httpx
@@ -211,6 +212,193 @@ def update_nvd():
     from scanr.plugins.cve.nvd_loader import download_feeds
     download_feeds()
     console.print("[green]NVD feeds updated.[/green]")
+
+
+# ── CI ────────────────────────────────────────────────────────────────────────
+
+#: Exit codes. CI needs to tell "found vulnerabilities" (a real result the build
+#: should reflect) apart from "the tool broke" (retry, or fix the pipeline) —
+#: collapsing both into 1 makes a broken scanner look like a clean report or vice
+#: versa.
+EXIT_OK = 0
+EXIT_FINDINGS = 1
+EXIT_ERROR = 2
+
+_SEVERITIES = ["critical", "high", "medium", "low", "info"]
+
+
+def _fail(message: str) -> NoReturn:
+    console.print(f"[red]{message}[/red]")
+    sys.exit(EXIT_ERROR)
+
+
+def _ci_request(ctx, path: str, method: str = "GET", body: dict | None = None,
+                raw: bool = False):
+    """Raise on failure. Callers decide whether that should end the run."""
+    base = ctx.obj["base_url"]
+    token = ctx.obj.get("token", "")
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    resp = httpx.request(method, f"{base}{path}", json=body, headers=headers,
+                         timeout=60, verify=False)
+    resp.raise_for_status()
+    return resp.content if raw else resp.json()
+
+
+def _ci_api(ctx, path: str, method: str = "GET", body: dict | None = None, raw: bool = False):
+    """Exit EXIT_ERROR on failure — for calls the verdict depends on.
+
+    Not used for optional extras like SARIF: a reporting hiccup must not turn a
+    real result into "the tool broke".
+    """
+    try:
+        return _ci_request(ctx, path, method, body, raw)
+    except httpx.HTTPStatusError as e:
+        _fail(f"API error {e.response.status_code}: {e.response.text[:300]}")
+    except Exception as e:
+        _fail(f"Connection error: {e}")
+
+
+def _counts_at_or_above(counts: dict, threshold: str) -> int:
+    """How many findings are at least as severe as `threshold`."""
+    cutoff = _SEVERITIES.index(threshold)
+    return sum(int(counts.get(sev, 0) or 0) for sev in _SEVERITIES[: cutoff + 1])
+
+
+@cli.command("ci")
+@click.option("--target", "-t", multiple=True, required=True,
+              help="Target to scan. Repeatable.")
+@click.option("--name", default=None, help="Scan name (default: derived from targets).")
+@click.option("--profile", default="standard",
+              help="Scan profile: quick | standard | full | custom.")
+@click.option("--profile-json", default=None,
+              help="Raw profile_json for full control over capabilities.")
+@click.option("--fail-on", type=click.Choice(_SEVERITIES + ["never"]), default="high",
+              help="Exit non-zero when a finding at or above this severity is found.")
+@click.option("--sarif", "sarif_path", default=None,
+              help="Write a SARIF 2.1.0 report here (for GitHub code scanning).")
+@click.option("--timeout", default=3600, show_default=True,
+              help="Seconds to wait for the scan before giving up.")
+@click.option("--poll-interval", default=10, show_default=True, help="Seconds between status checks.")
+@click.option("--quiet", is_flag=True, help="Only print the summary.")
+@click.pass_context
+def ci(ctx, target, name, profile, profile_json, fail_on, sarif_path, timeout,
+       poll_interval, quiet):
+    """Run a scan to completion and exit non-zero if it finds anything.
+
+    Built for pipelines: blocks until the scan finishes, prints a severity
+    summary, optionally writes SARIF, and sets the exit code from the result.
+
+    \b
+    Exit codes:
+      0  scan completed, nothing at or above --fail-on
+      1  scan completed, findings at or above --fail-on
+      2  something went wrong (API, timeout, scan failed) — not a verdict
+
+    \b
+    Authenticate with an API key (SCANR_TOKEN=sk_...); it needs the
+    scans:write, findings:read and reports:read/create scopes.
+    """
+    import time
+
+    if not ctx.obj.get("token"):
+        _fail("No token. Set SCANR_TOKEN (an API key, sk_...) or pass --token.")
+
+    scan_name = name or f"CI: {', '.join(target)[:80]}"
+    payload = {"name": scan_name, "targets": list(target), "profile": profile}
+    if profile_json:
+        payload["profile_json"] = profile_json
+
+    created = _ci_api(ctx, "/api/v1/scans", "POST", payload)
+    scan_id = created["id"]
+    if not quiet:
+        console.print(f"[cyan]Scan {scan_id}[/cyan] created for {len(target)} target(s)")
+
+    _ci_api(ctx, f"/api/v1/scans/{scan_id}/launch", "POST")
+
+    deadline = time.time() + timeout
+    status = "pending"
+    last_shown = None
+    while time.time() < deadline:
+        info = _ci_api(ctx, f"/api/v1/scans/{scan_id}")
+        status = info.get("status", "unknown")
+        if status in ("completed", "failed", "cancelled"):
+            break
+        shown = f"{status} — {info.get('hosts_up', 0)}/{info.get('hosts_total', 0)} hosts"
+        if not quiet and shown != last_shown:
+            console.print(f"[dim]{shown}[/dim]")
+            last_shown = shown
+        time.sleep(poll_interval)
+    else:
+        _fail(f"Timed out after {timeout}s waiting for scan {scan_id} (last status: {status}).")
+
+    if status != "completed":
+        detail = info.get("error_message") or ""
+        _fail(f"Scan {status}. {detail}".strip())
+
+    counts = {
+        "critical": info.get("findings_critical", 0),
+        "high": info.get("findings_high", 0),
+        "medium": info.get("findings_medium", 0),
+        "low": info.get("findings_low", 0),
+        "info": info.get("findings_info", 0),
+    }
+
+    if sarif_path:
+        _write_sarif(ctx, scan_id, sarif_path, quiet)
+
+    table = Table(title=f"Scan {scan_id[:8]} — {info.get('hosts_up', 0)} host(s) up")
+    table.add_column("Severity")
+    table.add_column("Count", justify="right")
+    for sev in _SEVERITIES:
+        table.add_row(sev, str(counts[sev]))
+    console.print(table)
+
+    if fail_on == "never":
+        console.print("[green]--fail-on never: not failing the build.[/green]")
+        sys.exit(EXIT_OK)
+
+    breaching = _counts_at_or_above(counts, fail_on)
+    if breaching:
+        console.print(
+            f"[red]{breaching} finding(s) at or above '{fail_on}'.[/red] "
+            f"[dim]Full detail: {ctx.obj['base_url']}/scans/{scan_id}[/dim]"
+        )
+        sys.exit(EXIT_FINDINGS)
+
+    console.print(f"[green]No findings at or above '{fail_on}'.[/green]")
+    sys.exit(EXIT_OK)
+
+
+def _write_sarif(ctx, scan_id: str, path: str, quiet: bool) -> None:
+    """Generate and download a SARIF report.
+
+    A SARIF failure must not change the build verdict — the scan already ran and
+    its result stands — so this warns and moves on rather than exiting.
+    """
+    import time
+    from pathlib import Path
+
+    try:
+        report = _ci_request(ctx, "/api/v1/reports", "POST",
+                             {"scan_id": scan_id, "format": "sarif"})
+        report_id = report["id"]
+        for _ in range(60):
+            state = _ci_request(ctx, f"/api/v1/reports/{report_id}")
+            if state.get("status") == "completed":
+                break
+            if state.get("status") == "failed":
+                console.print(f"[yellow]SARIF report failed: {state.get('error_message')}[/yellow]")
+                return
+            time.sleep(2)
+        else:
+            console.print("[yellow]SARIF report did not finish in time; skipping.[/yellow]")
+            return
+        content = _ci_request(ctx, f"/api/v1/reports/{report_id}/download", raw=True)
+        Path(path).write_bytes(content)
+        if not quiet:
+            console.print(f"[green]SARIF written to {path}[/green]")
+    except Exception as exc:  # noqa: BLE001 - reporting never decides the build
+        console.print(f"[yellow]Could not write SARIF ({exc}); continuing.[/yellow]")
 
 
 if __name__ == "__main__":

@@ -26,6 +26,7 @@ ScanR is a self-hosted vulnerability scanner for authorized internal and externa
 - **Templates and schedules** - save reusable scan profiles and run them on a schedule.
 - **Reports** - export executive and technical reports as HTML, PDF, JSON, CSV, BloodHound JSON, or **SARIF 2.1.0** for GitHub code scanning, DefectDojo and other DevSecOps pipelines.
 - **TOPdesk integration** - file a finding as a TOPdesk incident, deduplicated so a re-scan links the existing ticket instead of opening a second one.
+- **CI/CD gate** - `scanr ci` blocks on a scan, writes SARIF, and exits non-zero above a severity threshold; a reusable GitHub Action uploads results to code scanning.
 - **API keys, webhooks, and agents** - integrate ScanR into automated workflows and scan from different network vantage points.
 - **AI-augmented pentesting (optional)** - findings summaries, report narratives, and false-positive testing, plus a gated guided/autonomous agent that actively investigates a scan (with an optional sandboxed shell). Conversational with follow-ups and mid-chat model switching. Bring your own ChatGPT, DeepSeek, or Anthropic key.
 
@@ -78,6 +79,51 @@ curl -H "X-API-Key: sk_..." http://localhost:8000/api/v1/findings/<id>/retests
 
 Requires the `findings:triage` scope rather than `findings:read` — a retest sends
 live traffic to the target.
+
+### CI/CD
+
+`scanr ci` runs a scan to completion and turns the result into an exit code, so a
+pipeline can gate on it:
+
+```bash
+export SCANR_URL=https://scanr.internal
+export SCANR_TOKEN=sk_...          # API key: scans:write, findings:read, reports:read/create
+
+scanr ci --target 192.0.2.0/24 --fail-on high --sarif scanr.sarif
+```
+
+| Exit | Meaning |
+|---|---|
+| `0` | Scan completed, nothing at or above `--fail-on` |
+| `1` | Scan completed, findings at or above `--fail-on` |
+| `2` | No verdict — API error, timeout, or the scan failed |
+
+`1` and `2` are deliberately distinct: a broken scanner must not be
+indistinguishable from a clean report. `--fail-on never` gives report-only mode
+for teams adopting the gate before enforcing it. A SARIF write failure never
+changes the verdict — the scan already ran.
+
+**GitHub Action:**
+
+```yaml
+permissions:
+  contents: read
+  security-events: write   # required for the code-scanning upload
+
+steps:
+  - uses: T3rr0or/ScanR/.github/actions/scanr-scan@master
+    with:
+      url: ${{ secrets.SCANR_URL }}
+      token: ${{ secrets.SCANR_API_KEY }}
+      targets: |
+        staging.example.com
+        192.0.2.0/24
+      fail-on: high
+```
+
+Findings land in the repository's **Security → Code scanning** tab, deduplicated
+across runs by the SARIF fingerprints, and the SARIF is uploaded even when the
+build fails so the results are visible either way.
 
 ### TOPdesk
 
