@@ -480,11 +480,33 @@ Tools available to the agent today: read the scan's hosts/findings/evidence,
 `create_finding` (record what it discovers), `fetch_url` (HTTP GET,
 non-intrusive), `list_plugins`, `run_plugin` (run a ScanR plugin against a
 discovered host), `run_port_scan` (nmap a host), `submit_form` (HTTP POST —
-intrusive, aggressive-gated), `run_command` (sandboxed shell — see below), and
-the working-memory/skill tools described below.
+intrusive, aggressive-gated), `browser_validate` (prove it in a real browser —
+see below), `run_command` (sandboxed shell — see below), and the
+working-memory/skill tools described below.
 Active tools are intrusive, so they are approval-gated in guided mode. Pages the
 agent fetches with `fetch_url` are also screenshotted into the Screenshots tab,
 so its discoveries are captured visually alongside the scan's.
+
+**Proving findings.** `browser_validate` loads a payload URL in a real headless
+Chromium with JavaScript enabled and reports whether it *executed* — the
+difference between a reflected parameter (the most common false positive in web
+scanning) and an actual client-side vulnerability. The agent writes the payload
+but not the marker: it puts the literal `{CANARY}` where a token belongs, e.g.
+`http://10.0.0.5/search?q=<script>alert('{CANARY}')</script>`, and ScanR
+substitutes an unguessable token it generated. Only that token coming back
+through a JS channel — a dialog or the console — counts as proof, so the agent
+cannot manufacture one.
+
+Verdicts are `proved`, `reflected`, `not_reproduced`, and `inconclusive` (the
+page would not load — never reported as clean, for the same reason an
+unreachable host is not "remediated"). A `proved` result stamps `validated` on
+the finding along with the method and the evidence, clears any false-positive
+mark, and captures a screenshot into the Screenshots tab. Verified findings
+carry a badge in the UI and the HTML/PDF report, a `validated` tag in the SARIF
+export, and a `validated` column in the CSV; filter for them with
+`GET /api/v1/findings?validated=true` or **Verified only** in the Findings
+filter. Nothing else sets the flag — not a model asserting it, not an analyst
+ticking a box — which is what makes it worth filtering on.
 
 **Working memory.** The agent keeps a plan and durable notes on the run
 (`todo_write` / `todo_read`, `note_write` / `note_read`, plus `think` for

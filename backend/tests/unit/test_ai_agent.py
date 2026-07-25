@@ -310,6 +310,89 @@ def test_parse_ports():
         _parse_ports("1-3000")  # >2000 ports
 
 
+# ── browser validation ───────────────────────────────────────────────────────
+
+class ValidatingContext(FakeContext):
+    """A context whose browser always reports the payload executed."""
+
+    async def validate_in_browser(self, url_template, finding_id=None):
+        self.validations = getattr(self, "validations", [])
+        self.validations.append((url_template, finding_id))
+        return {"verdict": "proved", "method": "browser-dialog",
+                "summary": "script executed", "evidence": "...", "validated_finding": bool(finding_id)}
+
+
+@pytest.mark.asyncio
+async def test_browser_validate_is_approval_gated_but_not_aggressive_gated():
+    """Firing a payload deserves an operator prompt in guided mode. Requiring the
+    admin-only 'aggressive' opt-in on top would mean a default run can never turn
+    a maybe into a proof — and this is a GET that changes no state."""
+    from scanr.ai.agent.tools import default_registry
+
+    reg = default_registry()
+    assert "browser_validate" in reg.names()
+
+    guided = ValidatingContext(AgentPolicy(mode=AutonomyMode.guided), approve=False)
+    out = await reg.dispatch(guided, "browser_validate", {"url": "http://192.0.2.10/?q={CANARY}"})
+    assert out.startswith("DENIED")
+    assert getattr(guided, "validations", []) == [], "the browser must not run unapproved"
+
+    # autonomous, no capabilities at all -> runs
+    auto = ValidatingContext(AgentPolicy(mode=AutonomyMode.autonomous))
+    out2 = await reg.dispatch(auto, "browser_validate",
+                              {"url": "http://192.0.2.10/?q={CANARY}", "finding_id": "f1"})
+    assert '"verdict": "proved"' in out2
+    assert auto.validations == [("http://192.0.2.10/?q={CANARY}", "f1")]
+
+
+@pytest.mark.asyncio
+async def test_browser_validate_respects_scope():
+    from scanr.ai.agent.tools import default_registry
+
+    reg = default_registry()
+    ctx = ValidatingContext(AgentPolicy(mode=AutonomyMode.autonomous))
+    for url in ("http://127.0.0.1/?q={CANARY}", "http://169.254.169.254/?q={CANARY}"):
+        assert (await reg.dispatch(ctx, "browser_validate", {"url": url})).startswith("DENIED")
+    assert getattr(ctx, "validations", []) == []
+
+
+@pytest.mark.asyncio
+async def test_browser_validate_rejects_a_non_http_url():
+    from scanr.ai.agent.tools import default_registry
+
+    reg = default_registry()
+    ctx = ValidatingContext(AgentPolicy(mode=AutonomyMode.autonomous))
+    assert (await reg.dispatch(ctx, "browser_validate", {"url": "file:///etc/passwd"})).startswith("ERROR")
+    assert (await reg.dispatch(ctx, "browser_validate", {"url": ""})).startswith("ERROR")
+
+
+@pytest.mark.asyncio
+async def test_a_context_without_a_browser_denies_rather_than_crashing():
+    """The base context has no Chromium; the model should be told so and adapt."""
+    from scanr.ai.agent.tools import default_registry
+
+    reg = default_registry()
+    ctx = FakeContext(AgentPolicy(mode=AutonomyMode.autonomous))  # no override
+    out = await reg.dispatch(ctx, "browser_validate", {"url": "http://192.0.2.10/?q={CANARY}"})
+    assert out.startswith("DENIED") and "not available" in out
+
+
+@pytest.mark.asyncio
+async def test_a_missing_placeholder_comes_back_as_an_actionable_error():
+    from scanr.ai.agent.tools import default_registry
+
+    class Strict(FakeContext):
+        async def validate_in_browser(self, url_template, finding_id=None):
+            if "{CANARY}" not in url_template:
+                raise ValueError("url must contain the literal {CANARY} placeholder")
+            return {"verdict": "proved"}
+
+    reg = default_registry()
+    ctx = Strict(AgentPolicy(mode=AutonomyMode.autonomous))
+    out = await reg.dispatch(ctx, "browser_validate", {"url": "http://192.0.2.10/?q=alert(1)"})
+    assert out.startswith("ERROR") and "{CANARY}" in out
+
+
 # ── working memory + skills ──────────────────────────────────────────────────
 
 @pytest.mark.asyncio

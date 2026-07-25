@@ -29,6 +29,7 @@ def finding(**kw):
         remediation="Disable anonymous FTP.", cve_ids=None, cvss_score=7.5,
         false_positive=False, remediation_status="open", analyst_notes=None,
         evidence="230 Login successful.", port_number=21, host_ip="192.0.2.10",
+        validated=False, validation_method=None,
     )
     base.update(kw)
     return types.SimpleNamespace(**base)
@@ -217,3 +218,22 @@ def test_report_formats_match_the_engine_dispatch():
     dispatch = set(re.findall(r'^\s+case "([a-z]+)":', engine, re.M))
     assert dispatch, "could not parse the engine dispatch — the test is broken"
     assert set(get_args(ReportFormat)) == dispatch
+
+
+# ── validated findings ───────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_a_validated_finding_is_tagged_and_still_schema_valid(tmp_path):
+    """The tag is what makes proof visible in GitHub code scanning, where the
+    property bag is not shown but tags are."""
+    doc = await _render(tmp_path, [
+        finding(validated=True, validation_method="browser-dialog"),
+        finding(title="Unproven", validated=False),
+    ])
+    assert _violations(doc) == []
+    proved, unproven = doc["runs"][0]["results"]
+    assert proved["properties"]["validated"] is True
+    assert proved["properties"]["tags"] == ["validated"]
+    assert proved["properties"]["validation_method"] == "browser-dialog"
+    assert unproven["properties"]["validated"] is False
+    assert "tags" not in unproven["properties"], "only proof gets the badge"

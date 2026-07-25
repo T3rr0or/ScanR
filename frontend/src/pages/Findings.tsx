@@ -9,7 +9,27 @@ import { safeUrl } from "@/utils/safeUrl"
 
 const SEVERITIES = ['', 'critical', 'high', 'medium', 'low', 'info']
 
-type TriageFilter = 'all' | 'open' | 'false_positive' | 'accepted_risk' | 'resolved'
+type TriageFilter = 'all' | 'open' | 'false_positive' | 'accepted_risk' | 'resolved' | 'validated'
+
+/* ─── Verified badge ───────────────────────────────
+   Only set when ScanR reproduced the issue mechanically, so it means the same
+   thing everywhere it appears: nobody needs to re-test this one. */
+function VerifiedTag({ method }: { method?: string | null }) {
+  return (
+    <span
+      title={method ? `Reproduced by ScanR (${method})` : 'Reproduced by ScanR'}
+      style={{
+        fontSize: 10, fontWeight: 700, letterSpacing: '0.04em', textTransform: 'uppercase',
+        padding: '1px 6px', borderRadius: 3, whiteSpace: 'nowrap',
+        color: 'var(--ok)',
+        background: 'oklch(0.75 0.15 145 / 0.12)',
+        border: '1px solid oklch(0.75 0.15 145 / 0.35)',
+      }}
+    >
+      ✓ verified
+    </span>
+  )
+}
 
 function safeParse(s: string | null): string[] {
   if (!s) return []
@@ -165,6 +185,7 @@ function FindingDrawer({
             <span className={statusPillClass(finding.remediation_status, finding.false_positive)}>
               {statusLabel(finding)}
             </span>
+            {finding.validated && <VerifiedTag method={finding.validation_method} />}
           </div>
           <div
             style={{
@@ -278,6 +299,37 @@ function FindingDrawer({
             >
               {finding.evidence}
             </pre>
+          </div>
+        )}
+
+        {/* Validation — how ScanR proved it, so the reader doesn't have to */}
+        {finding.validated && (
+          <div style={{ marginBottom: 14 }}>
+            <div className="label" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              Validation <VerifiedTag method={finding.validation_method} />
+            </div>
+            <pre
+              className="mono"
+              style={{
+                background: 'oklch(0.75 0.15 145 / 0.08)',
+                borderLeft: '3px solid var(--ok)',
+                color: 'var(--text-1)',
+                borderRadius: '0 4px 4px 0',
+                padding: '10px 12px',
+                fontSize: 11,
+                overflowX: 'auto',
+                whiteSpace: 'pre-wrap',
+                wordBreak: 'break-all',
+                margin: 0,
+              }}
+            >
+              {finding.validation_evidence || 'Reproduced by ScanR.'}
+            </pre>
+            {finding.validated_at && (
+              <div style={{ fontSize: 10.5, color: 'var(--text-3)', marginTop: 4 }}>
+                Verified {relTime(finding.validated_at)}
+              </div>
+            )}
           </div>
         )}
 
@@ -474,6 +526,7 @@ export default function Findings() {
     if (triageStatus === 'false_positive' && !f.false_positive) return false
     if (triageStatus === 'accepted_risk' && f.remediation_status !== 'accepted_risk') return false
     if (triageStatus === 'resolved' && f.remediation_status !== 'resolved') return false
+    if (triageStatus === 'validated' && !f.validated) return false
     // Search filter
     if (search) {
       const q = search.toLowerCase()
@@ -629,6 +682,7 @@ export default function Findings() {
           >
             <option value="all">All statuses</option>
             <option value="open">Open</option>
+            <option value="validated">Verified only</option>
             <option value="false_positive">False Positive</option>
             <option value="accepted_risk">Accepted Risk</option>
             <option value="resolved">Resolved</option>
@@ -759,6 +813,7 @@ export default function Findings() {
                         color: 'var(--text-0)',
                       }}
                     >
+                      {f.validated && <><VerifiedTag method={f.validation_method} />{' '}</>}
                       {f.title}
                     </td>
                     <td className="mono" style={{ fontSize: 11.5, color: 'var(--text-2)' }}>

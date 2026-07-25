@@ -25,6 +25,7 @@ async def list_findings(
     severity: str | None = Query(None),
     plugin_id: str | None = Query(None),
     false_positive: bool | None = Query(None),
+    validated: bool | None = Query(None, description="Only findings ScanR mechanically reproduced"),
     mitre_technique: str | None = Query(None, description="Filter by ATT&CK technique ID, e.g. T1110.001"),
     compliance_tag: str | None = Query(None, description="Filter by compliance framework prefix or tag, e.g. 'PCI-DSS' or 'PCI-DSS:6.4.1'"),
     limit: int = Query(200, le=500),
@@ -50,6 +51,8 @@ async def list_findings(
         q = q.where(Finding.plugin_id == plugin_id)
     if false_positive is not None:
         q = q.where(Finding.false_positive == false_positive)
+    if validated is not None:
+        q = q.where(Finding.validated == validated)
     if mitre_technique:
         if not re.match(r'^T\d{4}(\.\d{3})?$', mitre_technique):
             raise HTTPException(status_code=400, detail="Invalid MITRE technique ID (e.g. T1110 or T1110.001)")
@@ -95,6 +98,7 @@ async def export_findings(
     severity: str | None = Query(None),
     plugin_id: str | None = Query(None),
     false_positive: bool | None = Query(None),
+    validated: bool | None = Query(None),
     compliance_tag: str | None = Query(None),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_scope("findings:read")),
@@ -123,6 +127,8 @@ async def export_findings(
         q = q.where(Finding.plugin_id == plugin_id)
     if false_positive is not None:
         q = q.where(Finding.false_positive == false_positive)
+    if validated is not None:
+        q = q.where(Finding.validated == validated)
     if compliance_tag:
         if not re.match(r'^[A-Z0-9][A-Z0-9:.\-]{1,40}$', compliance_tag, re.IGNORECASE):
             raise HTTPException(status_code=400, detail="Invalid compliance tag format")
@@ -134,14 +140,16 @@ async def export_findings(
     buf = io.StringIO()
     writer = csv.writer(buf)
     writer.writerow(["severity", "title", "host_ip", "plugin_id", "cvss_score", "port",
-                     "false_positive", "remediation_status", "analyst_notes",
+                     "false_positive", "validated", "validation_method", "remediation_status", "analyst_notes",
                      "description", "remediation"])
     for row in rows:
         f, ip = row[0], row[1]
         writer.writerow([
             f.severity, f.title, ip or "", f.plugin_id, f.cvss_score or "",
             f"{f.port_number}/{f.protocol}" if f.port_number else "",
-            "yes" if f.false_positive else "", f.remediation_status or "",
+            "yes" if f.false_positive else "",
+            "yes" if f.validated else "", f.validation_method or "",
+            f.remediation_status or "",
             (f.analyst_notes or "").replace("\n", " "),
             (f.description or "").replace("\n", " ")[:300],
             (f.remediation or "").replace("\n", " ")[:200],

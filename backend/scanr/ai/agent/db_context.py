@@ -375,6 +375,116 @@ class DbAgentContext(AgentContext):
             except Exception as exc:  # noqa: BLE001 - best-effort
                 await self._log.debug(f"agent endpoint screenshots failed: {exc}", phase="ai_agent")
 
+    async def validate_in_browser(self, url_template: str, finding_id: str | None = None) -> dict:
+        """Substitute a fresh canary into the URL, load it in Chromium with JS on,
+        and record the outcome on the finding when the payload actually executed.
+
+        The canary is generated here, not accepted from the caller: proof means
+        "a token this run issued came back through a JS execution channel", and
+        that only holds if the agent never chose the token.
+        """
+        import hashlib
+        from datetime import datetime, timezone
+        from urllib.parse import urlparse
+
+        from scanr.core.browser import observe_url
+        from scanr.core.validation import evaluate, new_canary
+
+        if "{CANARY}" not in url_template:
+            raise ValueError(
+                "url must contain the literal {CANARY} placeholder — ScanR substitutes "
+                "a token it generated, which is what makes the result proof"
+            )
+
+        canary = new_canary()
+        url = url_template.replace("{CANARY}", canary)
+
+        # Land the screenshot next to the scan's other captures so the proof is
+        # visible in the Screenshots tab, not just described in text.
+        shot_path: str | None = None
+        host = None
+        parsed = urlparse(url)
+        if parsed.hostname:
+            host = (
+                await self._db.execute(
+                    select(Host).where(Host.scan_id == self.scan_id, Host.ip == parsed.hostname)
+                )
+            ).scalar_one_or_none()
+            if host is None:
+                host = (
+                    await self._db.execute(
+                        select(Host).where(
+                            Host.scan_id == self.scan_id, Host.hostname == parsed.hostname
+                        )
+                    )
+                ).scalar_one_or_none()
+        if host is not None:
+            from scanr.plugins.web.screenshot import _screenshots_dir
+
+            shots = _screenshots_dir(self.scan_id)
+            shots.mkdir(parents=True, exist_ok=True)
+            shot_path = str(shots / f"validate_{hashlib.md5(url.encode()).hexdigest()[:12]}.png")
+
+        await self._log.info(f"validating in browser: {parsed.hostname or url}", phase="ai_agent")
+        obs = await observe_url(url, canary, screenshot_path=shot_path)
+        result = evaluate(obs, canary)
+
+        out = {
+            "verdict": result.verdict,
+            "method": result.method,
+            "summary": result.summary,
+            "evidence": result.evidence,
+            "validated_finding": False,
+        }
+
+        if obs.get("screenshot") and host is not None:
+            from scanr.plugins.web.screenshot import _save_screenshot
+
+            class _ShotCtx:
+                def __init__(self, scan_id, db, log):
+                    import asyncio
+
+                    self.scan_id, self.db, self.log = scan_id, db, log
+                    self.db_lock = asyncio.Lock()
+
+            try:
+                await _save_screenshot(
+                    context=_ShotCtx(self.scan_id, self._db, self._log),
+                    host=host,
+                    port_number=parsed.port or (443 if parsed.scheme == "https" else 80),
+                    url=url,
+                    file_path=obs["screenshot"],
+                    title=obs.get("title"),
+                    status_code=obs.get("status"),
+                    content_type=None,
+                )
+            except Exception as exc:  # noqa: BLE001 - the proof stands without the picture
+                await self._log.debug(f"validation screenshot not recorded: {exc}", phase="ai_agent")
+
+        if finding_id and result.proved:
+            finding = (
+                await self._db.execute(
+                    select(Finding).where(
+                        Finding.id == finding_id, Finding.scan_id == self.scan_id
+                    )
+                )
+            ).scalar_one_or_none()
+            if finding is None:
+                out["note"] = f"finding {finding_id!r} is not part of this scan — not marked"
+            else:
+                finding.validated = True
+                finding.validated_at = datetime.now(timezone.utc)
+                finding.validation_method = result.method
+                finding.validation_evidence = f"{result.summary}\n\n{result.evidence}"[:8000]
+                # A reproduced finding is by definition not a false positive.
+                finding.false_positive = False
+                await self._db.commit()
+                out["validated_finding"] = True
+                await self._log.info(
+                    f"validated finding {finding.title!r}: {result.summary}", phase="ai_agent"
+                )
+        return out
+
     async def run_plugin(self, plugin_id: str, host_ip: str) -> dict:
         from scanr.core import plugin_manager
         from scanr.core.context import ScanContext

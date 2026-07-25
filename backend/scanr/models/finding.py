@@ -50,6 +50,15 @@ class Finding(Base, TimestampMixin):
 
     false_positive: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
+    # Proof of exploitation, not an opinion. Set only when ScanR mechanically
+    # reproduced the issue (today: a payload that executed in a real browser —
+    # see core/validation.py); never by a model or an analyst asserting it, which
+    # is what keeps the flag worth filtering on.
+    validated: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, index=True)
+    validated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    validation_method: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    validation_evidence: Mapped[str | None] = mapped_column(Text, nullable=True)
+
     # Latest retest outcome, denormalised from finding_retests so the findings
     # list can show verification state without a per-row subquery. The history
     # table remains the source of truth.

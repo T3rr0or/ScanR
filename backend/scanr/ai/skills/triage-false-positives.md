@@ -20,6 +20,22 @@ client who disproves your first finding stops reading the rest of the report.
 4. **Can you demonstrate it?** `run_plugin` re-runs the exact check. For web
    issues `fetch_url` often settles it in one request.
 
+## Proving a client-side issue
+`browser_validate` loads a payload URL in a real browser and reports whether it
+executed. Put `{CANARY}` where a marker belongs — ScanR substitutes a token it
+generated, so the result is proof rather than your own claim:
+
+    http://10.0.0.5/search?q=<script>alert('{CANARY}')</script>
+
+Read the verdict carefully. `reflected` means the parameter came back in the
+page and did nothing — that is the single most common false positive in web
+scanning, not a finding. Only `proved` means script ran in the page's origin.
+`inconclusive` means the browser could not load it; retry or say so, but never
+report it as clean.
+
+Pass `finding_id` when it proves out and the finding is marked verified, which
+is what stops a reviewer having to re-test it.
+
 ## Reporting the verdict
 `create_finding` is for things you established, not things you suspect. If a
 check is probably right but unproven, say that in the evidence rather than

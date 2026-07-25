@@ -17,6 +17,11 @@ export interface Finding {
   /** Latest retest outcome, denormalised so lists need no extra request. */
   last_retest_at: string | null
   last_retest_verdict: RetestVerdict | null
+  /** True only when ScanR mechanically reproduced the issue — never an opinion. */
+  validated: boolean
+  validated_at: string | null
+  validation_method: string | null
+  validation_evidence: string | null
   created_at: string
 }
 

@@ -255,7 +255,10 @@ def web_tools() -> list[Tool]:
     """Active tools that talk to discovered hosts over HTTP. Scope-checked on
     the host. fetch_url (GET) is non-intrusive; submit_form (POST) is
     intrusive — it can submit credentials/forms, so it requires the
-    'aggressive' capability and (in guided mode) operator approval."""
+    'aggressive' capability and (in guided mode) operator approval.
+    browser_validate sits between them: intrusive (it fires a payload) but
+    state-preserving (a GET), so it is approval-gated without needing
+    'aggressive'."""
     return [
         Tool(
             ToolDef(
@@ -299,7 +302,62 @@ def web_tools() -> list[Tool]:
             required_capability="aggressive",
             target_args=("url",),
         ),
+        Tool(
+            ToolDef(
+                name="browser_validate",
+                description=(
+                    "Prove a client-side issue by loading a payload URL in a real headless "
+                    "browser with JavaScript enabled, and report whether it executed. Put the "
+                    "literal {CANARY} inside your payload where a marker should go — ScanR "
+                    "substitutes a token it generated, and only that token coming back through "
+                    "a JS channel counts as proof. Example: "
+                    "http://10.0.0.5/search?q=<script>alert('{CANARY}')</script>. "
+                    "Pass finding_id to mark that finding as validated when it executes. "
+                    "Verdicts: proved (it ran), reflected (echoed but inert — NOT a "
+                    "vulnerability), not_reproduced, inconclusive (the page would not load). "
+                    "Intrusive: approval-gated in guided mode."
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "url": {
+                            "type": "string",
+                            "description": "Absolute http(s) URL containing the literal {CANARY}",
+                        },
+                        "finding_id": {
+                            "type": "string",
+                            "description": "Finding to mark validated if the payload executes.",
+                        },
+                    },
+                    "required": ["url"],
+                    "additionalProperties": False,
+                },
+            ),
+            _browser_validate,
+            # Intrusive (it fires a payload at the target) but deliberately NOT
+            # aggressive-gated: it is a GET that changes no state, and gating it
+            # behind the admin-only opt-in would mean the default run can never
+            # turn a maybe into a proof — which is the entire point.
+            intrusive=True,
+            target_args=("url",),
+        ),
     ]
+
+
+async def _browser_validate(ctx: AgentContext, args: dict) -> str:
+    url = str(args.get("url", "")).strip()
+    if not url:
+        raise ToolError("url is required")
+    if not url.startswith(("http://", "https://")):
+        raise ToolError("url must start with http:// or https://")
+    finding_id = str(args.get("finding_id", "")).strip() or None
+    try:
+        result = await ctx.validate_in_browser(url, finding_id)
+    except ValueError as exc:
+        raise ToolError(str(exc))
+    if result.get("denied"):
+        return f"DENIED: {result.get('reason', 'not permitted')}"
+    return json.dumps(result)[:8000]
 
 
 async def _list_plugins(ctx: AgentContext, args: dict) -> str:

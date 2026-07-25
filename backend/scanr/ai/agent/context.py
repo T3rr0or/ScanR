@@ -99,6 +99,20 @@ class AgentContext(ABC):
         persist newly discovered ports/services, and return the open ports.
         Raises ValueError on bad input."""
 
+    async def validate_in_browser(self, url_template: str, finding_id: str | None = None) -> dict:
+        """Reproduce a finding by loading a payload URL in a real browser.
+
+        ``url_template`` must contain the literal ``{CANARY}``; the implementation
+        substitutes a token it generated itself. That is what makes the result
+        trustworthy — the agent cannot supply the marker it is later judged
+        against, so it cannot manufacture a proof. Returns a result dict, or
+        ``{"denied": True, "reason": ...}`` where no browser is available.
+
+        Concrete-with-a-denial rather than abstract: a context without a browser
+        is a valid context, and the caller already handles denial.
+        """
+        return {"denied": True, "reason": "browser validation is not available in this context"}
+
     @abstractmethod
     async def run_command(self, command: str) -> dict:
         """Run a shell command in the isolated sandbox. The sandbox network is

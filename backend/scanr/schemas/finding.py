@@ -36,6 +36,11 @@ class FindingRead(BaseModel):
     # without a second request per row. Full history: GET /findings/{id}/retests
     last_retest_at: datetime | None = None
     last_retest_verdict: str | None = None
+    # True only when ScanR reproduced the issue mechanically (core/validation.py).
+    validated: bool = False
+    validated_at: datetime | None = None
+    validation_method: str | None = None
+    validation_evidence: str | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}

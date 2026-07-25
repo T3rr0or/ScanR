@@ -156,8 +156,14 @@ async def render_sarif(context: dict, report_id: str) -> Path:
                 "cvss_score": f.cvss_score,
                 "false_positive": f.false_positive,
                 "remediation_status": f.remediation_status,
+                "validated": bool(getattr(f, "validated", False)),
             },
         }
+        # A reproduced finding is worth surfacing where a triager will see it —
+        # in GitHub code scanning the tag lands on the alert itself.
+        if getattr(f, "validated", False):
+            result["properties"]["tags"] = ["validated"]
+            result["properties"]["validation_method"] = f.validation_method
         if f.analyst_notes:
             result["suppressions"] = [{"kind": "inSource", "justification": f.analyst_notes}] if f.false_positive else []
             result["properties"]["analyst_notes"] = f.analyst_notes
