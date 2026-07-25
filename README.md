@@ -20,6 +20,7 @@ ScanR is a self-hosted vulnerability scanner for authorized internal and externa
 - **Findings triage** - false positive, accepted risk, analyst notes, compliance tags, MITRE ATT&CK tags, and evidence.
 - **Peer-review evidence** - findings can include command/probe evidence so another tester can validate the result.
 - **Screenshots** - Playwright captures discovered web services when enabled.
+- **Attack paths** - ranked routes from the attacker's position to a domain or privileged objective, built from findings rather than guesswork, with chokepoint analysis showing which single fix breaks the most routes.
 - **Scan deltas** - compare scans to see new, resolved, and persisting findings, plus host/port changes.
 - **Templates and schedules** - save reusable scan profiles and run them on a schedule.
 - **Reports** - export executive and technical reports in multiple formats.
@@ -49,6 +50,30 @@ The review step summarizes scope, selected capabilities, credentials, warnings, 
 ### Findings
 
 ![Findings](docs/screenshots/findings.png)
+
+### Attack Paths
+
+Findings sorted by CVSS say which issue is worst in isolation. The Attack Paths
+tab answers a different question: which chain of issues actually reaches something
+that matters, and what single fix breaks the most chains.
+
+Each route is a sequence of attacker steps — initial access, credential access,
+lateral movement, privilege escalation, domain compromise — and **every step cites
+the finding that justifies it**. Routes are ranked by attacker effort rather than
+hop count, so a two-hop chain through unauthenticated criticals outranks a one-hop
+chain through a theoretical info leak.
+
+Credential reuse is the one reasoned step: a credential obtained on one host is
+worth trying against any host exposing an authentication service the scan actually
+observed. Those steps are labelled `inferred` everywhere they appear and priced
+below demonstrated ones, so a confirmed route always ranks first — and
+`include_inferred=false` gives a strictly evidence-only graph. Findings marked
+false positive are excluded.
+
+```bash
+curl -H "X-API-Key: sk_..." \
+  "http://localhost:8000/api/v1/scans/<scan-id>/attack-paths?include_inferred=false"
+```
 
 ### Templates
 

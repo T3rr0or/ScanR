@@ -12,6 +12,7 @@ import {
 	Camera,
 	Server,
 	Network,
+	Route,
 	Shield,
 	ChevronLeft,
 	GitCompare,
@@ -32,6 +33,7 @@ import ScreenshotGallery from "@/components/ScreenshotGallery";
 import ScanDelta from "@/pages/ScanDelta";
 import { useScanConsole } from "@/hooks/useScanConsole";
 import ScanTimeline from "@/components/ScanTimeline";
+import AttackPaths from "@/components/AttackPaths";
 import NetworkTopology from "@/components/NetworkTopology";
 import HostDetail from "@/components/HostDetail";
 import type { HostRead } from "@/api/hosts";
@@ -56,6 +58,7 @@ type Tab =
 	| "findings"
 	| "hosts"
 	| "topology"
+	| "attack-paths"
 	| "screenshots"
 	| "exclusions"
 	| "chains"
@@ -355,6 +358,12 @@ export default function ScanDetail({ scanId, onBack }: Props) {
 					label="Topology"
 				/>
 				<TabBtn
+					active={tab === "attack-paths"}
+					onClick={() => setTab("attack-paths")}
+					icon={<Route size={12} />}
+					label="Attack Paths"
+				/>
+				<TabBtn
 					active={tab === "screenshots"}
 					onClick={() => setTab("screenshots")}
 					icon={<Camera size={12} />}
@@ -439,6 +448,12 @@ export default function ScanDetail({ scanId, onBack }: Props) {
 						scanId={scanId}
 					/>
 				)}
+				{tab === "attack-paths" && (
+					<div className="page-pad" style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
+						<AttackPaths scanId={scanId} />
+					</div>
+				)}
+
 				{tab === "topology" && (
 					<div className="page-pad" style={{ flex: 1, minHeight: 0 }}>
 						{hostsLoading ? (
