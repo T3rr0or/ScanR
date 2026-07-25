@@ -26,6 +26,13 @@ class Settings(BaseSettings):
     allowed_origins: str = "http://localhost"
     secure_cookies: bool = True
 
+    # Interactive API docs (/docs, /redoc, /openapi.json). These are
+    # unauthenticated by design and publish the full API surface, so they are
+    # disabled in the Docker deployment (see docker-compose.yml) and left on for
+    # local development, where the API binds to loopback anyway. Turn them off if
+    # you expose the API directly via SCANR_API_BIND.
+    docs_enabled: bool = True
+
     # Database
     database_url: str = "sqlite+aiosqlite:///./scanr.db"
     # For PostgreSQL: postgresql+asyncpg://user:pass@localhost/scanr

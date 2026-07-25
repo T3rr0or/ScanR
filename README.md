@@ -381,11 +381,17 @@ Isolation model: only a dedicated **sandbox-runner** holds the Docker socket and
 it carries **no ScanR secrets**; the secret-holding worker can't touch the
 socket. The agent gets **one persistent, hardened container per run** (state
 persists across commands) that is non-root, read-only-rootfs, `cap-drop ALL`,
-and resource/time-limited. Egress is restricted to the scan's authorized targets
-plus allowlisted package mirrors, and the path is **fail-closed** — if the runner
-is unavailable, command execution is denied. `run_command` requires admin +
-the aggressive `allow_command_exec` opt-in. Strict per-target L3 egress requires
-a host firewall and must be validated on your deployment. Full architecture:
+and resource/time-limited, on an `internal` Docker network whose only route out is
+a proxy allowlisting package mirrors. The path is **fail-closed** — if the runner
+is unavailable, command execution is denied — and `run_command` requires admin +
+the aggressive `allow_command_exec` opt-in.
+
+Note the current scope of the shell: because the sandbox network is fully
+internal, **scan targets are not reachable from it**. Use `run_command` for local
+work (analysis, offline cracking, payload generation, tooling); the agent touches
+targets through the scope-checked `run_port_scan` / `run_plugin` / `fetch_url` /
+`submit_form` tools, which run from the worker. Per-target L3 egress is not
+implemented. Full architecture:
 [`docs/ai-sandbox-design.md`](docs/ai-sandbox-design.md).
 
 ---
@@ -424,7 +430,10 @@ curl -X POST http://localhost:8000/api/v1/scans \
   }'
 ```
 
-API docs are available at **http://localhost:8000/docs**.
+Interactive API docs are available at **http://localhost:8000/docs** when
+`DOCS_ENABLED=true`. They are unauthenticated and publish the full API surface, so
+the Docker deployment ships with them **off**; set `DOCS_ENABLED=true` in `.env`
+to turn them on. A local `make dev` run has them on by default.
 
 ---
 

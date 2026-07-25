@@ -172,7 +172,13 @@ def read_only_tools() -> list[Tool]:
     ]
 
 
-async def _http_request(url: str, method: str, body_raw: str | None, content_type: str) -> str:
+async def _http_request(
+    url: str,
+    method: str,
+    body_raw: str | None,
+    content_type: str,
+    denylist: set[str] | None = None,
+) -> str:
     import httpx
     from urllib.parse import urlparse
 
@@ -181,12 +187,14 @@ async def _http_request(url: str, method: str, body_raw: str | None, content_typ
     # DNS-rebinding guard: the dispatch scope check is string-based, so a
     # hostname that passes the string check could still resolve to loopback /
     # link-local (cloud metadata) / reserved infrastructure. Resolve before
-    # connecting and refuse if any resolved address is forbidden.
+    # connecting and refuse if any resolved address is forbidden. The configured
+    # denylist is passed through so a name resolving to ScanR's own
+    # postgres/redis is caught here too, not just the built-in ranges.
     # Residual TOCTOU: a hostile DNS server could rebind between this
     # resolution and httpx's own connect-time resolution; closing that fully
     # would require connecting to the pre-resolved IP.
     host = urlparse(url).hostname or ""
-    if host and await resolve_and_check_target(host):
+    if host and await resolve_and_check_target(host, denylist):
         raise ToolError(
             f"request target {host!r} resolves to a forbidden address (loopback / metadata / reserved)"
         )
@@ -218,7 +226,7 @@ async def _fetch_url(ctx: AgentContext, args: dict) -> str:
         raise ToolError("url is required")
     if not url.startswith(("http://", "https://")):
         raise ToolError("url must start with http:// or https://")
-    result = await _http_request(url, "GET", None, "")
+    result = await _http_request(url, "GET", None, "", ctx.denylist)
     # Note renderable pages so the agent's discoveries get screenshotted into the
     # Screenshots tab (batched at run end by the DB-backed context).
     try:
@@ -240,7 +248,7 @@ async def _submit_form(ctx: AgentContext, args: dict) -> str:
         raise ToolError("url must start with http:// or https://")
     body_raw = str(args.get("body", "")).strip() or None
     content_type = str(args.get("content_type", "application/x-www-form-urlencoded")).strip()
-    return await _http_request(url, "POST", body_raw, content_type)
+    return await _http_request(url, "POST", body_raw, content_type, ctx.denylist)
 
 
 def web_tools() -> list[Tool]:
@@ -421,9 +429,16 @@ def command_tools() -> list[Tool]:
                     "feroxbuster, wfuzz, whatweb, wpscan, hydra, john, smbclient, curl, git, "
                     "python3/pip — and SecLists wordlists are at /usr/share/seclists. Do NOT "
                     "waste steps reinstalling these; just run them. Only install (pip install "
-                    "--user / git clone / go install) for tools not already present. Network "
-                    "egress is restricted to the scan's authorized targets plus package mirrors. "
-                    "Runs non-root, so raw-socket scans fall back to TCP connect."
+                    "--user / git clone / go install) for tools not already present. "
+                    "IMPORTANT — NETWORK: the sandbox sits on an isolated network whose only "
+                    "route out is an HTTP proxy allowlisting package mirrors (PyPI, Debian/"
+                    "Ubuntu, GitHub, Kali). Scan targets are NOT reachable from here, so do not "
+                    "try to scan or exploit a target with this tool — it will time out. Use it "
+                    "for local work: analysing data you already have, offline cracking, "
+                    "generating payloads, or building tooling. To touch a target, use "
+                    "run_port_scan, run_plugin, fetch_url or submit_form, which run from the "
+                    "worker and are scope-checked. Runs non-root, so raw-socket scans would fall "
+                    "back to TCP connect."
                 ),
                 parameters={
                     "type": "object",

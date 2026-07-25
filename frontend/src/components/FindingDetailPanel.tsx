@@ -5,6 +5,7 @@
 import { X, ExternalLink } from 'lucide-react'
 import { SevTag } from '@/components/ui'
 import type { Finding } from '@/api/findings'
+import { safeUrl } from "@/utils/safeUrl"
 
 interface Props {
   finding: Finding | null
@@ -137,7 +138,7 @@ function PanelBody({ finding, onClose }: { finding: Finding; onClose: () => void
           <Section label="References">
             <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
               {refs.map((r: string, i: number) => (
-                <a key={i} href={r} target="_blank" rel="noopener noreferrer"
+                <a key={i} href={safeUrl(r)} target="_blank" rel="noopener noreferrer"
                   style={{ fontSize: 11, color: 'var(--accent)', display: 'flex', alignItems: 'flex-start', gap: 5, wordBreak: 'break-all', lineHeight: 1.5 }}>
                   <ExternalLink size={10} style={{ flexShrink: 0, marginTop: 2 }} />
                   {r}

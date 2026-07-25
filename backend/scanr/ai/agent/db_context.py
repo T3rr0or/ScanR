@@ -488,8 +488,13 @@ class DbAgentContext(AgentContext):
         }
 
     async def _scope_cidrs(self) -> list[str]:
-        """The scan's authorized targets (filtered through is_forbidden_target),
-        used to constrain the sandbox's egress. Falls back to discovered host IPs."""
+        """The scan's authorized targets (filtered through is_forbidden_target).
+
+        Passed to the runner and exposed inside the container as SCANR_SCOPE for
+        the agent's own reference. It does NOT currently constrain egress —
+        per-target L3 rules are unimplemented and the sandbox network is fully
+        internal (docs/ai-sandbox-design.md §4). Falls back to discovered host IPs.
+        """
         from scanr.models import Target
         from scanr.utils.ip_utils import is_forbidden_target
 

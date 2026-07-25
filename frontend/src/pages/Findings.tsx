@@ -5,6 +5,7 @@ import { scansApi } from '@/api/scans'
 import { SevTag, relTime, EmptyState } from '@/components/ui'
 import SortableTh from '@/components/SortableTh'
 import { useSortableFindings } from '@/hooks/useSortableFindings'
+import { safeUrl } from "@/utils/safeUrl"
 
 const SEVERITIES = ['', 'critical', 'high', 'medium', 'low', 'info']
 
@@ -383,7 +384,7 @@ function FindingDrawer({
               {refs.map(url => (
                 <a
                   key={url}
-                  href={url}
+                  href={safeUrl(url)}
                   target="_blank"
                   rel="noreferrer"
                   style={{

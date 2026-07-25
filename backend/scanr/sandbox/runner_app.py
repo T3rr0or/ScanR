@@ -18,6 +18,8 @@ import asyncio
 import contextlib
 import logging
 import os
+import re
+import secrets
 import time
 import uuid
 from collections.abc import AsyncIterator
@@ -42,6 +44,16 @@ _MAX_LIFETIME = int(os.environ.get("SANDBOX_MAX_LIFETIME", "3600"))
 _REAP_INTERVAL = 60
 _MAX_STDOUT = 200_000
 _MAX_STDERR = 20_000
+# Ceiling on live session containers. Each one holds memory, CPU and PID budget
+# on the host, and sessions are only released by an explicit /session/stop or the
+# max-lifetime reaper — so without a cap a caller could spawn them until the host
+# is exhausted.
+_MAX_SESSIONS = int(os.environ.get("SANDBOX_MAX_SESSIONS", "8"))
+
+# run_id becomes part of a Docker container name, which must match
+# [a-zA-Z0-9][a-zA-Z0-9_.-]*. Validate rather than rely on docker rejecting it,
+# so a malformed id fails fast with a clear error instead of a 502.
+_RUN_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
 
 # Writable HOME on tmpfs so non-root `pip install --user`, tool configs, and
 # language installers work despite the read-only root filesystem.
@@ -77,24 +89,45 @@ app = FastAPI(title="ScanR sandbox runner", lifespan=_lifespan)
 
 class ExecRequest(BaseModel):
     command: str = Field(min_length=1, max_length=8000)
-    scope: list[str] = Field(default_factory=list)
-    run_id: str = ""
+    scope: list[str] = Field(default_factory=list, max_length=4096)
+    run_id: str = Field(default="", max_length=64)
     timeout: int = Field(default=120, ge=1, le=1800)
 
 
 class StopRequest(BaseModel):
-    run_id: str = Field(min_length=1)
+    run_id: str = Field(min_length=1, max_length=64)
 
 
 def _check_token(token: str | None) -> None:
-    # Fail-closed: a token MUST be configured, and must match.
-    if not _TOKEN or token != _TOKEN:
+    # Fail-closed: a token MUST be configured, and must match. compare_digest
+    # keeps the comparison constant-time so the token can't be recovered a byte
+    # at a time by timing repeated requests. Compare the UTF-8 encodings: the str
+    # form of compare_digest raises TypeError on non-ASCII input, which would turn
+    # a hostile header into a 500 instead of a clean 401.
+    if not _TOKEN or not token:
+        raise HTTPException(status_code=401, detail="invalid sandbox token")
+    if not secrets.compare_digest(token.encode("utf-8"), _TOKEN.encode("utf-8")):
         raise HTTPException(status_code=401, detail="invalid sandbox token")
 
 
 @app.get("/health")
 async def health() -> dict:
-    return {"status": "ok", "image": _IMAGE, "sessions": len(_SESSIONS)}
+    """Unauthenticated liveness probe — deliberately says nothing about the
+    configured image or live session count, which would be useful reconnaissance
+    for anything that reached this service."""
+    return {"status": "ok"}
+
+
+@app.get("/status")
+async def status(x_sandbox_token: str | None = Header(default=None)) -> dict:
+    """Authenticated detail for operators/diagnostics."""
+    _check_token(x_sandbox_token)
+    return {
+        "status": "ok",
+        "image": _IMAGE,
+        "sessions": len(_SESSIONS),
+        "max_sessions": _MAX_SESSIONS,
+    }
 
 
 def _create_args(name: str, scope: list[str]) -> list[str]:
@@ -117,8 +150,10 @@ def _create_args(name: str, scope: list[str]) -> list[str]:
     if _PROXY:
         for var in ("HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy"):
             args += ["--env", f"{var}={_PROXY}"]
-    # Scope is informational inside the container; egress is enforced by the
-    # network/proxy, not by trusting the command.
+    # Scope is informational inside the container only — it does not gate egress.
+    # Egress is enforced by the network: _NETWORK is a Docker `internal` network,
+    # so the container's sole route out is the mirror-allowlist proxy above. Never
+    # gate on the command text or on this variable.
     args += ["--env", f"SCANR_SCOPE={','.join(scope)}"]
     # Keep the container alive so we can exec into it repeatedly.
     args += [_IMAGE, "sleep", "infinity"]
@@ -175,6 +210,14 @@ async def _ensure_session(run_id: str, scope: list[str]) -> str:
         sess = _SESSIONS.get(run_id)
         if sess is not None:
             return sess.name
+        if len(_SESSIONS) >= _MAX_SESSIONS:
+            raise HTTPException(
+                status_code=429,
+                detail=(
+                    f"sandbox session limit reached ({_MAX_SESSIONS} live sessions); "
+                    "stop a run or raise SANDBOX_MAX_SESSIONS"
+                ),
+            )
         name = f"scanr-sbx-{run_id[:8]}-{uuid.uuid4().hex[:6]}"
         code, _out, err, _to = await _run_docker(_create_args(name, scope), timeout=120)
         if code != 0:
@@ -201,6 +244,8 @@ async def exec_command(body: ExecRequest, x_sandbox_token: str | None = Header(d
     _check_token(x_sandbox_token)
     ephemeral = not body.run_id
     run_id = body.run_id or f"once-{uuid.uuid4().hex[:12]}"
+    if not _RUN_ID_RE.match(run_id):
+        raise HTTPException(status_code=400, detail="invalid run_id")
     try:
         name = await _ensure_session(run_id, body.scope)
         try:

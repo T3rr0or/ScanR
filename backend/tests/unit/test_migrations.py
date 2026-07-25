@@ -53,3 +53,46 @@ def test_upgrade_head_builds_model_schema() -> None:
                 assert not missing, f"{table.name} missing migrated column(s): {missing}"
         finally:
             engine.dispose()
+
+
+def test_migrations_do_not_disable_application_logging():
+    """Regression: alembic's fileConfig must not silence existing loggers.
+
+    run_migrations() is called from the app's lifespan startup, after every module
+    has created its logger via getLogger(__name__). logging.config.fileConfig
+    defaults to disable_existing_loggers=True, which sets .disabled on all of
+    them — so the API and worker would spend the rest of the process with
+    application logging switched off, losing failed-login, blocked-webhook and
+    scope-violation warnings.
+    """
+    import logging
+    from pathlib import Path
+
+    from scanr.utils.logging import configure_logging
+
+    configure_logging(debug=False)
+    probes = [
+        logging.getLogger("scanr.api.v1.auth"),
+        logging.getLogger("scanr.core.limiter"),
+        logging.getLogger("scanr.core.webhook_dispatcher"),
+    ]
+    for probe in probes:
+        probe.disabled = False
+
+    ini = Path(__file__).resolve().parents[2] / "alembic.ini"
+    assert ini.exists(), ini
+
+    # Exercise alembic/env.py's own logging setup the same way a startup
+    # migration would.
+    import re
+
+    env_src = (ini.parent / "alembic" / "env.py").read_text()
+    assert re.search(r"fileConfig\([^)]*disable_existing_loggers\s*=\s*False", env_src), (
+        "alembic/env.py must call fileConfig(..., disable_existing_loggers=False)"
+    )
+
+    from logging.config import fileConfig
+
+    fileConfig(str(ini), disable_existing_loggers=False)
+    for probe in probes:
+        assert not probe.disabled, f"{probe.name} was disabled by migration logging setup"

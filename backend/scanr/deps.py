@@ -41,6 +41,21 @@ def _has_scope(scopes: list[str], required: str) -> bool:
     return "*" in scopes or required in scopes
 
 
+# Scopes a read-only ("viewer") user may exercise. Derived rather than
+# hand-listed so a newly added ':write'/':triage' scope is denied to viewers by
+# default instead of silently granted.
+#
+# 'reports:export' is the one deliberate exception: it gates report *download*
+# as well as report creation, and a viewer whose whole purpose is reading
+# results must be able to download them. (That conflation is worth splitting
+# into reports:create / reports:download separately.)
+_VIEWER_EXTRA_SCOPES = frozenset({"reports:export"})
+
+
+def _viewer_may_use(scope: str) -> bool:
+    return scope.endswith(":read") or scope in _VIEWER_EXTRA_SCOPES
+
+
 async def get_current_user(
     request: Request,
     credentials: HTTPAuthorizationCredentials | None = Depends(bearer),
@@ -95,13 +110,26 @@ async def get_current_user(
 
 
 def require_scope(scope: str):
-    """Return a FastAPI dependency that enforces a specific scope on API key auth."""
+    """Return a FastAPI dependency that enforces a scope AND the caller's role.
+
+    Two independent checks, because they constrain different things:
+      * scope — restricts what an automation (API key) token may do. Interactive
+        JWT sessions hold '*', so this is a no-op for them.
+      * role  — restricts what the *user* may do regardless of token type. A
+        'viewer' is read-only, so a mutating scope is refused even though the
+        JWT session nominally holds every scope.
+    """
     async def _check(request: Request, user: User = Depends(get_current_user)) -> User:
         scopes: list[str] = getattr(request.state, "scopes", [])
         if not _has_scope(scopes, scope):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"API key is missing required scope: '{scope}'",
+            )
+        if user.role == "viewer" and not _viewer_may_use(scope):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Your account is read-only (viewer role).",
             )
         return user
     return _check

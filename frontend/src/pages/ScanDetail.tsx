@@ -44,6 +44,7 @@ import {
 	relTime,
 	fmtDuration,
 } from "@/components/ui";
+import { safeUrl } from "@/utils/safeUrl"
 
 interface Props {
 	scanId: string;
@@ -1163,7 +1164,7 @@ function FindingDrawer({
 						{refs.map((u: string) => (
 							<a
 								key={u}
-								href={u}
+								href={safeUrl(u)}
 								target="_blank"
 								rel="noreferrer"
 								style={{

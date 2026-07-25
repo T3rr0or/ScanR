@@ -10,7 +10,7 @@ import { scansApi, type ScanCreate, type ScanCredentialIn } from '@/api/scans'
 import { templatesApi, type ScanTemplate } from '@/api/templates'
 import { wordlistsApi } from '@/api/wordlists'
 import { useAuthStore } from '@/store/auth'
-import { isAdminToken } from '@/utils/jwt'
+import { isAdminToken, isViewerToken } from '@/utils/jwt'
 import { ALL_CATEGORIES, PORT_RANGES, configToJson, defaultProfileConfig, jsonToConfig, type ProfileConfig } from '@/components/ProfileEditor'
 import ScanDelta from './ScanDelta'
 import { StatusPill, SeverityBar, CHML, Meter, fmtDuration, relTime } from '@/components/ui'
@@ -237,6 +237,9 @@ function buildTargetPreview(targets: string, configured: ProfileConfig['target_t
    ───────────────────────────────────────────────────────────────── */
 export default function Scans({ onOpenScan }: Props) {
   const qc = useQueryClient()
+  // Read-only accounts: the API rejects their writes with 403, so don't offer
+  // the action in the first place.
+  const isViewer = isViewerToken(useAuthStore(s => s.token))
   const [showForm, setShowForm]       = useState(false)
   const [editScanId, setEditScanId]   = useState<string | null>(null)
   const [rerunScan, setRerunScan]     = useState<{ id: string; name: string; targets?: string[]; profile_json?: string | null } | null>(null)
@@ -419,9 +422,11 @@ export default function Scans({ onOpenScan }: Props) {
           }}>
             <Download size={12} /> Export
           </button>
-          <button className="btn btn-primary" onClick={() => setShowForm(true)}>
-            <Plus size={12} /> New Scan
-          </button>
+          {!isViewer && (
+            <button className="btn btn-primary" onClick={() => setShowForm(true)}>
+              <Plus size={12} /> New Scan
+            </button>
+          )}
         </div>
       </div>
 

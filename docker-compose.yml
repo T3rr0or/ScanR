@@ -59,6 +59,16 @@ services:
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:?ADMIN_PASSWORD must be set in .env}
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost}
       SECURE_COOKIES: ${SECURE_COOKIES:-true}
+      # The frontend nginx proxies /api and /ws, so the API's direct peer is
+      # always a container on the Docker network. Without trusting it, every
+      # client is rate-limited under nginx's IP as a single shared bucket.
+      # 172.16.0.0/12 covers Docker's default bridge pools. Narrow this if you
+      # expose the API directly via SCANR_API_BIND. See .env.example.
+      TRUSTED_PROXIES: ${TRUSTED_PROXIES:-172.16.0.0/12}
+      # /docs, /redoc and /openapi.json are unauthenticated and publish the whole
+      # API surface. Off by default here since this is the deployment that can be
+      # exposed; set DOCS_ENABLED=true in .env if you want them.
+      DOCS_ENABLED: ${DOCS_ENABLED:-false}
       # Self-update is OFF by default. It requires mounting the host Docker
       # socket into the API container, which grants it root-equivalent control
       # of the host. Enable it only via the docker-compose.self-update.yml
@@ -171,11 +181,16 @@ services:
       SANDBOX_NETWORK: scanr_sandbox
       SANDBOX_PROXY_URL: ${SANDBOX_PROXY_URL:-http://sandbox-proxy:8888}
       SANDBOX_MAX_LIFETIME: ${SANDBOX_MAX_LIFETIME:-3600}
+      SANDBOX_MAX_SESSIONS: ${SANDBOX_MAX_SESSIONS:-8}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+    # Deliberately NOT attached to sandbox_net. The runner holds the Docker
+    # socket, which is root-equivalent on the host — it must not be reachable
+    # from the very containers it sandboxes. It creates them via the Docker API
+    # over the socket, so it never needs to be on their network. (sandbox_net
+    # still gets created: sandbox-proxy is attached to it.)
     networks:
       - default
-      - sandbox_net
 
   # Filtering forward-proxy: package installs reach allowlisted mirrors only.
   # Self-built minimal image (replaces third-party vimagick/tinyproxy:latest).

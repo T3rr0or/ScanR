@@ -85,9 +85,11 @@ class AgentContext(ABC):
 
     @abstractmethod
     async def run_command(self, command: str) -> dict:
-        """Run a shell command in the isolated sandbox (egress scoped to the
-        scan's targets + package mirrors). Returns a result dict, or
-        {"denied": True, "reason": ...} when the sandbox is unavailable/disabled."""
+        """Run a shell command in the isolated sandbox. The sandbox network is
+        Docker-``internal``, so its only egress is the package-mirror proxy —
+        scan targets are NOT reachable from it (see docs/ai-sandbox-design.md §4).
+        Returns a result dict, or {"denied": True, "reason": ...} when the sandbox
+        is unavailable/disabled."""
 
     @abstractmethod
     async def create_finding(

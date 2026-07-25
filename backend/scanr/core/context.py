@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from scanr.core.scan_logger import ScanLogger
 from scanr.core.rate_limiter import RateLimiter
 from scanr.models import Scan, ScanStatus
+from scanr.schemas.profile import is_safe_port_range
 
 logger = logging.getLogger(__name__)
 
@@ -319,9 +320,25 @@ class ScanContext:
                 yield line, ""
 
     def get_port_range(self) -> str:
-        """Return nmap port spec based on profile, with profile_json override support."""
+        """Return nmap port spec based on profile, with profile_json override support.
+
+        The returned string is interpolated into an nmap argument string that
+        python-nmap later splits on whitespace, so a port_range carrying spaces
+        would become extra nmap flags. Every API writer of profile_json validates
+        against scanr.schemas.profile, but this is the sink: re-check here so a
+        profile that reached the DB by any other route (direct SQL, an older row
+        written before validation, a future endpoint) still cannot inject
+        arguments. Malformed values fall through to the profile default.
+        """
         pj = self.profile_json()
         custom = pj.get("port_range")
+        if custom and not is_safe_port_range(custom):
+            logger.warning(
+                "Ignoring malformed port_range %r for scan %s — falling back to the "
+                "%s profile default",
+                custom, getattr(self, "scan_id", "?"), self.profile,
+            )
+            custom = None
         if custom:
             if custom == "top-1000":
                 return "--top-ports 1000"

@@ -16,3 +16,12 @@ export function parseJwtRole(token: string | null | undefined): string {
 export function isAdminToken(token: string | null | undefined): boolean {
 	return parseJwtRole(token) === "admin";
 }
+
+/**
+ * True for read-only ("viewer") accounts. The API rejects writes from viewers
+ * with 403 regardless of this — use it only to avoid presenting actions that
+ * are guaranteed to fail.
+ */
+export function isViewerToken(token: string | null | undefined): boolean {
+	return parseJwtRole(token) === "viewer";
+}

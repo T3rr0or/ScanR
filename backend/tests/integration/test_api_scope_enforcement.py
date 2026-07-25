@@ -81,3 +81,20 @@ async def test_session_auth_retains_full_scopes(client, auth_headers):
     assert r.status_code == 200, r.text
     r = await client.get(f"{PREFIX}/api-keys", headers=auth_headers)
     assert r.status_code == 200, r.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("target", [
+    "2130706433",      # decimal 127.0.0.1
+    "0x7f000001",      # hex 127.0.0.1
+    "017700000001",    # octal 127.0.0.1
+    "127.1",           # short-form 127.0.0.1
+    "2852039166",      # decimal 169.254.169.254 (cloud metadata)
+])
+async def test_legacy_numeric_loopback_encodings_rejected_at_creation(client, auth_headers, target):
+    """These used to be accepted as 'hostnames' and only caught later by the
+    engine's resolve-time backstop, which failed the scan instead of the request."""
+    r = await client.post("/api/v1/scans", headers=auth_headers, json={
+        "name": f"legacy-{target}", "targets": [target],
+    })
+    assert r.status_code == 400, r.text
