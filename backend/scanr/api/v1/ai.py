@@ -429,9 +429,18 @@ class AgentRunRequest(BaseModel):
     allow_privilege_escalation: bool = False
     allow_exploitation: bool = False
     allow_command_exec: bool = False
+    # Only meaningful with allow_command_exec: lets sandbox commands reach the
+    # scan's authorized targets through the scope-enforcing SOCKS5 relay.
+    allow_target_egress: bool = False
 
     def aggressive_requested(self) -> bool:
-        return self.aggressive or self.allow_privilege_escalation or self.allow_exploitation or self.allow_command_exec
+        return (
+            self.aggressive
+            or self.allow_privilege_escalation
+            or self.allow_exploitation
+            or self.allow_command_exec
+            or self.allow_target_egress
+        )
 
 
 def _agent_run_dict(run: AiAgentRun) -> dict:
@@ -503,6 +512,7 @@ async def launch_agent(
         "allow_privilege_escalation": body.allow_privilege_escalation,
         "allow_exploitation": body.allow_exploitation,
         "allow_command_exec": body.allow_command_exec,
+        "allow_target_egress": body.allow_target_egress,
     }
     run = AiAgentRun(
         id=new_uuid(),

@@ -473,9 +473,21 @@ class DbAgentContext(AgentContext):
         if not scope:
             return {"denied": True, "reason": "no in-scope targets to constrain the sandbox to."}
 
-        await self._log.warn(f"agent running command in sandbox: {command[:160]}", phase="ai_agent")
+        # Reaching live targets from the shell is its own opt-in: allow_command_exec
+        # gets you a jailed toolbox, allow_target_egress points it at hosts.
+        target_egress = self.policy.allows_capability("allow_target_egress")
+        await self._log.warn(
+            f"agent running command in sandbox (target egress "
+            f"{'ON' if target_egress else 'OFF'}): {command[:160]}",
+            phase="ai_agent",
+        )
         try:
-            result = await client.run(command=command, scope=scope, run_id=self._run_id or "")
+            result = await client.run(
+                command=command,
+                scope=scope,
+                run_id=self._run_id or "",
+                target_egress=target_egress,
+            )
         except SandboxUnavailable as exc:
             await self._log.error(f"sandbox unavailable: {exc}", phase="ai_agent")
             return {"denied": True, "reason": f"sandbox unavailable: {exc}"}
@@ -488,22 +500,44 @@ class DbAgentContext(AgentContext):
         }
 
     async def _scope_cidrs(self) -> list[str]:
-        """The scan's authorized targets (filtered through is_forbidden_target).
+        """The scan's authorized scope as addresses/CIDRs, for the egress relay.
 
-        Passed to the runner and exposed inside the container as SCANR_SCOPE for
-        the agent's own reference. It does NOT currently constrain egress —
-        per-target L3 rules are unimplemented and the sandbox network is fully
-        internal (docs/ai-sandbox-design.md §4). Falls back to discovered host IPs.
+        Two sources, unioned rather than either/or:
+          * Target rows that are already IPs or CIDRs.
+          * Every discovered Host IP for this scan.
+
+        The host IPs matter because the relay can only enforce addresses — a
+        hostname is not an egress rule, since what it resolves to can change. A
+        domain-target scan would therefore produce an empty allowlist and fail
+        closed with no explanation; including the hosts that the domain actually
+        resolved to during discovery is both enforceable and what the agent would
+        be acting on anyway.
+
+        Everything is filtered through is_forbidden_target, so loopback, cloud
+        metadata and ScanR's own infrastructure can never enter the allowlist. The
+        relay re-checks all of this independently.
         """
         from scanr.models import Target
-        from scanr.utils.ip_utils import is_forbidden_target
+        from scanr.utils.ip_utils import canonical_ip, is_forbidden_target
+
+        scope: list[str] = []
 
         rows = await self._db.execute(select(Target.value).where(Target.scan_id == self.scan_id))
-        targets = [str(t) for t in rows.scalars().all()]
-        if not targets:
-            hrows = await self._db.execute(select(Host.ip).where(Host.scan_id == self.scan_id))
-            targets = [str(ip) for ip in hrows.scalars().all()]
-        return [t for t in targets if t and not is_forbidden_target(t, self.denylist)]
+        for raw in rows.scalars().all():
+            value = str(raw).strip()
+            # Keep CIDRs as-is; normalize bare/legacy-encoded IPs; drop hostnames.
+            if "/" in value:
+                scope.append(value)
+            elif canonical_ip(value):
+                scope.append(canonical_ip(value) or value)
+
+        hrows = await self._db.execute(select(Host.ip).where(Host.scan_id == self.scan_id))
+        for ip in hrows.scalars().all():
+            value = str(ip).strip()
+            if value and value not in scope:
+                scope.append(value)
+
+        return [t for t in scope if t and not is_forbidden_target(t, self.denylist)]
 
     async def _persist_findings(self, scan, host_id: str | None, findings: list) -> int:
         """Route plugin findings through ResultCollector so agent discoveries

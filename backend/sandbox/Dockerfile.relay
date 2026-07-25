@@ -1,0 +1,27 @@
+# Per-run SOCKS5 egress relay for the AI sandbox.
+#
+# The sandbox network is Docker-`internal`, so a sandboxed container has no route
+# anywhere. When a scan opts into target egress, the runner starts one of these
+# per run, dual-homed between the internal sandbox network and the egress
+# network. It is the only path from the sandbox to a target, and it refuses any
+# destination outside the scan's authorized scope.
+#
+# Deliberately minimal: stdlib only, no ScanR secrets, no DB, no Docker socket.
+# It only needs to accept a socket and open a socket.
+FROM python:3.12-slim@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de
+
+WORKDIR /app
+
+# ip_utils carries the infrastructure denylist (loopback / link-local / cloud
+# metadata / reserved, plus legacy numeric-encoding normalization). Copied rather
+# than reimplemented so the relay and the scanner cannot drift on what "forbidden"
+# means. It is stdlib-only, so nothing else needs installing.
+COPY scanr/utils/ip_utils.py ./scanr/utils/ip_utils.py
+COPY scanr/sandbox/egress_relay.py ./scanr/sandbox/egress_relay.py
+RUN touch ./scanr/__init__.py ./scanr/utils/__init__.py ./scanr/sandbox/__init__.py
+
+# Non-root, and nothing to write to.
+USER 1000:1000
+
+EXPOSE 1080
+CMD ["python", "-m", "scanr.sandbox.egress_relay"]

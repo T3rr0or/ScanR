@@ -413,33 +413,61 @@ async def _run_command(ctx: AgentContext, args: dict) -> str:
     return json.dumps(result)[:8000]
 
 
-def command_tools() -> list[Tool]:
+_RUN_COMMAND_BASE = (
+    "Run a shell command in a PERSISTENT, isolated sandbox container (Kali). "
+    "State persists across calls in this run: installs, downloaded files, the "
+    "working directory (/work), and footholds all survive between commands, so "
+    "build on previous steps instead of repeating setup. A broad toolkit is "
+    "ALREADY installed — nmap, masscan, nikto, sqlmap, gobuster, ffuf, "
+    "feroxbuster, wfuzz, whatweb, wpscan, hydra, john, smbclient, curl, git, "
+    "python3/pip — and SecLists wordlists are at /usr/share/seclists. Do NOT "
+    "waste steps reinstalling these; just run them. Only install (pip install "
+    "--user / git clone / go install) for tools not already present. "
+)
+
+# The network reality differs by capability, and the model wastes iterations if
+# the description does not match it. Keep these truthful.
+_RUN_COMMAND_NO_EGRESS = (
+    "IMPORTANT — NETWORK: the sandbox sits on an isolated network whose only "
+    "route out is an HTTP proxy allowlisting package mirrors (PyPI, Debian/"
+    "Ubuntu, GitHub, Kali). Scan targets are NOT reachable from here, so do not "
+    "try to scan or exploit a target with this tool — it will time out. Use it "
+    "for local work: analysing data you already have, offline cracking, "
+    "generating payloads, or building tooling. To touch a target, use "
+    "run_port_scan, run_plugin, fetch_url or submit_form, which run from the "
+    "worker and are scope-checked."
+)
+
+_RUN_COMMAND_WITH_EGRESS = (
+    "NETWORK: the sandbox reaches the scan's authorized targets through a SOCKS5 "
+    "proxy at $ALL_PROXY (also $SCANR_SOCKS_PROXY); the scope is in $SCANR_SCOPE. "
+    "Anything outside that scope is refused by the proxy, as are loopback, cloud "
+    "metadata and ScanR's own infrastructure. There is NO direct route, so tools "
+    "must go through the proxy: use `proxychains <tool>`, or a tool's own SOCKS "
+    "option (curl --socks5-hostname, nmap --proxies, sqlmap --proxy). Package "
+    "mirrors (PyPI, Debian/Ubuntu, GitHub, Kali) remain reachable over HTTP(S) "
+    "for installs. Because this is a TCP relay and the container is non-root, use "
+    "TCP connect scans (nmap -sT / -Pn); raw-socket scans (-sS) will not work."
+)
+
+
+def command_tools(policy=None) -> list[Tool]:
     """Arbitrary shell in the isolated sandbox — the highest-risk tool. Requires
-    the allow_command_exec capability (admin + aggressive opt-in)."""
+    the allow_command_exec capability (admin + aggressive opt-in).
+
+    The description is built from the policy so it describes the network the
+    sandbox actually has: claiming target reachability that isn't configured just
+    burns iterations on commands that cannot succeed.
+    """
+    egress = policy is not None and policy.allows_capability("allow_target_egress")
+    description = _RUN_COMMAND_BASE + (
+        _RUN_COMMAND_WITH_EGRESS if egress else _RUN_COMMAND_NO_EGRESS
+    )
     return [
         Tool(
             ToolDef(
                 name="run_command",
-                description=(
-                    "Run a shell command in a PERSISTENT, isolated sandbox container (Kali). "
-                    "State persists across calls in this run: installs, downloaded files, the "
-                    "working directory (/work), and footholds all survive between commands, so "
-                    "build on previous steps instead of repeating setup. A broad toolkit is "
-                    "ALREADY installed — nmap, masscan, nikto, sqlmap, gobuster, ffuf, "
-                    "feroxbuster, wfuzz, whatweb, wpscan, hydra, john, smbclient, curl, git, "
-                    "python3/pip — and SecLists wordlists are at /usr/share/seclists. Do NOT "
-                    "waste steps reinstalling these; just run them. Only install (pip install "
-                    "--user / git clone / go install) for tools not already present. "
-                    "IMPORTANT — NETWORK: the sandbox sits on an isolated network whose only "
-                    "route out is an HTTP proxy allowlisting package mirrors (PyPI, Debian/"
-                    "Ubuntu, GitHub, Kali). Scan targets are NOT reachable from here, so do not "
-                    "try to scan or exploit a target with this tool — it will time out. Use it "
-                    "for local work: analysing data you already have, offline cracking, "
-                    "generating payloads, or building tooling. To touch a target, use "
-                    "run_port_scan, run_plugin, fetch_url or submit_form, which run from the "
-                    "worker and are scope-checked. Runs non-root, so raw-socket scans would fall "
-                    "back to TCP connect."
-                ),
+                description=description,
                 parameters={
                     "type": "object",
                     "properties": {"command": {"type": "string", "description": "Shell command to run"}},
@@ -464,7 +492,7 @@ def default_registry(policy=None) -> "ToolRegistry":
     """
     tools = read_only_tools() + web_tools() + plugin_tools()
     if policy is not None and policy.allows_capability("allow_command_exec"):
-        tools += command_tools()
+        tools += command_tools(policy)
     return ToolRegistry(tools)
 
 

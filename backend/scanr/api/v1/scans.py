@@ -117,6 +117,7 @@ async def _resolve_ai_agent_fields(ai_agent, current_user: User, db: AsyncSessio
         "allow_privilege_escalation": ai_agent.allow_privilege_escalation,
         "allow_exploitation": ai_agent.allow_exploitation,
         "allow_command_exec": ai_agent.allow_command_exec,
+        "allow_target_egress": ai_agent.allow_target_egress,
     }
     return {
         "ai_agent_enabled": True,

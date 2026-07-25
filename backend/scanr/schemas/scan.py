@@ -50,6 +50,7 @@ class ScanAiAgentConfig(BaseModel):
     allow_privilege_escalation: bool = False
     allow_exploitation: bool = False
     allow_command_exec: bool = False
+    allow_target_egress: bool = False
 
     def aggressive_requested(self) -> bool:
         return (
@@ -57,6 +58,7 @@ class ScanAiAgentConfig(BaseModel):
             or self.allow_privilege_escalation
             or self.allow_exploitation
             or self.allow_command_exec
+            or self.allow_target_egress
         )
 
 

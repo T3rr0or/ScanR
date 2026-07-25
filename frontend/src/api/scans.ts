@@ -33,6 +33,7 @@ export interface ScanAiAgentConfig {
   allow_privilege_escalation?: boolean
   allow_exploitation?: boolean
   allow_command_exec?: boolean
+  allow_target_egress?: boolean
 }
 
 export interface ScanCreate {

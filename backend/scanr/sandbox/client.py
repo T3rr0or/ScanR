@@ -39,8 +39,19 @@ class SandboxClient:
             return None
         return cls(s.sandbox_runner_url, s.sandbox_token, s.sandbox_cmd_timeout)
 
-    async def run(self, *, command: str, scope: list[str], run_id: str) -> SandboxResult:
-        """Execute a command in a fresh jailed container scoped to ``scope`` CIDRs.
+    async def run(
+        self,
+        *,
+        command: str,
+        scope: list[str],
+        run_id: str,
+        target_egress: bool = False,
+    ) -> SandboxResult:
+        """Execute a command in the jailed session container for ``run_id``.
+
+        ``target_egress`` asks the runner to also start a per-run SOCKS5 relay that
+        permits connections to ``scope`` and nothing else. Without it the sandbox
+        can reach package mirrors only.
 
         Raises SandboxUnavailable on any transport/runner failure (fail-closed).
         """
@@ -51,6 +62,7 @@ class SandboxClient:
             "scope": scope,
             "run_id": run_id,
             "timeout": self._timeout,
+            "target_egress": target_egress,
         }
         headers = {"X-Sandbox-Token": self._token} if self._token else {}
         try:

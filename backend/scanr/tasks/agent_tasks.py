@@ -136,6 +136,7 @@ async def _run_agent_async(run_id: str, resume: bool = False) -> dict:
                     allow_privilege_escalation=bool(caps.get("allow_privilege_escalation")),
                     allow_exploitation=bool(caps.get("allow_exploitation")),
                     allow_command_exec=bool(caps.get("allow_command_exec")),
+                    allow_target_egress=bool(caps.get("allow_target_egress")),
                 )
                 # None = engine default; 0 = unlimited (operator stops manually).
                 # Per-minute input token cap: None on the run falls back to the

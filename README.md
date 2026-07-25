@@ -116,6 +116,8 @@ Services:
 - **redis** - task queue, result backend, and event bus
 - **sandbox-runner** - AI agent command-execution sandbox
 - **sandbox-proxy** - filtered egress for sandbox package installs
+- **sandbox-relay** - per-run SOCKS5 relay giving the sandbox scope-limited
+  access to a scan's targets (started on demand, only when opted in)
 
 First boot runs migrations and seeds system templates/plugins.
 
@@ -374,6 +376,26 @@ print `http://sandbox-runner:8090`.
 services won't start on the next `docker compose up -d` unless you remove the
 `stop`.
 
+**What the shell can reach.** Two levels, both opt-in and admin-only:
+
+| | Package mirrors | Scan targets |
+|---|---|---|
+| `allow_command_exec` only (default) | yes, via allowlisting proxy | **no route at all** |
+| `+ allow_target_egress` | yes | this scan's authorized scope only |
+
+Without target egress the sandbox is for local work — analysing collected data,
+offline cracking, generating payloads, building tooling — and the agent reaches
+targets through the scope-checked `run_port_scan` / `run_plugin` / `fetch_url` /
+`submit_form` tools instead.
+
+With it, the runner starts a per-run SOCKS5 relay carrying that scan's scope. It
+refuses every other destination, re-checks loopback / cloud metadata /
+infrastructure, and validates the *resolved* address, so a hostname can't be used
+to escape scope. Inside the sandbox, reach targets via `$ALL_PROXY`
+(`proxychains nmap -sT -Pn <target>`, `curl --socks5-hostname`). Raw-socket scans
+(`-sS`) don't work through a TCP relay — the container is non-root anyway, so it
+was always TCP-connect only.
+
 To use `run_command` in a scan, you must also enable **"Allow command
 execution"** when launching the AI agent (admin-only aggressive opt-in).
 
@@ -381,17 +403,26 @@ Isolation model: only a dedicated **sandbox-runner** holds the Docker socket and
 it carries **no ScanR secrets**; the secret-holding worker can't touch the
 socket. The agent gets **one persistent, hardened container per run** (state
 persists across commands) that is non-root, read-only-rootfs, `cap-drop ALL`,
-and resource/time-limited, on an `internal` Docker network whose only route out is
-a proxy allowlisting package mirrors. The path is **fail-closed** — if the runner
-is unavailable, command execution is denied — and `run_command` requires admin +
-the aggressive `allow_command_exec` opt-in.
+and resource/time-limited, on an `internal` Docker network with no route anywhere
+by default. The path is **fail-closed** — if the runner is unavailable, command
+execution is denied — and `run_command` requires admin + the aggressive
+`allow_command_exec` opt-in.
 
-Note the current scope of the shell: because the sandbox network is fully
-internal, **scan targets are not reachable from it**. Use `run_command` for local
-work (analysis, offline cracking, payload generation, tooling); the agent touches
-targets through the scope-checked `run_port_scan` / `run_plugin` / `fetch_url` /
-`submit_form` tools, which run from the worker. Per-target L3 egress is not
-implemented. Full architecture:
+Two levels of network reach, both narrow:
+
+- **Package mirrors only (default).** The sandbox can `pip`/`apt` install through
+  an allowlisting proxy, but has no route to any scan target. Good for local work:
+  analysis, offline cracking, payload generation, tooling.
+- **Scan targets (opt-in, `allow_target_egress`).** The runner starts a per-run
+  SOCKS5 relay holding that scan's authorized scope. It refuses every other
+  destination, re-checks loopback/metadata/infrastructure, and validates the
+  *resolved* address — so a hostname cannot be used to escape scope. Tools reach
+  targets through `proxychains` / `--socks5-hostname`; use TCP connect scans
+  (`-sT`), as a TCP relay cannot carry raw-socket scans.
+
+Chosen over per-run firewall rules deliberately: rules would need `NET_ADMIN` and
+host networking on the Docker-socket holder, and a rule that failed to apply would
+fail *open*. Full architecture and rationale:
 [`docs/ai-sandbox-design.md`](docs/ai-sandbox-design.md).
 
 ---
@@ -460,6 +491,8 @@ to turn them on. A local `make dev` run has them on by default.
 | `DEEPSEEK_API_KEY` | empty | Key for the DeepSeek provider |
 | `SANDBOX_RUNNER_URL` | empty | URL of the sandbox-runner; enables the agent's `run_command` shell when set (fail-closed if unset) |
 | `SANDBOX_TOKEN` | empty | Shared token authenticating the worker to the sandbox-runner |
+| `SANDBOX_MAX_SESSIONS` | 8 | Ceiling on live sandbox containers |
+| `SANDBOX_RELAY_IMAGE` | built image | Image for the per-run SOCKS5 egress relay |
 | `SANDBOX_IMAGE` | `ghcr.io/t3rr0or/scanr-sandbox:latest` | Toolkit image the sandbox runs |
 | `SANDBOX_CMD_TIMEOUT` | `120` | Per-command timeout (seconds) in the sandbox |
 | `DATABASE_URL` | compose-managed | SQLAlchemy database URL |

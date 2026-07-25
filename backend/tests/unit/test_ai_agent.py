@@ -424,3 +424,68 @@ def test_budget_zero_means_unlimited():
 
 async def _ok_handler(ctx, args) -> str:
     return "OK"
+
+
+# ── target egress capability ─────────────────────────────────────────────────
+
+def test_target_egress_requires_aggressive():
+    """Every aggressive sub-capability needs aggressive=True as well; the flag
+    alone must not unlock it."""
+    assert not AgentPolicy(
+        mode=AutonomyMode.autonomous, allow_target_egress=True
+    ).allows_capability("allow_target_egress")
+    assert AgentPolicy(
+        mode=AutonomyMode.autonomous, aggressive=True, allow_target_egress=True
+    ).allows_capability("allow_target_egress")
+
+
+def test_target_egress_is_independent_of_command_exec():
+    """Running tooling in a jail that can reach nothing is a much smaller
+    decision than pointing it at live hosts, so the two are separate."""
+    exec_only = AgentPolicy(mode=AutonomyMode.autonomous, aggressive=True, allow_command_exec=True)
+    assert exec_only.allows_capability("allow_command_exec")
+    assert not exec_only.allows_capability("allow_target_egress")
+
+
+def test_run_command_description_tells_the_truth_about_the_network():
+    """The old static description claimed target egress that was never
+    implemented, so the agent burned iterations on commands that could not work.
+    The description must track the capability."""
+    from scanr.ai.agent.tools import command_tools
+
+    off = command_tools(
+        AgentPolicy(mode=AutonomyMode.autonomous, aggressive=True, allow_command_exec=True)
+    )[0].definition.description
+    assert "NOT reachable" in off
+    assert "ALL_PROXY" not in off
+
+    on = command_tools(
+        AgentPolicy(
+            mode=AutonomyMode.autonomous, aggressive=True,
+            allow_command_exec=True, allow_target_egress=True,
+        )
+    )[0].definition.description
+    assert "ALL_PROXY" in on and "proxychains" in on
+    assert "NOT reachable" not in on
+    # Raw-socket scans can't traverse a TCP relay; say so rather than let the
+    # model discover it by failing.
+    assert "-sS" in on
+
+
+def test_run_command_description_defaults_to_no_egress_without_policy():
+    from scanr.ai.agent.tools import command_tools
+
+    assert "NOT reachable" in command_tools()[0].definition.description
+
+
+@pytest.mark.asyncio
+async def test_registry_passes_policy_to_command_tools():
+    from scanr.ai.agent.tools import default_registry
+
+    pol = AgentPolicy(
+        mode=AutonomyMode.autonomous, aggressive=True,
+        allow_command_exec=True, allow_target_egress=True,
+    )
+    reg = default_registry(pol)
+    desc = next(d for d in reg.definitions() if d.name == "run_command").description
+    assert "ALL_PROXY" in desc

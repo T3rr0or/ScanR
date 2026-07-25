@@ -182,6 +182,12 @@ services:
       SANDBOX_PROXY_URL: ${SANDBOX_PROXY_URL:-http://sandbox-proxy:8888}
       SANDBOX_MAX_LIFETIME: ${SANDBOX_MAX_LIFETIME:-3600}
       SANDBOX_MAX_SESSIONS: ${SANDBOX_MAX_SESSIONS:-8}
+      # Per-run SOCKS5 egress relay, started only when a scan opts into target
+      # egress. It is the one thing bridging scanr_sandbox (internal) and the
+      # egress network, and it refuses any destination outside the scan's scope.
+      SANDBOX_RELAY_IMAGE: ${SANDBOX_RELAY_IMAGE:-ghcr.io/t3rr0or/scanr-sandbox-relay:${SCANR_VERSION:-latest}}
+      SANDBOX_EGRESS_NETWORK: scanr_sandbox_egress
+      SANDBOX_RELAY_PORT: ${SANDBOX_RELAY_PORT:-1080}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     # Deliberately NOT attached to sandbox_net. The runner holds the Docker
@@ -210,6 +216,18 @@ services:
       - sandbox_net
       - sandbox_egress
 
+  # Per-run SOCKS5 egress relay image. Built here so `docker compose build`
+  # produces it, but never *run* by compose: the runner starts one container per
+  # agent run with that run's scope baked into its environment, and destroys it
+  # with the session. A long-lived shared relay would mean one scope for every
+  # scan, which is the opposite of the point.
+  sandbox-relay:
+    image: ghcr.io/t3rr0or/scanr-sandbox-relay:${SCANR_VERSION:-latest}
+    build:
+      context: ./backend
+      dockerfile: sandbox/Dockerfile.relay
+    profiles: ["build-only"]
+
 volumes:
   redis_data:
   postgres_data:
@@ -224,5 +242,8 @@ networks:
   sandbox_net:
     name: scanr_sandbox
     internal: true
-  # Egress leg for sandbox-proxy only. Never attach sandboxed containers here.
+  # Egress leg for sandbox-proxy and the per-run SOCKS5 relays only. Never attach
+  # sandboxed containers here — the whole containment argument is that their only
+  # network is the internal one above.
   sandbox_egress:
+    name: scanr_sandbox_egress

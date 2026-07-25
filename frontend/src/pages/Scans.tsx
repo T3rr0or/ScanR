@@ -736,6 +736,7 @@ function NewScanModal({
     allowExploit: false,
     allowPrivesc: false,
     allowCmd: false,
+    allowEgress: false,
   })
 
   const { data: apiTemplates = [] } = useQuery({
@@ -920,6 +921,8 @@ function NewScanModal({
             allow_exploitation: isAdmin && ai.aggressive && ai.allowExploit,
             allow_privilege_escalation: isAdmin && ai.aggressive && ai.allowPrivesc,
             allow_command_exec: isAdmin && ai.aggressive && ai.allowCmd,
+            // Target egress is only meaningful with the shell itself.
+            allow_target_egress: isAdmin && ai.aggressive && ai.allowCmd && ai.allowEgress,
           }
         : undefined,
     }
@@ -1140,6 +1143,19 @@ function NewScanModal({
                               <input type="checkbox" checked={ai.allowCmd} onChange={e => setAi(a => ({ ...a, allowCmd: e.target.checked }))} />
                               Allow command execution (sandboxed shell)
                             </label>
+                            {ai.allowCmd && (
+                              <label style={{ fontSize: 11.5, color: 'var(--text-2)', display: 'flex', alignItems: 'flex-start', gap: 6, paddingLeft: 22 }}>
+                                <input type="checkbox" checked={ai.allowEgress} onChange={e => setAi(a => ({ ...a, allowEgress: e.target.checked }))} />
+                                <span>
+                                  Let the shell reach the scan's targets
+                                  <span style={{ display: 'block', color: 'var(--text-3)', fontSize: 11 }}>
+                                    Off: the sandbox has no route to any target and is limited to
+                                    local work. On: it reaches this scan's authorized scope only,
+                                    through a proxy that refuses everything else.
+                                  </span>
+                                </span>
+                              </label>
+                            )}
                             <div style={{ fontSize: 11, color: 'var(--sev-high)' }}>
                               ⚠ Only against systems you are authorized to actively exploit.
                             </div>

@@ -31,6 +31,12 @@ class AgentPolicy:
     allow_exploitation: bool = False
     # Run arbitrary shell commands in the isolated sandbox (highest-risk capability).
     allow_command_exec: bool = False
+    # Let those sandbox commands actually reach the scan's authorized targets,
+    # through the scope-enforcing SOCKS5 relay. Without it the sandbox is limited
+    # to package mirrors, so the shell is local-only. Separate from
+    # allow_command_exec on purpose: running tooling in a jail that cannot touch
+    # anything is a much smaller decision than pointing it at live hosts.
+    allow_target_egress: bool = False
 
     @property
     def runs_agent(self) -> bool:
