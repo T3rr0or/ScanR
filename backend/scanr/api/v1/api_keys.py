@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from scanr.auth.api_key_auth import generate_api_key
 from scanr.db import get_db
-from scanr.deps import ALL_SCOPES, require_scope
+from scanr.deps import ALL_SCOPES, DEPRECATED_SCOPES, expand_scopes, require_scope
 from scanr.models.api_key import APIKey
 from scanr.models.base import new_uuid
 from scanr.models.user import User
@@ -77,11 +77,25 @@ async def create_api_key(
     invalid = requested - ALL_SCOPES
     if invalid:
         raise HTTPException(status_code=400, detail=f"Unknown scopes: {sorted(invalid)}")
+    # Superseded scopes stay honoured on keys that already hold them, but must not
+    # be issued to new ones — otherwise the split they replaced never takes effect.
+    deprecated = requested & DEPRECATED_SCOPES
+    if deprecated:
+        replacements = sorted(expand_scopes(deprecated) - deprecated)
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Scope(s) {sorted(deprecated)} are deprecated; "
+                f"request {replacements} instead."
+            ),
+        )
     # An API-key-authenticated caller may only mint keys within its own scope
     # set, otherwise a low-scope key could self-escalate to '*' by creating a
     # new key. Session (browser) users hold '*' and are unrestricted here.
-    caller_scopes = set(getattr(request.state, "scopes", []) or [])
-    if "*" not in caller_scopes and not requested <= caller_scopes:
+    # Compared after alias expansion so a caller holding a legacy scope can mint
+    # a key with the scopes that replaced it.
+    caller_scopes = expand_scopes(getattr(request.state, "scopes", []) or [])
+    if "*" not in caller_scopes and not expand_scopes(requested) <= caller_scopes:
         raise HTTPException(
             status_code=403,
             detail="Cannot grant scopes beyond the calling API key's own scopes",

@@ -1628,11 +1628,20 @@ const ALL_SCOPES = [
 		label: "Findings — triage",
 		desc: "Mark false positives, update status",
 	},
-	{ value: "reports:read", label: "Reports — read", desc: "View reports" },
 	{
-		value: "reports:export",
-		label: "Reports — export",
-		desc: "Generate and download PDF reports",
+		value: "reports:read",
+		label: "Reports — read",
+		desc: "List and download existing reports",
+	},
+	{
+		value: "reports:create",
+		label: "Reports — create",
+		desc: "Generate new reports (runs a background job)",
+	},
+	{
+		value: "ai:generate",
+		label: "AI — generate",
+		desc: "Run AI summaries, report narratives and false-positive testing (uses LLM credit)",
 	},
 	{
 		value: "credentials:read",

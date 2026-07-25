@@ -53,7 +53,7 @@ async def create_report(
     body: ReportCreate,
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_scope("reports:export")),
+    current_user: User = Depends(require_scope("reports:create")),
 ):
     result = await db.execute(
         select(Scan).where(Scan.id == body.scan_id, Scan.user_id == current_user.id)
@@ -90,7 +90,9 @@ async def get_report(
 async def download_report(
     report_id: str,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_scope("reports:export")),
+    # Downloading a report you can already list is a read: it contains nothing
+    # the findings API does not already expose. Generating one is reports:create.
+    current_user: User = Depends(require_scope("reports:read")),
 ):
     report = await _get_own_report(report_id, current_user.id, db)
     if report.status != "completed" or not report.file_path:

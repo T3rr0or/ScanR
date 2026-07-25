@@ -123,3 +123,54 @@ async def test_invalid_role_rejected(client, auth_headers):
         headers=auth_headers,
     )
     assert r.status_code == 422, r.text
+
+
+@pytest.mark.asyncio
+async def test_viewer_cannot_spend_llm_budget(client, viewer_headers, auth_headers):
+    """AI generation used to ride on findings:read, so a read-only account could
+    spend the org's LLM credit."""
+    scan = await client.post("/api/v1/scans", headers=auth_headers, json={
+        "name": "viewer-ai-scan", "targets": ["192.0.2.12"],
+    })
+    assert scan.status_code == 201, scan.text
+    sid = scan.json()["id"]
+
+    for path in ("summary", "report", "false-positives"):
+        r = await client.post(f"/api/v1/ai/scans/{sid}/{path}", headers=viewer_headers, json={})
+        assert r.status_code == 403, f"{path} -> {r.status_code} {r.text}"
+        assert "read-only" in r.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_viewer_cannot_generate_a_report_but_can_list(client, viewer_headers, auth_headers):
+    scan = await client.post("/api/v1/scans", headers=auth_headers, json={
+        "name": "viewer-report-scan", "targets": ["192.0.2.13"],
+    })
+    sid = scan.json()["id"]
+
+    created = await client.post("/api/v1/reports", headers=viewer_headers,
+                                json={"scan_id": sid, "format": "pdf"})
+    assert created.status_code == 403, created.text
+
+    # Reading is the whole point of the role.
+    assert (await client.get("/api/v1/reports", headers=viewer_headers)).status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_new_api_keys_reject_the_deprecated_export_scope(client, auth_headers):
+    r = await client.post("/api/v1/api-keys", headers=auth_headers, json={
+        "name": "legacy-scope-key", "scopes": ["reports:export"],
+    })
+    assert r.status_code == 400, r.text
+    detail = r.json()["detail"]
+    assert "deprecated" in detail and "reports:create" in detail
+
+
+@pytest.mark.asyncio
+async def test_new_api_keys_accept_the_replacement_scopes(client, auth_headers):
+    r = await client.post("/api/v1/api-keys", headers=auth_headers, json={
+        "name": "split-scope-key",
+        "scopes": ["reports:read", "reports:create", "ai:generate"],
+    })
+    assert r.status_code == 201, r.text
+    await client.delete(f"/api/v1/api-keys/{r.json()['id']}", headers=auth_headers)

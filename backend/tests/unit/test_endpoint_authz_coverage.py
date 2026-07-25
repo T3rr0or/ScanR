@@ -99,8 +99,8 @@ def test_allowlist_has_no_stale_entries():
 def test_viewer_gate_covers_every_write_scope():
     """Every non-read scope must be denied to viewers.
 
-    _viewer_may_use is derived (deny unless ':read'), so this mainly pins the
-    deliberate exceptions: a new one can't be added without updating this test.
+    _viewer_may_use is derived (deny unless ':read'), so this pins the resulting
+    set: a new scope that reads as viewer-safe can't slip in unnoticed.
     """
     from scanr.deps import ALL_SCOPES, _viewer_may_use
 
@@ -109,10 +109,13 @@ def test_viewer_gate_covers_every_write_scope():
         "scans:read", "findings:read", "reports:read", "credentials:read",
         "plugins:read", "agents:read", "api_keys:read", "webhooks:read",
         "wordlists:read", "host_tags:read",
-        # Deliberate exception: also gates report *download*, which is the whole
-        # point of a read-only account. See the comment in scanr/deps.py.
-        "reports:export",
     }, "viewer-permitted scope set changed — confirm the new scope is read-only"
+
+    # No exceptions left: spending LLM budget and spawning report jobs are now
+    # their own scopes, so neither is reachable by a read-only account.
+    assert not _viewer_may_use("ai:generate")
+    assert not _viewer_may_use("reports:create")
+    assert not _viewer_may_use("reports:export")  # legacy alias, implies create
 
     # The wildcard must never be viewer-permitted, or a viewer's JWT session
     # (which is granted '*') would bypass the gate entirely.

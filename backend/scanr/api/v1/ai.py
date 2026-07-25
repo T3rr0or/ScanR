@@ -265,7 +265,7 @@ async def summarize_scan(
     scan_id: str,
     body: SummaryRequest | None = None,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_scope("findings:read")),
+    current_user: User = Depends(require_scope("ai:generate")),
 ):
     """Generate an AI narrative summary of a scan's findings (read-only, assist mode)."""
     body = body or SummaryRequest()
@@ -336,7 +336,7 @@ async def report_narrative(
     scan_id: str,
     body: SummaryRequest | None = None,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_scope("findings:read")),
+    current_user: User = Depends(require_scope("ai:generate")),
 ):
     """Generate a structured engagement-report narrative (read-only, assist mode)."""
     body = body or SummaryRequest()
@@ -379,7 +379,7 @@ async def false_positives(
     scan_id: str,
     body: SummaryRequest | None = None,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_scope("findings:read")),
+    current_user: User = Depends(require_scope("ai:generate")),
 ):
     """Have the model flag findings likely to be false positives (advisory only)."""
     body = body or SummaryRequest()
