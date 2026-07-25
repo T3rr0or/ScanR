@@ -10,7 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from scanr.core.limiter import limiter
 from scanr.db import get_db
 from scanr.deps import require_scope
-from scanr.models import Finding, Host, Scan
+from scanr.models import Finding, FindingRetest, Host, Scan
+from scanr.models.base import new_uuid
 from scanr.models.user import User
 from scanr.schemas import FindingBulkUpdate, FindingRead, FindingUpdate
 
@@ -286,3 +287,110 @@ async def finding_history(
         }
         for r in history_result.all()
     ]
+
+
+# ── retest ────────────────────────────────────────────────────────────────────
+
+async def _own_finding(finding_id: str, user_id: str, db: AsyncSession) -> Finding:
+    result = await db.execute(
+        select(Finding)
+        .join(Scan, Finding.scan_id == Scan.id)
+        .where(Finding.id == finding_id, Scan.user_id == user_id)
+    )
+    finding = result.scalar_one_or_none()
+    if not finding:
+        raise HTTPException(status_code=404, detail="Finding not found")
+    return finding
+
+
+def _retest_read(r: FindingRetest) -> dict:
+    return {
+        "id": r.id,
+        "finding_id": r.finding_id,
+        "status": r.status,
+        "verdict": r.verdict,
+        "evidence": r.evidence,
+        "error": r.error,
+        "started_at": r.started_at,
+        "finished_at": r.finished_at,
+        "created_at": r.created_at,
+    }
+
+
+@router.post("/{finding_id}/retest", status_code=202)
+@limiter.limit("30/minute")
+async def request_retest(
+    request: Request,
+    finding_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_scope("findings:triage")),
+):
+    """Re-run the plugin that produced this finding, against the same target.
+
+    Retesting sends live traffic to the host, so it needs the triage scope rather
+    than read — and it is refused when a retest for this finding is already in
+    flight, since two concurrent runs would race to write the verdict.
+    """
+    finding = await _own_finding(finding_id, current_user.id, db)
+
+    if finding.host_id is None:
+        raise HTTPException(
+            status_code=400,
+            detail="This finding is not attached to a host, so there is nothing to re-check.",
+        )
+
+    from scanr.core import plugin_manager
+
+    if finding.plugin_id not in plugin_manager.get_all_plugin_classes():
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Plugin {finding.plugin_id!r} is not available in this installation, "
+                f"so this finding cannot be re-verified automatically."
+            ),
+        )
+
+    in_flight = await db.execute(
+        select(FindingRetest.id).where(
+            FindingRetest.finding_id == finding_id,
+            FindingRetest.status.in_(("pending", "running")),
+        )
+    )
+    if in_flight.scalar_one_or_none() is not None:
+        raise HTTPException(status_code=409, detail="A retest for this finding is already running")
+
+    retest = FindingRetest(
+        id=new_uuid(),
+        finding_id=finding_id,
+        requested_by=current_user.id,
+        status="pending",
+    )
+    db.add(retest)
+    await db.commit()
+    await db.refresh(retest)
+
+    from scanr.tasks.retest_tasks import retest_finding_task
+
+    retest_finding_task.delay(retest.id)
+    return _retest_read(retest)
+
+
+@router.get("/{finding_id}/retests")
+async def list_retests(
+    finding_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_scope("findings:read")),
+):
+    """Retest history for a finding, newest first — the remediation evidence trail."""
+    await _own_finding(finding_id, current_user.id, db)
+    rows = (
+        await db.execute(
+            select(FindingRetest)
+            .where(FindingRetest.finding_id == finding_id)
+            # id as a tiebreak: created_at has second resolution on SQLite, so two
+            # retests in the same second would otherwise come back in arbitrary
+            # (and unstable) order.
+            .order_by(FindingRetest.created_at.desc(), FindingRetest.id.desc())
+        )
+    ).scalars().all()
+    return [_retest_read(r) for r in rows]

@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from .finding_retest import FindingRetest
     from .host import Host
     from .scan import Scan
 
@@ -47,6 +48,12 @@ class Finding(Base, TimestampMixin):
     protocol: Mapped[str | None] = mapped_column(String(5), nullable=True)
 
     false_positive: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
+    # Latest retest outcome, denormalised from finding_retests so the findings
+    # list can show verification state without a per-row subquery. The history
+    # table remains the source of truth.
+    last_retest_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_retest_verdict: Mapped[str | None] = mapped_column(String(20), nullable=True)
     analyst_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     triaged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     triaged_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
@@ -58,3 +65,6 @@ class Finding(Base, TimestampMixin):
 
     scan: Mapped["Scan"] = relationship(back_populates="findings", foreign_keys="Finding.scan_id")
     host: Mapped["Host | None"] = relationship(back_populates="findings")
+    retests: Mapped[list["FindingRetest"]] = relationship(
+        back_populates="finding", cascade="all, delete-orphan",
+    )

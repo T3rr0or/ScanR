@@ -32,6 +32,10 @@ class FindingRead(BaseModel):
     compliance_tags: str | None = None
     mitre_tags: str | None = None
     remediation_status: str = "open"
+    # Latest retest outcome, so the findings list can show verification state
+    # without a second request per row. Full history: GET /findings/{id}/retests
+    last_retest_at: datetime | None = None
+    last_retest_verdict: str | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}

@@ -18,6 +18,7 @@ ScanR is a self-hosted vulnerability scanner for authorized internal and externa
 - **Nmap, masscan, Nuclei, and native plugins** - host discovery, port scanning, service detection, CVE checks, web checks, TLS checks, vulnerable JS library detection (retire.js-style), and service misconfiguration checks.
 - **Live console and persisted history** - stream scan progress while the scan runs and replay it later.
 - **Findings triage** - false positive, accepted risk, analyst notes, compliance tags, MITRE ATT&CK tags, and evidence.
+- **Retest** - re-run one finding's check against its original target and record the verdict, so a remediation cycle does not need a full rescan. Keeps a dated history per finding.
 - **Peer-review evidence** - findings can include command/probe evidence so another tester can validate the result.
 - **Screenshots** - Playwright captures discovered web services when enabled.
 - **Attack paths** - ranked routes from the attacker's position to a domain or privileged objective, built from findings rather than guesswork, with chokepoint analysis showing which single fix breaks the most routes.
@@ -50,6 +51,32 @@ The review step summarizes scope, selected capabilities, credentials, warnings, 
 ### Findings
 
 ![Findings](docs/screenshots/findings.png)
+
+### Retest
+
+A client says "fixed". Retest re-runs **only that finding's plugin** against the
+same host and port, and records what it concluded — no full rescan required. Each
+attempt is kept, so a finding carries a dated trail: *still present on the 12th,
+verified fixed on the 3rd*.
+
+Verdicts are deliberately conservative, because "resolved" is a claim someone acts
+on by closing the ticket:
+
+| Verdict | Meaning |
+|---|---|
+| `still_present` | The check ran and reported the same issue. |
+| `resolved` | The check ran against a reachable host and no longer reports it. |
+| `inconclusive` | The host did not answer. **Not** remediation — a box switched off during the retest window has not been fixed. |
+
+A plugin that crashes records a failure, never a verdict.
+
+```bash
+curl -X POST -H "X-API-Key: sk_..." http://localhost:8000/api/v1/findings/<id>/retest
+curl -H "X-API-Key: sk_..." http://localhost:8000/api/v1/findings/<id>/retests
+```
+
+Requires the `findings:triage` scope rather than `findings:read` — a retest sends
+live traffic to the target.
 
 ### Attack Paths
 
@@ -146,7 +173,17 @@ Services:
 
 First boot runs migrations and seeds system templates/plugins.
 
-For local development from source, use `docker compose up -d --build`.
+For local development from source:
+
+```bash
+docker compose --profile build-only build   # or: make docker-build
+docker compose up -d
+```
+
+The `build-only` profile carries **sandbox-relay**. The runner spawns it per agent
+run through the Docker API, so compose never starts it — but a plain
+`docker compose build` skips profiled services, and the image has to exist before
+a scan can opt into target egress.
 
 ### 4. Open
 

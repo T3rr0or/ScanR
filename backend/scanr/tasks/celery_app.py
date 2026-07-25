@@ -8,7 +8,7 @@ celery_app = Celery(
     "scanr",
     broker=settings.celery_broker_url,
     backend=settings.celery_result_backend,
-    include=["scanr.tasks.scan_tasks", "scanr.tasks.report_tasks", "scanr.tasks.scheduler_task", "scanr.tasks.agent_tasks"],
+    include=["scanr.tasks.scan_tasks", "scanr.tasks.report_tasks", "scanr.tasks.scheduler_task", "scanr.tasks.agent_tasks", "scanr.tasks.retest_tasks"],
 )
 
 celery_app.conf.update(
