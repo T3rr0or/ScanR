@@ -509,37 +509,36 @@ export default function Findings() {
     queryFn: () => scansApi.list({ limit: 200 }),
   })
 
-  const apiParams: Record<string, string> = {}
+  /* Every filter goes to the server.
+     These used to run client-side over whatever the first page happened to
+     contain, so a filter would quietly return fewer rows than exist — five
+     validated findings among 303 showed as four. A filter that under-reports
+     without saying so is worse than no filter. */
+  const PAGE_LIMIT = 500
+  const apiParams: Record<string, string | number | boolean> = { limit: PAGE_LIMIT }
   if (severity) apiParams.severity = severity
   if (scanId) apiParams.scan_id = scanId
   if (complianceTag) apiParams.compliance_tag = complianceTag
+  if (search.trim()) apiParams.q = search.trim()
+  switch (triageStatus) {
+    case 'open':            apiParams.remediation_status = 'open'; apiParams.false_positive = false; break
+    case 'false_positive':  apiParams.false_positive = true; break
+    case 'accepted_risk':   apiParams.remediation_status = 'accepted_risk'; break
+    case 'resolved':        apiParams.remediation_status = 'resolved'; break
+    case 'validated':       apiParams.validated = true; break
+  }
 
   const { data: rawFindings = [] } = useQuery({
-    queryKey: ['findings', severity, scanId, complianceTag],
-    queryFn: () => findingsApi.list(Object.keys(apiParams).length ? apiParams : undefined),
+    queryKey: ['findings', severity, scanId, complianceTag, triageStatus, search.trim()],
+    queryFn: () => findingsApi.list(apiParams),
+    placeholderData: prev => prev,
   })
 
-  // Client-side filters: triage status + search
-  const filteredFindings = rawFindings.filter(f => {
-    // Triage filter
-    if (triageStatus === 'open' && !(f.remediation_status === 'open' && !f.false_positive)) return false
-    if (triageStatus === 'false_positive' && !f.false_positive) return false
-    if (triageStatus === 'accepted_risk' && f.remediation_status !== 'accepted_risk') return false
-    if (triageStatus === 'resolved' && f.remediation_status !== 'resolved') return false
-    if (triageStatus === 'validated' && !f.validated) return false
-    // Search filter
-    if (search) {
-      const q = search.toLowerCase()
-      if (
-        !f.title.toLowerCase().includes(q) &&
-        !(f.host_ip ?? '').toLowerCase().includes(q) &&
-        !(f.plugin_id ?? '').toLowerCase().includes(q)
-      ) return false
-    }
-    return true
-  })
+  // The server caps the page, so say so rather than presenting a partial list
+  // as the whole answer.
+  const truncated = rawFindings.length >= PAGE_LIMIT
 
-  const { sorted: findings, sortKey, sortDir, toggleSort } = useSortableFindings(filteredFindings)
+  const { sorted: findings, sortKey, sortDir, toggleSort } = useSortableFindings(rawFindings)
 
   // Bulk mutations
   const [bulkErr, setBulkErr] = useState<string | null>(null)
@@ -617,6 +616,15 @@ export default function Findings() {
           <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)' }}>
             {findings.length} result{findings.length !== 1 ? 's' : ''}
           </span>
+          {truncated && (
+            <span
+              className="mono"
+              title="Narrow the filters, or use Export CSV for the full set"
+              style={{ fontSize: 11, color: 'var(--sev-medium)' }}
+            >
+              first {PAGE_LIMIT} shown — there are more
+            </span>
+          )}
         </div>
 
         {/* Filter bar */}
@@ -693,10 +701,12 @@ export default function Findings() {
             className="btn btn-ghost btn-sm"
             style={{ flexShrink: 0 }}
             onClick={() => {
+              // Mirror every active filter, so the CSV is the list you are
+              // looking at rather than a differently-filtered one.
               const params = new URLSearchParams()
-              if (severity) params.set('severity', severity)
-              if (scanId) params.set('scan_id', scanId)
-              if (complianceTag) params.set('compliance_tag', complianceTag)
+              for (const [k, v] of Object.entries(apiParams)) {
+                if (k !== 'limit') params.set(k, String(v))
+              }
               window.location.href = `/api/v1/findings/export?${params}`
             }}
             title="Download filtered findings as CSV"

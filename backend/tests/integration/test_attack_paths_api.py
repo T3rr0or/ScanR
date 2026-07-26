@@ -38,6 +38,9 @@ async def graph_scan(db):
     db.add_all([
         f("services.redis_unauth", "critical", web),
         f("web.sensitive_files", "high", web),
+        # A demonstrated authentication onto the DC, so the default
+        # (evidence-only) graph has a real route and not just a hypothesis.
+        f("services.admin_share_access", "high", dc),
         f("services.dcsync_check", "critical", dc, evidence="domain: corp.example.com"),
         f("web.http_headers", "low", web),   # hardening: must not create an edge
         fp,
@@ -106,15 +109,17 @@ async def test_false_positives_are_excluded(client, auth_headers, graph_scan, db
 @pytest.mark.asyncio
 async def test_inference_toggle_changes_the_graph(client, auth_headers, graph_scan):
     sid = graph_scan["scan_id"]
-    loose = (await client.get(f"/api/v1/scans/{sid}/attack-paths",
+    loose = (await client.get(f"/api/v1/scans/{sid}/attack-paths?include_inferred=true",
                               headers=auth_headers)).json()
-    strict = (await client.get(f"/api/v1/scans/{sid}/attack-paths?include_inferred=false",
+    strict = (await client.get(f"/api/v1/scans/{sid}/attack-paths",
                                headers=auth_headers)).json()
 
     assert any(e["inferred"] for e in loose["edges"]), "expected a reuse hypothesis"
-    assert not any(e["inferred"] for e in strict["edges"])
-    # The DC is only reachable via the hypothesis here, so strict finds no route.
-    assert len(strict["paths"]) < len(loose["paths"])
+    assert not any(e["inferred"] for e in strict["edges"]), (
+        "evidence-only is the default: inference costs 92% of the edges on a real "
+        "scan and never appears in a ranked path"
+    )
+    assert len(strict["edges"]) < len(loose["edges"])
 
 
 @pytest.mark.asyncio

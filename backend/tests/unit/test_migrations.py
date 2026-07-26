@@ -96,3 +96,44 @@ def test_migrations_do_not_disable_application_logging():
     fileConfig(str(ini), disable_existing_loggers=False)
     for probe in probes:
         assert not probe.disabled, f"{probe.name} was disabled by migration logging setup"
+
+
+def test_narrowing_guard_blocks_a_lossy_downgrade() -> None:
+    """The 0020 rollback narrows webhooks.secret back to varchar(255). It passed
+    review only because the table was empty; against real data Postgres raised
+    StringDataRightTruncationError, because Fernet ciphertext passes 255
+    characters at roughly 110 characters of plaintext — and the API accepts up to
+    255. Truncating an HMAC signing secret would break every webhook silently, so
+    the guard must refuse rather than proceed.
+    """
+    import pytest
+    from alembic.migration import MigrationContext
+    from alembic.operations import Operations
+    from sqlalchemy import create_engine, text
+
+    from scanr.db.migration_utils import refuse_narrowing_that_would_truncate
+
+    engine = create_engine("sqlite://")
+    with engine.connect() as conn:
+        conn.execute(text("CREATE TABLE webhooks (id TEXT, secret TEXT)"))
+        ctx = MigrationContext.configure(conn)
+        with Operations.context(ctx):
+            # Empty table: nothing to lose, so the narrowing is allowed.
+            refuse_narrowing_that_would_truncate("webhooks", "secret", 255)
+
+            # A short legacy plaintext secret still fits.
+            conn.execute(text("INSERT INTO webhooks VALUES ('a', 'hunter2')"))
+            refuse_narrowing_that_would_truncate("webhooks", "secret", 255)
+
+            # A realistic Fernet ciphertext does not.
+            conn.execute(text("INSERT INTO webhooks VALUES ('b', :s)"), {"s": "g" * 300})
+            with pytest.raises(RuntimeError) as err:
+                refuse_narrowing_that_would_truncate("webhooks", "secret", 255)
+            message = str(err.value)
+            assert "1 row(s)" in message, "say how much data is at stake"
+            assert "webhooks.secret" in message
+            assert "UPDATE webhooks" in message, "an error a human cannot act on is noise"
+
+            # An absent column is not an error — migrations run on partial schemas.
+            refuse_narrowing_that_would_truncate("webhooks", "not_a_column", 255)
+            refuse_narrowing_that_would_truncate("no_such_table", "secret", 255)

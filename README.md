@@ -168,16 +168,25 @@ the finding that justifies it**. Routes are ranked by attacker effort rather tha
 hop count, so a two-hop chain through unauthenticated criticals outranks a one-hop
 chain through a theoretical info leak.
 
-Credential reuse is the one reasoned step: a credential obtained on one host is
-worth trying against any host exposing an authentication service the scan actually
-observed. Those steps are labelled `inferred` everywhere they appear and priced
-below demonstrated ones, so a confirmed route always ranks first — and
-`include_inferred=false` gives a strictly evidence-only graph. Findings marked
-false positive are excluded.
+The graph is **evidence-only by default**: every edge cites a finding. Findings
+marked false positive are excluded.
+
+Credential reuse is available as a reasoned step — a credential obtained on one
+host is worth trying against any host exposing an authentication service the scan
+observed — but it is **opt-in** (`include_inferred=true`), on measurement. Being
+credentials × hosts, it dominated the graph it was added to: 92% of all edges on
+a 1000-host scan, and 1.6M edges / 833MB peak on a 4000-host one. Against that,
+no ranked path ever used an inferred edge — priced above every demonstrated step
+by design, they never win where a real route exists. Turn it on for a sparse scan
+where nothing else connects; leave it off otherwise. Inferred steps are labelled
+`inferred` everywhere they appear, and capped either way.
+
+Large graphs are trimmed for transport (`truncated: true`, with `totals` giving
+the real counts). Ranked paths are never trimmed.
 
 ```bash
 curl -H "X-API-Key: sk_..." \
-  "http://localhost:8000/api/v1/scans/<scan-id>/attack-paths?include_inferred=false"
+  "http://localhost:8000/api/v1/scans/<scan-id>/attack-paths?include_inferred=true"
 ```
 
 ### Templates
@@ -653,6 +662,26 @@ curl -X POST http://localhost:8000/api/v1/scans \
     "profile_json": "{\"scan_context\":\"internal\",\"port_range\":\"top-1000\"}"
   }'
 ```
+
+### API key scopes
+
+Scopes are checked per endpoint. Two are worth calling out because they changed:
+
+| Scope | Covers |
+|---|---|
+| `reports:read` | list, inspect, download an existing report |
+| `reports:create` | generate a new report (spawns a background job) |
+| `reports:export` | **deprecated** — still accepted, expands to `reports:read` + `reports:create`. New keys cannot be minted with it. |
+| `ai:generate` | anything that spends LLM budget: finding summaries, report narratives, false-positive testing |
+
+> **Breaking change for existing keys.** AI generation used to be reachable with
+> `findings:read`; it now requires `ai:generate`, and unlike `reports:export`
+> there is deliberately **no alias** — read access should not imply the right to
+> spend money on an upstream API. A key holding only `findings:read` will start
+> getting `403` on `POST /api/v1/ai/scans/{id}/summary`,
+> `POST /api/v1/ai/scans/{id}/report`, and
+> `POST /api/v1/ai/scans/{id}/false-positives`. Add `ai:generate` to any key
+> that needs them.
 
 Interactive API docs are available at **http://localhost:8000/docs** when
 `DOCS_ENABLED=true`. They are unauthenticated and publish the full API surface, so

@@ -57,6 +57,43 @@ def _violations(doc: dict) -> list[str]:
     return [f"{'/'.join(str(p) for p in e.path) or '(root)'}: {e.message}" for e in errors]
 
 
+def _github_violations(doc: dict) -> list[str]:
+    """Constraints GitHub code scanning enforces on top of the schema.
+
+    These exist because schema conformance is not the bar that matters. An
+    earlier export validated with zero schema errors and was rejected outright
+    on upload — zero results ingested, the CI gate silently inert. Both causes
+    are encoded here:
+
+      * ``network://host:port`` locations → "SARIF URI scheme 'network' did not
+        match the checkout URI scheme 'file'". Every location is resolved
+        against the checked-out repo, so any scheme at all is fatal.
+      * evidence in a ``relatedLocations`` entry with no physicalLocation →
+        "buildRelatedLocations:expected physical location".
+    """
+    problems: list[str] = []
+    for run_i, run in enumerate(doc.get("runs", [])):
+        for base_id, base in (run.get("originalUriBaseIds") or {}).items():
+            if "://" in str(base.get("uri", "")):
+                problems.append(f"runs/{run_i}: uriBase {base_id} has a URI scheme: {base['uri']}")
+        for res_i, result in enumerate(run.get("results", [])):
+            where = f"runs/{run_i}/results/{res_i}"
+            for loc in result.get("locations", []):
+                phys = loc.get("physicalLocation")
+                if not phys:
+                    problems.append(f"{where}: location without physicalLocation")
+                    continue
+                uri = str((phys.get("artifactLocation") or {}).get("uri", ""))
+                if not uri:
+                    problems.append(f"{where}: physicalLocation without a uri")
+                elif "://" in uri or uri.startswith("/"):
+                    problems.append(f"{where}: location uri is not repo-relative: {uri}")
+            for rel_i, rel in enumerate(result.get("relatedLocations", [])):
+                if not rel.get("physicalLocation"):
+                    problems.append(f"{where}/relatedLocations/{rel_i}: no physicalLocation")
+    return problems
+
+
 # ── schema conformance ───────────────────────────────────────────────────────
 
 @pytest.mark.asyncio
@@ -129,16 +166,57 @@ async def test_naive_timestamps_render_as_utc(tmp_path):
 # ── consumer interop ─────────────────────────────────────────────────────────
 
 @pytest.mark.asyncio
-async def test_uri_base_id_resolves(tmp_path):
-    """A uriBaseId naming nothing is schema-valid but uninterpretable."""
+async def test_locations_are_repo_relative_for_github(tmp_path):
+    """Regression: network:// locations passed schema validation and were
+    rejected on upload, ingesting zero results."""
+    doc = await _render(tmp_path, [finding(), finding(port_number=None, host_ip="")])
+    assert _github_violations(doc) == []
+    for result in doc["runs"][0]["results"]:
+        uri = result["locations"][0]["physicalLocation"]["artifactLocation"]["uri"]
+        assert "://" not in uri
+        assert not uri.startswith("/")
+        assert "uriBaseId" not in result["locations"][0]["physicalLocation"]["artifactLocation"]
+    assert "originalUriBaseIds" not in doc["runs"][0]
+
+
+@pytest.mark.asyncio
+async def test_the_network_address_survives_in_logical_locations(tmp_path):
+    """The physical path is synthetic, so this is the only place the real
+    host/port is machine-readable. Losing it would make the export useless to
+    anything that understands network results."""
     doc = await _render(tmp_path, [finding()])
-    run = doc["runs"][0]
-    declared = set(run["originalUriBaseIds"])
-    used = {
-        loc["physicalLocation"]["artifactLocation"]["uriBaseId"]
-        for r in run["results"] for loc in r["locations"]
-    }
-    assert used <= declared, f"undeclared uriBaseId(s): {used - declared}"
+    logical = doc["runs"][0]["results"][0]["locations"][0]["logicalLocations"]
+    assert {"name": "192.0.2.10", "kind": "networkHost"} in logical
+    assert {"name": "21", "kind": "networkPort"} in logical
+
+
+@pytest.mark.asyncio
+async def test_evidence_is_carried_without_a_bare_related_location(tmp_path):
+    """Regression: evidence in a relatedLocations entry with no physicalLocation
+    made GitHub reject the whole document."""
+    doc = await _render(tmp_path, [finding(evidence="230 Login successful.")])
+    assert _github_violations(doc) == []
+    result = doc["runs"][0]["results"][0]
+    assert "relatedLocations" not in result
+    assert "230 Login successful." in result["message"]["text"]
+    assert result["properties"]["evidence"] == "230 Login successful."
+
+
+@pytest.mark.asyncio
+async def test_every_rendered_shape_would_upload(tmp_path):
+    """Run the GitHub constraints over the same shapes the schema tests cover —
+    the point being that schema-clean and upload-clean are different bars."""
+    for findings in (
+        [finding()],
+        [],
+        [finding(evidence=None, port_number=None, host_ip="", description=None)],
+        [finding(cve_ids=json.dumps(["CVE-2021-44228"]))],
+        [finding(validated=True, validation_method="browser-dialog")],
+        [finding(false_positive=True, analyst_notes="dismissed")],
+    ):
+        doc = await _render(tmp_path, findings)
+        assert _violations(doc) == [], findings
+        assert _github_violations(doc) == [], findings
 
 
 @pytest.mark.asyncio

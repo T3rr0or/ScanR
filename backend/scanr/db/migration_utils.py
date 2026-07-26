@@ -53,3 +53,42 @@ def drop_column_if_exists(table: str, column: str) -> None:
 def drop_index_if_exists(name: str, table: str) -> None:
     if has_index(table, name):
         op.drop_index(name, table_name=table)
+
+
+def refuse_narrowing_that_would_truncate(table: str, column: str, max_length: int) -> None:
+    """Abort before an ALTER that would silently destroy data.
+
+    A downgrade that narrows a widened column succeeds on an empty table and
+    fails — or worse, truncates — on a populated one. That is exactly how the
+    0020 rollback behaved: it passed in testing because ``webhooks`` was empty,
+    and hit ``StringDataRightTruncationError`` the moment a real Fernet
+    ciphertext (past 255 characters at roughly 110 characters of plaintext) was
+    present. Truncating an HMAC signing secret would leave every webhook
+    silently failing signature verification with nothing in the logs.
+
+    So: check first, and if any row would not fit, stop with an error that says
+    what to do about it. Rolling back is the operator's call to make knowingly.
+    """
+    from sqlalchemy import String, func, select
+    from sqlalchemy import column as sa_column
+    from sqlalchemy import table as sa_table
+
+    if not has_column(table, column):
+        return
+    bind = op.get_bind()
+    col = sa_column(column, String)
+    stmt = (
+        select(func.count())
+        .select_from(sa_table(table, col))
+        .where(func.length(col) > max_length)
+    )
+    offenders = bind.execute(stmt).scalar() or 0
+    if offenders:
+        raise RuntimeError(
+            f"Refusing to narrow {table}.{column} to {max_length} characters: "
+            f"{offenders} row(s) are longer and would be truncated or rejected. "
+            f"Truncating this value corrupts it silently. Resolve it deliberately "
+            f"first — shorten or clear the offending rows "
+            f"(UPDATE {table} SET {column} = NULL WHERE length({column}) > {max_length}), "
+            f"re-issue the affected secrets afterwards, then re-run the downgrade."
+        )

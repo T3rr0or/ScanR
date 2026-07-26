@@ -22,10 +22,21 @@ from scanr.config import get_settings
 
 settings = get_settings()
 
-#: Identifier for the artifactLocation.uriBaseId used below. Declared in
-#: originalUriBaseIds so the reference resolves — a uriBaseId that names nothing
-#: is schema-valid but leaves consumers unable to interpret the location.
-_URI_BASE_ID = "NETWORK"
+#: Result locations are emitted as plain repo-relative paths under this prefix.
+#:
+#: They used to be ``network://<host>:<port>`` with a custom NETWORK uriBaseId,
+#: which is valid SARIF and passes schema validation — and is rejected outright
+#: by GitHub code scanning: "SARIF URI scheme 'network' did not match the
+#: checkout URI scheme 'file'". Upload failed with zero results ingested, which
+#: made the whole CI feature inert. GitHub resolves every location against the
+#: checked-out repository, so anything with a scheme is unusable there.
+#:
+#: A network finding has no file, so these paths are synthetic and will not
+#: resolve to source — the alert simply carries no inline annotation, which is
+#: the correct trade for actually being ingested. The real addressing lives in
+#: logicalLocations (kind networkHost / networkPort), which consumers that
+#: understand network results can read.
+_LOCATION_PREFIX = "scanr-targets"
 
 _SARIF_SCHEMA = "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Documents/CommitteeSpecificationDraft01/sarif-schema-2.1.0.json"
 _SARIF_VERSION = "2.1.0"
@@ -58,6 +69,16 @@ def _utc(value) -> str:
     if getattr(value, "tzinfo", None) is not None:
         value = value.astimezone(timezone.utc).replace(tzinfo=None)
     return value.isoformat(timespec="milliseconds") + "Z"
+
+
+def _location_uri(host_ip: str, port: int | None) -> str:
+    """A repo-relative, scheme-free path standing in for a network location.
+
+    Slash-separated rather than ``host:port`` because a colon in a relative URI
+    can be read as a scheme delimiter, which is the failure mode this replaced.
+    """
+    host = host_ip or "unknown-host"
+    return f"{_LOCATION_PREFIX}/{host}/{port}" if port else f"{_LOCATION_PREFIX}/{host}"
 
 
 def _fingerprint(plugin_id: str, host_ip: str, port: int | None, title: str) -> str:
@@ -125,7 +146,7 @@ async def render_sarif(context: dict, report_id: str) -> Path:
     results = []
     for f in findings:
         host_ip = getattr(f, "host_ip", "") or ""
-        uri = f"network://{host_ip}:{f.port_number}" if host_ip and f.port_number else f"network://{host_ip}"
+        uri = _location_uri(host_ip, f.port_number)
 
         result: dict = {
             "ruleId": f.plugin_id,
@@ -139,7 +160,9 @@ async def render_sarif(context: dict, report_id: str) -> Path:
             "locations": [
                 {
                     "physicalLocation": {
-                        "artifactLocation": {"uri": uri, "uriBaseId": _URI_BASE_ID},
+                        # No uriBaseId: a bare relative URI is resolved against the
+                        # checkout root, which is what GitHub requires.
+                        "artifactLocation": {"uri": uri},
                         "region": {"startLine": 1},
                     },
                     "logicalLocations": [
@@ -169,9 +192,15 @@ async def render_sarif(context: dict, report_id: str) -> Path:
             result["properties"]["analyst_notes"] = f.analyst_notes
 
         if f.evidence:
-            result["relatedLocations"] = [
-                {"id": 1, "message": {"text": f.evidence[:2000]}}
-            ]
+            # Evidence used to ride in a relatedLocations entry carrying only a
+            # message. That is schema-valid, and GitHub rejects the whole upload
+            # over it: "buildRelatedLocations:expected physical location". A
+            # network finding has no second physical location to give, so the
+            # evidence goes where it is both legal and actually visible — the
+            # message a reviewer reads, plus the property bag for machines.
+            evidence = f.evidence[:2000]
+            result["message"]["text"] = f"{result['message']['text']}\n\nEvidence:\n{evidence}"
+            result["properties"]["evidence"] = evidence
 
         results.append(result)
 
@@ -199,16 +228,9 @@ async def render_sarif(context: dict, report_id: str) -> Path:
                     }
                 },
                 "results": results,
-                # Declares the base that result locations are relative to, so the
-                # uriBaseId on each artifactLocation resolves to something.
-                "originalUriBaseIds": {
-                    _URI_BASE_ID: {
-                        "uri": "network://",
-                        "description": {
-                            "text": "Network locations, addressed as network://<host>[:<port>]."
-                        },
-                    }
-                },
+                # Deliberately no originalUriBaseIds: locations are bare relative
+                # paths resolved against the checkout root. Declaring a base with a
+                # non-file scheme is what got uploads rejected.
                 "invocations": [invocation],
                 "properties": {
                     "scanName": scan.name,

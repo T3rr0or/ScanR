@@ -13,6 +13,7 @@ not run must come back as ``inconclusive``, which is the caller's job to decide
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 
 __all__ = ["BROWSER_ARGS", "observe_url"]
@@ -36,6 +37,18 @@ MAX_ERRORS = 20
 MAX_TEXT = 2000
 
 
+#: Hard ceiling on one whole attempt, enforced outside Playwright.
+#:
+#: ``timeout_ms`` only ever bounded ``goto``. Everything after it — title(),
+#: content(), screenshot() — ran with Playwright's default (no cap once
+#: set_default_timeout is unset), so the *target* decided when a worker was
+#: released: a page with an infinite JS loop held one at 99.8% CPU for 242s and
+#: counting, and a server that accepts then stalls held one for exactly the 120s
+#: it chose. Per-call timeouts fix the ordinary cases; this wall-clock cap is
+#: what makes the worst case bounded regardless of what the page does.
+OVERALL_TIMEOUT_SECONDS = 60.0
+
+
 async def observe_url(
     url: str,
     canary: str,
@@ -43,6 +56,7 @@ async def observe_url(
     timeout_ms: int = 15_000,
     settle_seconds: float = 1.5,
     screenshot_path: str | None = None,
+    overall_timeout: float = OVERALL_TIMEOUT_SECONDS,
 ) -> dict:
     """Load ``url`` with JavaScript enabled and report what the page did.
 
@@ -77,10 +91,20 @@ async def observe_url(
                 obs["error"] = f"chromium unavailable: {exc}"[:256]
                 return obs
             try:
-                await _observe(browser, url, canary, obs, timeout_ms, settle_seconds, screenshot_path)
+                await asyncio.wait_for(
+                    _observe(browser, url, canary, obs, timeout_ms, settle_seconds, screenshot_path),
+                    timeout=overall_timeout,
+                )
+            except asyncio.TimeoutError:
+                # Whatever was captured before the cap still counts — a page that
+                # popped our dialog and then hung has already proved the point.
+                obs["error"] = obs["error"] or (
+                    f"gave up after {overall_timeout:.0f}s — the page never settled"
+                )
             finally:
+                # close() itself can hang on a wedged renderer, so it is bounded too.
                 try:
-                    await browser.close()
+                    await asyncio.wait_for(browser.close(), timeout=10)
                 except Exception:  # noqa: BLE001
                     pass
     except Exception as exc:  # noqa: BLE001 - never let a target break the caller
@@ -89,8 +113,6 @@ async def observe_url(
 
 
 async def _observe(browser, url, canary, obs, timeout_ms, settle_seconds, screenshot_path):
-    import asyncio
-
     ctx = await browser.new_context(
         viewport={"width": 1280, "height": 800},
         ignore_https_errors=True,
@@ -99,6 +121,9 @@ async def _observe(browser, url, canary, obs, timeout_ms, settle_seconds, screen
     )
     try:
         page = await ctx.new_page()
+        # Applies to every subsequent page call, not just goto. Without it, an
+        # unresponsive renderer makes title()/content()/screenshot() wait forever.
+        page.set_default_timeout(timeout_ms)
 
         # Dialogs must be dismissed explicitly or navigation blocks until the
         # timeout — and an undismissed dialog also hides everything after it.
@@ -153,8 +178,11 @@ async def _observe(browser, url, canary, obs, timeout_ms, settle_seconds, screen
         if obs["error"] and (obs["dialogs"] or obs["console"] or obs["canary_in_dom"]):
             obs["error"] = None
     finally:
+        # Bounded as well: this runs on the cancellation path when the overall
+        # cap fires, and asyncio.wait_for does not return until the cancelled
+        # task finishes — an unbounded close here would defeat the whole cap.
         try:
-            await ctx.close()
+            await asyncio.wait_for(ctx.close(), timeout=5)
         except Exception:  # noqa: BLE001
             pass
 

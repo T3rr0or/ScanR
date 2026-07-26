@@ -22,15 +22,59 @@ from scanr.models.user import User
 
 router = APIRouter(prefix="/scans/{scan_id}/attack-paths", tags=["attack-paths"])
 
+#: Ceilings on what the response may carry. Neither was capped before, so a large
+#: scan handed a D3 force layout 413MB of JSON — a graph nobody can read and a
+#: browser tab that will not survive it.
+MAX_RESPONSE_NODES = 1500
+MAX_RESPONSE_EDGES = 4000
+
+
+def _cap(graph, max_nodes: int, max_edges: int):
+    """Trim the graph for transport, keeping the part that answers the question.
+
+    Everything on a ranked path is kept unconditionally — those are the routes
+    the page exists to show. The remaining nodes and edges fill the budget
+    worst-severity-and-cheapest first, so what survives is what an attacker would
+    reach for. Returns (nodes, edges, truncated).
+    """
+    from scanr.core.attack_path import _SEVERITY_RANK  # noqa: PLC0415
+
+    if len(graph.nodes) <= max_nodes and len(graph.edges) <= max_edges:
+        return graph.nodes, graph.edges, False
+
+    keep_nodes: set[str] = {n for p in graph.paths for n in p.nodes}
+    keep_edges = {(e.source, e.target, e.kind) for p in graph.paths for e in p.edges}
+
+    def edge_rank(e):
+        return (-_SEVERITY_RANK.get(e.severity, 0), e.inferred, e.cost)
+
+    for e in sorted(graph.edges, key=edge_rank):
+        if len(keep_edges) >= max_edges or len(keep_nodes) >= max_nodes:
+            break
+        keep_edges.add((e.source, e.target, e.kind))
+        keep_nodes.update((e.source, e.target))
+
+    nodes = [n for n in graph.nodes if n.id in keep_nodes]
+    # Only edges whose endpoints both survived — a dangling edge breaks the layout.
+    edges = [
+        e for e in graph.edges
+        if (e.source, e.target, e.kind) in keep_edges
+        and e.source in keep_nodes and e.target in keep_nodes
+    ]
+    return nodes, edges, True
+
 
 @router.get("")
 async def get_attack_paths(
     scan_id: str,
     include_inferred: bool = Query(
-        True,
+        False,
         description=(
-            "Include clearly-marked credential-reuse hypotheses. Off gives a "
-            "strictly evidence-only graph where every edge cites a finding."
+            "Include clearly-marked credential-reuse hypotheses. Off (the default) "
+            "gives a strictly evidence-only graph where every edge cites a finding. "
+            "On, the inference is credentials × hosts and dominates the graph — 92% "
+            "of edges on a 1000-host scan — while never appearing in a ranked path, "
+            "so turn it on only for a sparse scan where nothing else connects."
         ),
     ),
     max_paths: int = Query(25, ge=1, le=100),
@@ -87,8 +131,16 @@ async def get_attack_paths(
         hosts, findings, max_paths=max_paths, infer_credential_reuse=include_inferred
     )
 
+    # The response goes straight into a D3 force layout, which is unusable long
+    # before it is large: an uncapped 4000-host graph produced 413MB of JSON.
+    # Ranked paths and their nodes are always kept — they are the answer; the
+    # surrounding cloud is context, and context is what gets dropped.
+    nodes, edges, truncated = _cap(graph, MAX_RESPONSE_NODES, MAX_RESPONSE_EDGES)
+
     return {
         "scan_id": scan_id,
+        "truncated": truncated,
+        "totals": {"nodes": len(graph.nodes), "edges": len(graph.edges)},
         "nodes": [
             {
                 "id": n.id,
@@ -97,7 +149,7 @@ async def get_attack_paths(
                 "severity": n.severity,
                 "meta": n.meta,
             }
-            for n in graph.nodes
+            for n in nodes
         ],
         "edges": [
             {
@@ -110,7 +162,7 @@ async def get_attack_paths(
                 "inferred": e.inferred,
                 "cost": e.cost,
             }
-            for e in graph.edges
+            for e in edges
         ],
         "paths": [
             {

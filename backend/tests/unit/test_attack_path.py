@@ -368,8 +368,7 @@ def test_cost_increases_as_severity_falls(severity):
 # ── credential reuse (inference) ─────────────────────────────────────────────
 
 def test_credential_reuse_is_marked_as_inferred():
-    """A strictly evidence-only graph produces almost no paths on a real scan,
-    so reuse is hypothesised — but never presented as an observation."""
+    """When opted into, a reuse hypothesis is never presented as an observation."""
     hosts = [
         host("web", "192.0.2.10", open_ports=(80, 6379)),
         host("dc", "192.0.2.5", open_ports=(445, 88)),
@@ -379,7 +378,7 @@ def test_credential_reuse_is_marked_as_inferred():
         finding("f2", "web.sensitive_files", "high", "web"),
         finding("f3", "services.dcsync_check", "critical", "dc"),
     ]
-    g = build_graph(hosts, findings)
+    g = build_graph(hosts, findings, infer_credential_reuse=True)
     reuse = [e for e in g.edges if e.kind is EdgeKind.credential_reuse]
     assert reuse, "expected a reuse hypothesis onto the DC"
     for e in reuse:
@@ -403,7 +402,7 @@ def test_reuse_only_targets_hosts_exposing_an_auth_service():
         finding("f3", "services.dcsync_check", "critical", "dc"),
         finding("f4", "ssl_tls.cipher_audit", "medium", "prn"),
     ]
-    g = build_graph(hosts, findings)
+    g = build_graph(hosts, findings, infer_credential_reuse=True)
     targets = {e.target for e in g.edges if e.kind is EdgeKind.credential_reuse}
     assert "host:dc" in targets
     assert "host:prn" not in targets, "no auth service on the printer"
@@ -415,10 +414,9 @@ def test_reuse_never_loops_back_to_the_origin_host():
         finding("f1", "services.redis_unauth", "critical", "web"),
         finding("f2", "web.sensitive_files", "high", "web"),
     ]
-    g = build_graph(hosts, findings)
-    for e in g.edges:
-        if e.kind is EdgeKind.credential_reuse:
-            assert e.target != "host:web"
+    g = build_graph(hosts, findings, infer_credential_reuse=True)
+    reuse = [e for e in g.edges if e.kind is EdgeKind.credential_reuse]
+    assert not any(e.target == "host:web" for e in reuse)
 
 
 def test_inference_can_be_turned_off_for_an_evidence_only_graph():
@@ -449,6 +447,147 @@ def test_demonstrated_route_outranks_an_inferred_one():
         finding("f3", "services.admin_share_access", "high", "dc"),
         finding("f4", "services.dcsync_check", "critical", "dc"),
     ]
-    g = build_graph(hosts, findings)
+    g = build_graph(hosts, findings, infer_credential_reuse=True)
+    assert any(e.inferred for e in g.edges), "the comparison needs an inferred edge to exist"
     assert g.paths
     assert g.paths[0].inferred is False, "a demonstrated route must rank first"
+
+
+# ── privilege escalation must not short-circuit the graph ────────────────────
+
+def test_local_privesc_is_not_a_route_in_from_the_internet():
+    """Regression, and the worst kind: it did not crash, it quietly made the
+    feature useless.
+
+    A local privilege escalation is a step *up* once you are already on a host.
+    It used to fall back to the entry node when the scan had found no credential
+    on that host, which made an authenticated finding a free one-hop edge from
+    the internet at cost 1.0. Being the cheapest edge in the graph, it won every
+    Dijkstra run — so real multi-hop chains never surfaced, and because every
+    winning path was then one hop long, no node was ever shared and chokepoint
+    analysis returned nothing on every scan.
+    """
+    hosts = [host("h1", "192.0.2.10")]
+    g = build_graph(hosts, [finding("f1", "authenticated.docker_privileged_check", "high", "h1")])
+
+    direct = [e for e in g.edges if e.source == ENTRY_NODE_ID and e.target == "host:h1"]
+    assert direct == [], (
+        "an authenticated finding proves a credential works, not that an "
+        f"attacker could obtain one: {[(e.source, e.target, e.label) for e in direct]}"
+    )
+    # The route is still *visible* — it is a real finding for a credentialed
+    # assessment — but it starts from an expensive "get credentials somehow"
+    # step rather than being the cheapest edge in the graph.
+    entry_edges = [e for e in g.edges if e.source == ENTRY_NODE_ID]
+    assert [e.target for e in entry_edges] == ["cred:supplied"]
+    assert entry_edges[0].cost > 10, "obtaining credentials must not be free"
+
+    escalation = next(e for e in g.edges if e.kind is EdgeKind.privilege_escalation)
+    source = next(n for n in g.nodes if n.id == escalation.source)
+    assert source.kind is NodeKind.credential
+    assert source.meta.get("supplied") is True
+
+
+def test_a_chained_scenario_produces_multi_hop_paths_and_chokepoints():
+    """The end-to-end shape of the bug above: with privesc wired to entry, this
+    graph collapsed to four one-hop paths and zero chokepoints."""
+    hosts = [
+        host("h0", "192.0.2.10", hostname="web01"),
+        host("h1", "192.0.2.11"),
+        host("h2", "192.0.2.12"),
+        host("h3", "192.0.2.13"),
+        host("dc", "192.0.2.5", hostname="dc01"),
+    ]
+    findings = [
+        # The only way in.
+        finding("f1", "services.redis_unauth", "critical", "h0"),
+        # Which yields a credential.
+        finding("f2", "services.kerberoastable", "high", "h0"),
+        # That credential moves onto the others...
+        finding("f3", "services.winrm_access", "high", "h1"),
+        finding("f4", "services.admin_share_access", "high", "h2"),
+        finding("f5", "services.smb_authenticated_enum", "medium", "h3"),
+        finding("f6", "services.winrm_access", "high", "dc"),
+        # ...where a local escalation is available, but only once you are there.
+        finding("f7", "authenticated.docker_privileged_check", "high", "h1"),
+        finding("f8", "services.dcsync_check", "critical", "dc"),
+    ]
+    g = build_graph(hosts, findings, infer_credential_reuse=False)
+
+    assert g.paths, "the objective must be reachable"
+    assert max(len(p.edges) for p in g.paths) >= 3, (
+        f"expected a real chain; longest path is {max(len(p.edges) for p in g.paths)} hop(s)"
+    )
+    assert g.chokepoints, "a graph funnelling through one foothold must have a chokepoint"
+    for cp in g.chokepoints:
+        assert cp["path_count"] > 1
+    shared = {cp["node_id"] for cp in g.chokepoints}
+    assert "host:h0" in shared, (
+        f"every route enters through h0, so it is the fix that breaks the most: {shared}"
+    )
+
+
+# ── scale ────────────────────────────────────────────────────────────────────
+
+def test_credential_reuse_is_off_by_default():
+    """It is credentials × hosts: 92% of edges on a 1000-host scan, 833MB peak at
+    4000 — and zero ranked paths ever used one, because they are priced above
+    every demonstrated step by design. Opt-in, not opt-out."""
+    hosts = [host(f"h{i}", f"192.0.2.{i}", open_ports=(22, 445)) for i in range(1, 12)]
+    findings = [
+        finding("f1", "services.redis_unauth", "critical", "h1"),
+        finding("f2", "services.kerberoastable", "high", "h1"),
+        *[finding(f"g{i}", "services.winrm_access", "high", f"h{i}") for i in range(2, 12)],
+    ]
+    default = build_graph(hosts, findings)
+    assert not any(e.inferred for e in default.edges)
+
+    opted_in = build_graph(hosts, findings, infer_credential_reuse=True)
+    assert any(e.inferred for e in opted_in.edges)
+
+
+def test_inferred_edges_are_capped():
+    """Uncapped, this is the one part of the graph that grows with hosts²."""
+    hosts = [host(f"h{i}", f"10.0.{i // 250}.{i % 250}", open_ports=(22,)) for i in range(400)]
+    findings = [
+        finding("f1", "services.redis_unauth", "critical", "h0"),
+        # Several credentials, so the cross product is genuinely large.
+        *[finding(f"c{i}", "services.kerberoastable", "high", f"h{i}") for i in range(30)],
+        *[finding(f"w{i}", "services.winrm_access", "high", f"h{i}") for i in range(400)],
+    ]
+    g = build_graph(hosts, findings, infer_credential_reuse=True, max_reuse_edges=100)
+    assert sum(1 for e in g.edges if e.inferred) <= 100
+
+
+def test_the_response_cap_keeps_every_ranked_path_intact():
+    """Trimming for transport must never cut the answer out of the response — a
+    path referencing a node the client did not receive renders as a broken graph."""
+    from scanr.api.v1.attack_paths import _cap
+
+    hosts = [host(f"h{i}", f"192.0.2.{i}", open_ports=(445,)) for i in range(1, 40)]
+    findings = []
+    for i in range(1, 40):
+        findings += [
+            finding(f"a{i}", "services.redis_unauth", "critical", f"h{i}"),
+            finding(f"b{i}", "authenticated.docker_privileged_check", "high", f"h{i}"),
+        ]
+    g = build_graph(hosts, findings)
+    assert g.paths, "need paths for this test to mean anything"
+
+    nodes, edges, truncated = _cap(g, max_nodes=5, max_edges=5)
+    assert truncated is True
+    kept = {n.id for n in nodes}
+    for path in g.paths:
+        assert set(path.nodes) <= kept, "a ranked path lost one of its own nodes"
+    for e in edges:
+        assert e.source in kept and e.target in kept, "dangling edge breaks the layout"
+
+
+def test_a_small_graph_is_returned_whole():
+    from scanr.api.v1.attack_paths import _cap
+
+    g = build_graph([host("h1", "192.0.2.10")],
+                    [finding("f1", "services.redis_unauth", "critical", "h1")])
+    nodes, edges, truncated = _cap(g, max_nodes=1500, max_edges=4000)
+    assert truncated is False
+    assert nodes == g.nodes and edges == g.edges

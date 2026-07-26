@@ -26,6 +26,9 @@ async def list_findings(
     plugin_id: str | None = Query(None),
     false_positive: bool | None = Query(None),
     validated: bool | None = Query(None, description="Only findings ScanR mechanically reproduced"),
+    remediation_status: str | None = Query(None, description="open | accepted_risk | resolved"),
+    q_text: str | None = Query(None, alias="q", max_length=200,
+                               description="Substring match on title, host IP, or plugin id"),
     mitre_technique: str | None = Query(None, description="Filter by ATT&CK technique ID, e.g. T1110.001"),
     compliance_tag: str | None = Query(None, description="Filter by compliance framework prefix or tag, e.g. 'PCI-DSS' or 'PCI-DSS:6.4.1'"),
     limit: int = Query(200, le=500),
@@ -53,6 +56,19 @@ async def list_findings(
         q = q.where(Finding.false_positive == false_positive)
     if validated is not None:
         q = q.where(Finding.validated == validated)
+    if remediation_status:
+        if remediation_status not in ("open", "accepted_risk", "resolved"):
+            raise HTTPException(status_code=400, detail="Invalid remediation_status")
+        q = q.where(Finding.remediation_status == remediation_status)
+    if q_text:
+        # Server-side because the UI's search box used to filter one page of
+        # results client-side, which silently under-reported whenever the match
+        # lay past the page boundary.
+        from sqlalchemy import or_
+
+        like = f"%{q_text}%"
+        q = q.where(or_(Finding.title.ilike(like), Host.ip.ilike(like),
+                        Finding.plugin_id.ilike(like)))
     if mitre_technique:
         if not re.match(r'^T\d{4}(\.\d{3})?$', mitre_technique):
             raise HTTPException(status_code=400, detail="Invalid MITRE technique ID (e.g. T1110 or T1110.001)")
@@ -99,6 +115,8 @@ async def export_findings(
     plugin_id: str | None = Query(None),
     false_positive: bool | None = Query(None),
     validated: bool | None = Query(None),
+    remediation_status: str | None = Query(None),
+    q_text: str | None = Query(None, alias="q", max_length=200),
     compliance_tag: str | None = Query(None),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_scope("findings:read")),
@@ -129,6 +147,16 @@ async def export_findings(
         q = q.where(Finding.false_positive == false_positive)
     if validated is not None:
         q = q.where(Finding.validated == validated)
+    if remediation_status:
+        if remediation_status not in ("open", "accepted_risk", "resolved"):
+            raise HTTPException(status_code=400, detail="Invalid remediation_status")
+        q = q.where(Finding.remediation_status == remediation_status)
+    if q_text:
+        from sqlalchemy import or_
+
+        like = f"%{q_text}%"
+        q = q.where(or_(Finding.title.ilike(like), Host.ip.ilike(like),
+                        Finding.plugin_id.ilike(like)))
     if compliance_tag:
         if not re.match(r'^[A-Z0-9][A-Z0-9:.\-]{1,40}$', compliance_tag, re.IGNORECASE):
             raise HTTPException(status_code=400, detail="Invalid compliance tag format")

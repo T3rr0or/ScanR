@@ -55,6 +55,11 @@ class EdgeKind(str, Enum):
     domain_compromise = "domain_compromise"  # → domain: full control
 
 
+#: Ceiling on inferred credential-reuse edges. The inference is credentials ×
+#: hosts, so it is the only unbounded thing in the graph: 1.6M edges and 833MB
+#: peak RSS on a 4000-host scan, with a 413MB response handed straight to D3.
+MAX_REUSE_EDGES = 2000
+
 #: Ports whose presence means a host will accept a credential. Used to decide
 #: where credential reuse is worth *hypothesising* — see _add_reuse_edges.
 _AUTH_PORTS: dict[int, str] = {
@@ -331,19 +336,29 @@ def _add_reuse_edges(
     nodes: dict[str, Node],
     edges: dict[tuple[str, str, EdgeKind], Edge],
     hosts: list[HostInput],
+    max_edges: int = MAX_REUSE_EDGES,
 ) -> None:
     """Draw credential-reuse hypotheses from each obtained credential.
 
     Only to hosts that expose an authentication service the scan actually saw, and
     never back to the host the credential came from. Marked inferred so a reader
     can tell a hypothesis from an observation.
+
+    Bounded because this is a cross product: an uncapped run on 4000 hosts built
+    1.6M edges and peaked at 833MB. Stopping early loses hypotheses, which is the
+    cheap thing to lose — they are the part that is guessed.
     """
     creds = [n for n in nodes.values() if n.kind is NodeKind.credential]
     if not creds:
         return
+    added = 0
     for cred in creds:
+        if added >= max_edges:
+            return
         origin = cred.meta.get("from_host")
         for host in hosts:
+            if added >= max_edges:
+                return
             if host.ip == origin:
                 continue
             open_auth = [p for p in host.open_ports if p in _AUTH_PORTS]
@@ -366,6 +381,7 @@ def _add_reuse_edges(
                 cost=_cost_for(EdgeKind.credential_reuse, cred.severity),
                 inferred=True,
             )
+            added += 1
 
 
 def build_graph(
@@ -373,13 +389,23 @@ def build_graph(
     findings: list[FindingInput],
     *,
     max_paths: int = 25,
-    infer_credential_reuse: bool = True,
+    infer_credential_reuse: bool = False,
+    max_reuse_edges: int = MAX_REUSE_EDGES,
 ) -> AttackGraph:
     """Build the attack graph and rank the routes through it.
 
     ``infer_credential_reuse`` adds clearly-marked hypothesis edges where a
-    credential could plausibly be replayed. Turn it off for a strictly
-    evidence-only graph (every edge backed by a finding).
+    credential could plausibly be replayed.
+
+    It defaults to **off** on measured evidence. The inference is
+    credentials × hosts, so it dominated the graph — at 1000 hosts, 94,905 of
+    102,929 edges (92%) and a 24MB response; at 4000 hosts, 1.6M edges, 833MB
+    peak RSS and a 413MB response. Against that cost, zero ranked paths used an
+    inferred edge at any scale: priced above every demonstrated step, as
+    intended, they never win, and demonstrated routes existed wherever the
+    objective was reachable at all. Paying 92% of the graph for something that
+    changes no answer is not a default. It remains available for a sparse scan
+    where nothing else connects, and is capped either way.
     """
     by_host = {h.id: h for h in hosts}
     nodes: dict[str, Node] = {
@@ -519,10 +545,19 @@ def build_graph(
             )
             target = domain_node() if kind is EdgeKind.domain_compromise else h_node
             if target == h_node:
-                # Privilege escalation on the host itself: represent it as a
-                # self-raising step from any credential on that host, or from entry.
+                # Privilege escalation on the host itself: a step *up* from a
+                # credential that already works here, not a way in.
+                #
+                # Falling back to ENTRY_NODE_ID (as this once did) wired local
+                # privesc straight to the internet at cost 1.0, which then won
+                # every Dijkstra run — so real multi-hop chains never surfaced,
+                # and because every winning path was one hop long, no node was
+                # ever shared and chokepoint analysis was structurally always
+                # empty. The escalation needs a credential; if the scan found
+                # none, the finding fired because the operator supplied one, and
+                # supplied_cred_node() prices that honestly.
                 creds = [n for n in nodes if n.startswith(f"cred:{host.id}:")]
-                src = creds[0] if creds else ENTRY_NODE_ID
+                src = creds[0] if creds else supplied_cred_node()
                 if src != target:
                     add_edge(src, target, kind, technique, f)
             else:
@@ -557,7 +592,7 @@ def build_graph(
     # reuse is the reasoned part, and it is labelled as such rather than blended
     # in with observations.
     if infer_credential_reuse:
-        _add_reuse_edges(nodes, edges, hosts)
+        _add_reuse_edges(nodes, edges, hosts, max_reuse_edges)
 
     edge_list = list(edges.values())
     paths = _rank_paths(nodes, edge_list, max_paths=max_paths)

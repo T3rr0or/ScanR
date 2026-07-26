@@ -148,3 +148,90 @@ def test_evidence_records_what_a_reader_needs_to_believe_it():
 def test_evidence_is_bounded():
     r = evaluate(obs(console=[{"type": "log", "text": "x" * 5000} for _ in range(50)]), CANARY)
     assert len(r.evidence) <= 4000
+
+
+# ── the browser driver's time budget ─────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_a_hanging_page_cannot_hold_a_worker(monkeypatch):
+    """Regression: only goto was bounded, so everything after it ran with no
+    timeout at all. A page with an infinite JS loop held a worker at ~100% CPU
+    for 242s and counting; a server that accepts and stalls held one for exactly
+    the delay it chose. The target must not decide when we let go."""
+    import asyncio
+    import time
+
+    from scanr.core import browser
+
+    class HangingPage:
+        url = "http://192.0.2.10/"
+
+        def __init__(self):
+            self.timeout_ms = None
+
+        def set_default_timeout(self, ms):
+            self.timeout_ms = ms
+
+        def on(self, *_a):
+            pass
+
+        async def goto(self, *_a, **_kw):
+            return None
+
+        async def title(self):
+            await asyncio.sleep(3600)  # renderer wedged
+
+        async def content(self):
+            await asyncio.sleep(3600)
+
+        async def screenshot(self, **_kw):
+            await asyncio.sleep(3600)
+
+    class Ctx:
+        def __init__(self, page):
+            self._page = page
+
+        async def new_page(self):
+            return self._page
+
+        async def close(self):
+            return None
+
+    class Browser:
+        def __init__(self, page):
+            self._page = page
+
+        async def new_context(self, **_kw):
+            return Ctx(self._page)
+
+        async def close(self):
+            return None
+
+    page = HangingPage()
+
+    class PW:
+        class chromium:
+            @staticmethod
+            async def launch(**_kw):
+                return Browser(page)
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_a):
+            return False
+
+    monkeypatch.setattr(browser, "async_playwright", lambda: PW(), raising=False)
+    monkeypatch.setitem(__import__("sys").modules, "playwright.async_api",
+                        type("m", (), {"async_playwright": lambda: PW()}))
+
+    started = time.monotonic()
+    obs = await browser.observe_url("http://192.0.2.10/", "scanr0123456789abcdef",
+                                    settle_seconds=0, overall_timeout=1.0)
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 10, f"the cap did not fire — took {elapsed:.1f}s"
+    assert obs["error"], "a run that gave up must not look like a clean observation"
+    assert page.timeout_ms == 15_000, "per-call timeouts must be armed too"
+    from scanr.core.validation import evaluate
+    assert evaluate(obs, "scanr0123456789abcdef").verdict == "inconclusive"

@@ -40,12 +40,20 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    from scanr.db.migration_utils import has_column
+    from scanr.db.migration_utils import (
+        has_column,
+        refuse_narrowing_that_would_truncate,
+    )
 
     if not has_column("webhooks", "secret"):
         return
     if op.get_bind().dialect.name == "sqlite":
         return
+    # Fernet ciphertext passes 255 characters at around 110 characters of
+    # plaintext, and the API accepts secrets up to 255 — so any real deployment
+    # can hold rows this ALTER cannot store. It only ever "worked" against an
+    # empty webhooks table.
+    refuse_narrowing_that_would_truncate("webhooks", "secret", 255)
     op.alter_column(
         "webhooks",
         "secret",
