@@ -515,7 +515,9 @@ export default function Findings() {
      validated findings among 303 showed as four. A filter that under-reports
      without saying so is worse than no filter. */
   const PAGE_LIMIT = 500
-  const apiParams: Record<string, string | number | boolean> = { limit: PAGE_LIMIT }
+  // Ask for one more than we display, so "there are more" is a fact rather than
+  // an inference from a full page — which was wrong at exactly PAGE_LIMIT rows.
+  const apiParams: Record<string, string | number | boolean> = { limit: PAGE_LIMIT + 1 }
   if (severity) apiParams.severity = severity
   if (scanId) apiParams.scan_id = scanId
   if (complianceTag) apiParams.compliance_tag = complianceTag
@@ -528,15 +530,14 @@ export default function Findings() {
     case 'validated':       apiParams.validated = true; break
   }
 
-  const { data: rawFindings = [] } = useQuery({
+  const { data: fetched = [] } = useQuery({
     queryKey: ['findings', severity, scanId, complianceTag, triageStatus, search.trim()],
     queryFn: () => findingsApi.list(apiParams),
     placeholderData: prev => prev,
   })
 
-  // The server caps the page, so say so rather than presenting a partial list
-  // as the whole answer.
-  const truncated = rawFindings.length >= PAGE_LIMIT
+  const truncated = fetched.length > PAGE_LIMIT
+  const rawFindings = truncated ? fetched.slice(0, PAGE_LIMIT) : fetched
 
   const { sorted: findings, sortKey, sortDir, toggleSort } = useSortableFindings(rawFindings)
 

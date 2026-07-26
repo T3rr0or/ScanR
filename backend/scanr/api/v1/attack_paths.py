@@ -137,9 +137,26 @@ async def get_attack_paths(
     # surrounding cloud is context, and context is what gets dropped.
     nodes, edges, truncated = _cap(graph, MAX_RESPONSE_NODES, MAX_RESPONSE_EDGES)
 
+    # "No attack paths" is ambiguous now that inference is off by default: it can
+    # mean "nothing connects" or "the only route was a hypothesis". A scan whose
+    # sole route is inference-only reads as a regression to anyone who does not
+    # know the default flipped, so say which case this is — with a real count,
+    # not a hint. The extra build only happens when there was nothing to report,
+    # so a normal request never pays for it.
+    inferred_available: int | None = None
+    if not include_inferred and not graph.paths:
+        hypothetical = build_graph(
+            hosts, findings, max_paths=max_paths, infer_credential_reuse=True
+        )
+        inferred_available = len(hypothetical.paths)
+
     return {
         "scan_id": scan_id,
         "truncated": truncated,
+        #: Non-null only when the evidence-only graph found nothing: how many
+        #: routes appear if credential-reuse hypotheses are included. 0 means
+        #: nothing connects at all.
+        "inferred_paths_available": inferred_available,
         "totals": {"nodes": len(graph.nodes), "edges": len(graph.edges)},
         "nodes": [
             {

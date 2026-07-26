@@ -184,6 +184,13 @@ where nothing else connects; leave it off otherwise. Inferred steps are labelled
 Large graphs are trimmed for transport (`truncated: true`, with `totals` giving
 the real counts). Ranked paths are never trimmed.
 
+Because the default excludes hypotheses, a scan whose only route was inference
+now shows no paths. That is correct but easy to misread, so when the
+evidence-only graph finds nothing the response carries
+`inferred_paths_available`: how many routes appear with reuse assumed (`0` means
+nothing connects at all). The UI turns that into "N likely routes — show them"
+rather than an empty panel.
+
 ```bash
 curl -H "X-API-Key: sk_..." \
   "http://localhost:8000/api/v1/scans/<scan-id>/attack-paths?include_inferred=true"
@@ -505,6 +512,12 @@ but not the marker: it puts the literal `{CANARY}` where a token belongs, e.g.
 substitutes an unguessable token it generated. Only that token coming back
 through a JS channel — a dialog or the console — counts as proof, so the agent
 cannot manufacture one.
+
+Each attempt is bounded — per-call timeouts plus a 60-second wall-clock cap — and
+at most two run concurrently per worker. Both matter because a hostile page
+chooses how long it holds you: a JS loop pins a core for as long as it is allowed
+to, so the cap makes one attempt survivable and the concurrency limit stops it
+being multiplied.
 
 Verdicts are `proved`, `reflected`, `not_reproduced`, and `inconclusive` (the
 page would not load — never reported as clean, for the same reason an

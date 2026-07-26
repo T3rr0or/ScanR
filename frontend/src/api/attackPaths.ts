@@ -64,6 +64,15 @@ export interface AttackPathGraph {
   edges: AttackEdge[]
   paths: AttackPath[]
   chokepoints: Chokepoint[]
+  /** True when nodes/edges were trimmed for transport. Ranked paths never are. */
+  truncated: boolean
+  totals: { nodes: number; edges: number }
+  /**
+   * Non-null only when the evidence-only graph found no route: how many appear
+   * once credential-reuse hypotheses are included. 0 means nothing connects.
+   * Lets the empty state distinguish "nothing here" from "nothing proven".
+   */
+  inferred_paths_available: number | null
   summary: {
     host_count: number
     path_count: number
@@ -77,7 +86,9 @@ export const attackPathsApi = {
     api
       .get<AttackPathGraph>(`/scans/${scanId}/attack-paths`, {
         params: {
-          include_inferred: opts?.includeInferred ?? true,
+          // Evidence-only by default, matching the API: the inference is
+          // credentials x hosts and never appears in a ranked path.
+          include_inferred: opts?.includeInferred ?? false,
           max_paths: opts?.maxPaths ?? 25,
         },
       })

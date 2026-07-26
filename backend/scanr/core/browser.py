@@ -48,6 +48,34 @@ MAX_TEXT = 2000
 #: what makes the worst case bounded regardless of what the page does.
 OVERALL_TIMEOUT_SECONDS = 60.0
 
+#: How many attempts may hold a browser at once, per worker process.
+#:
+#: The wall-clock cap above makes one hostile page *survivable*, not cheap: a page
+#: spinning in a JS loop still pins a core for the full 60 seconds. Unbounded
+#: concurrency turns that into an amplifier — N validations against a target that
+#: chooses to spin cost N cores for a minute, and the target picks N by deciding
+#: which of its pages hang. Serialising past a small number caps the damage at a
+#: predictable slice of the host, at the cost of queueing validations, which are
+#: not latency-sensitive.
+MAX_CONCURRENT = 2
+_slots: "asyncio.Semaphore | None" = None
+_slots_loop: object = None
+
+
+def _slot() -> "asyncio.Semaphore":
+    """One semaphore per event loop.
+
+    Built lazily rather than at import: a module-level Semaphore binds to
+    whichever loop imported it, and Celery workers do not share one loop.
+    """
+    global _slots, _slots_loop
+
+    loop = asyncio.get_running_loop()
+    if _slots is None or _slots_loop is not loop:
+        _slots = asyncio.Semaphore(MAX_CONCURRENT)
+        _slots_loop = loop
+    return _slots
+
 
 async def observe_url(
     url: str,
@@ -83,6 +111,15 @@ async def observe_url(
         obs["error"] = "playwright is not installed"
         return obs
 
+    # Queue outside the browser so a spinning page occupies a slot, not a core
+    # each. Acquired before launch: the launch itself is the expensive part.
+    async with _slot():
+        return await _run(obs, async_playwright, url, canary, timeout_ms,
+                          settle_seconds, screenshot_path, overall_timeout)
+
+
+async def _run(obs, async_playwright, url, canary, timeout_ms, settle_seconds,
+               screenshot_path, overall_timeout) -> dict:
     try:
         async with async_playwright() as pw:
             try:

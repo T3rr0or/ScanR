@@ -235,3 +235,77 @@ async def test_a_hanging_page_cannot_hold_a_worker(monkeypatch):
     assert page.timeout_ms == 15_000, "per-call timeouts must be armed too"
     from scanr.core.validation import evaluate
     assert evaluate(obs, "scanr0123456789abcdef").verdict == "inconclusive"
+
+
+@pytest.mark.asyncio
+async def test_concurrent_validations_are_bounded(monkeypatch):
+    """The 60s cap makes one hostile page survivable, not cheap — a page spinning
+    in a JS loop pins a core for the whole 60s. Unbounded concurrency lets the
+    *target* pick the multiplier by choosing which of its pages hang."""
+    import asyncio
+
+    from scanr.core import browser
+
+    live = 0
+    peak = 0
+
+    class Page:
+        url = "http://192.0.2.10/"
+
+        def set_default_timeout(self, ms):
+            pass
+
+        def on(self, *_a):
+            pass
+
+        async def goto(self, *_a, **_kw):
+            nonlocal live, peak
+            live += 1
+            peak = max(peak, live)
+            await asyncio.sleep(0.15)
+            return None
+
+        async def title(self):
+            return "t"
+
+        async def content(self):
+            return ""
+
+    class Ctx:
+        async def new_page(self):
+            return Page()
+
+        async def close(self):
+            nonlocal live
+            live -= 1
+
+    class Browser:
+        async def new_context(self, **_kw):
+            return Ctx()
+
+        async def close(self):
+            return None
+
+    class PW:
+        class chromium:
+            @staticmethod
+            async def launch(**_kw):
+                return Browser()
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_a):
+            return False
+
+    monkeypatch.setitem(__import__("sys").modules, "playwright.async_api",
+                        type("m", (), {"async_playwright": lambda: PW()}))
+    # Reset the per-loop semaphore so the cap under test is the one asserted.
+    monkeypatch.setattr(browser, "_slots", None)
+    monkeypatch.setattr(browser, "MAX_CONCURRENT", 2)
+
+    await asyncio.gather(*[
+        browser.observe_url("http://192.0.2.10/", "scanr0123456789abcdef", settle_seconds=0)
+        for _ in range(10)
+    ])
+    assert peak <= 2, f"{peak} browsers ran at once against a cap of 2"

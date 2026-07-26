@@ -31,7 +31,10 @@ async def list_findings(
                                description="Substring match on title, host IP, or plugin id"),
     mitre_technique: str | None = Query(None, description="Filter by ATT&CK technique ID, e.g. T1110.001"),
     compliance_tag: str | None = Query(None, description="Filter by compliance framework prefix or tag, e.g. 'PCI-DSS' or 'PCI-DSS:6.4.1'"),
-    limit: int = Query(200, le=500),
+    # Raised past 500 so a client showing a 500-row page can ask for 501 and know
+    # whether a 501st exists, rather than inferring "there is more" from a full
+    # page — which is wrong at exactly 500.
+    limit: int = Query(200, le=1000),
     cursor: str | None = Query(None, description="Cursor from previous page: ISO timestamp,finding_id"),
     offset: int = Query(0, description="Deprecated: use cursor instead"),
     db: AsyncSession = Depends(get_db),

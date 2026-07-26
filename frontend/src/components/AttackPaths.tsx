@@ -169,7 +169,9 @@ function PathCard({
 }
 
 export default function AttackPaths({ scanId }: { scanId: string }) {
-  const [includeInferred, setIncludeInferred] = useState(true);
+  // Off by default, matching the API. The inference is credentials x hosts —
+  // 92% of edges on a 1000-host scan — and no ranked path has ever used one.
+  const [includeInferred, setIncludeInferred] = useState(false);
 
   const { data, isLoading, error } = useQuery({
     queryKey: ["attack-paths", scanId, includeInferred],
@@ -203,6 +205,14 @@ export default function AttackPaths({ scanId }: { scanId: string }) {
             </>
           )}{" "}
           across {data.summary.host_count} host{data.summary.host_count === 1 ? "" : "s"}
+          {data.truncated && (
+            <span
+              style={{ color: "var(--sev-medium)", marginLeft: 8 }}
+              title={`Graph trimmed for display: showing ${data.edges.length} of ${data.totals.edges} edges. Ranked routes are always complete.`}
+            >
+              (graph trimmed — routes are complete)
+            </span>
+          )}
         </div>
         <label
           style={{ marginLeft: "auto", fontSize: 11.5, color: "var(--text-2)", display: "flex", alignItems: "center", gap: 6 }}
@@ -278,8 +288,29 @@ export default function AttackPaths({ scanId }: { scanId: string }) {
             Individual findings may still be serious — this view only reports a route
             when every step from the attacker's position to an objective is backed by
             evidence from this scan.
-            {!includeInferred && " Enabling inferred steps may reveal likely routes."}
           </div>
+          {/* Distinguish "nothing connects" from "nothing proven". Without this,
+              a scan whose only route is a hypothesis just reads as empty. */}
+          {!includeInferred && (data.inferred_paths_available ?? 0) > 0 && (
+            <div style={{ maxWidth: 460, margin: "10px auto 0" }}>
+              <strong style={{ color: "var(--text-2)" }}>
+                {data.inferred_paths_available} likely route
+                {data.inferred_paths_available === 1 ? "" : "s"}
+              </strong>{" "}
+              appear if credential reuse is assumed — reasoned from the authentication
+              services this scan observed, but not demonstrated.
+              <div style={{ marginTop: 8 }}>
+                <button className="btn btn-ghost btn-sm" onClick={() => setIncludeInferred(true)}>
+                  Show likely routes
+                </button>
+              </div>
+            </div>
+          )}
+          {!includeInferred && data.inferred_paths_available === 0 && (
+            <div style={{ maxWidth: 460, margin: "10px auto 0" }}>
+              Nothing connects to an objective here, even allowing for credential reuse.
+            </div>
+          )}
         </div>
       ) : (
         <div>

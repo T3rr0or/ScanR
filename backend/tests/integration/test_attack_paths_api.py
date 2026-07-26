@@ -175,3 +175,97 @@ async def test_empty_scan_returns_an_empty_graph(client, auth_headers):
     assert body["paths"] == []
     assert body["summary"]["worst_severity"] is None
     assert len(body["nodes"]) == 1  # just the entry node
+
+
+@pytest.mark.asyncio
+async def test_an_inference_only_scan_says_so_rather_than_looking_empty(
+    client, auth_headers, db
+):
+    """With inference off by default, a scan whose only route is a hypothesis
+    returns no paths — which reads as "nothing here" to anyone who does not know
+    the default flipped. The response has to distinguish the two cases."""
+    from scanr.models import Finding, Host, Port, Scan, ScanStatus
+    from scanr.models.base import new_uuid
+    from scanr.models.user import User
+    from sqlalchemy import select
+
+    admin = (await db.execute(select(User).where(User.email == "admin@scanr.local"))).scalar_one()
+    scan = Scan(id=new_uuid(), name="inference-only", status=ScanStatus.completed,
+                profile="standard", user_id=admin.id)
+    db.add(scan)
+    await db.flush()
+    web = Host(id=new_uuid(), scan_id=scan.id, ip="192.0.2.20", status="up")
+    dc = Host(id=new_uuid(), scan_id=scan.id, ip="192.0.2.21", status="up")
+    db.add_all([web, dc])
+    await db.flush()
+    db.add_all([
+        Port(id=new_uuid(), host_id=web.id, number=6379, protocol="tcp", state="open"),
+        Port(id=new_uuid(), host_id=dc.id, number=445, protocol="tcp", state="open"),
+    ])
+
+    def f(plugin_id, severity, host, **kw):
+        return Finding(id=new_uuid(), scan_id=scan.id, host_id=host.id,
+                       plugin_id=plugin_id, severity=severity, title=plugin_id, **kw)
+
+    # No demonstrated route onto the DC — only reuse could bridge the gap.
+    db.add_all([
+        f("services.redis_unauth", "critical", web),
+        f("web.sensitive_files", "high", web),
+        f("services.dcsync_check", "critical", dc),
+    ])
+    await db.commit()
+    try:
+        body = (await client.get(f"/api/v1/scans/{scan.id}/attack-paths",
+                                 headers=auth_headers)).json()
+        assert body["paths"] == []
+        assert body["inferred_paths_available"] >= 1, (
+            "the UI cannot tell 'nothing connects' from 'nothing proven' without this"
+        )
+
+        # And with inference on, those routes actually appear.
+        loose = (await client.get(
+            f"/api/v1/scans/{scan.id}/attack-paths?include_inferred=true",
+            headers=auth_headers,
+        )).json()
+        assert len(loose["paths"]) == body["inferred_paths_available"]
+        assert loose["inferred_paths_available"] is None, "only set when there was nothing to show"
+    finally:
+        await db.execute(sa_delete(Finding).where(Finding.scan_id == scan.id))
+        for h in (web, dc):
+            await db.execute(sa_delete(Port).where(Port.host_id == h.id))
+        await db.execute(sa_delete(Host).where(Host.scan_id == scan.id))
+        await db.execute(sa_delete(Scan).where(Scan.id == scan.id))
+        await db.commit()
+
+
+@pytest.mark.asyncio
+async def test_nothing_connecting_at_all_is_reported_as_zero_not_null(
+    client, auth_headers, db
+):
+    """Zero and null mean different things: zero is "checked, nothing there"."""
+    from scanr.models import Finding, Host, Scan, ScanStatus
+    from scanr.models.base import new_uuid
+    from scanr.models.user import User
+    from sqlalchemy import select
+
+    admin = (await db.execute(select(User).where(User.email == "admin@scanr.local"))).scalar_one()
+    scan = Scan(id=new_uuid(), name="disconnected", status=ScanStatus.completed,
+                profile="standard", user_id=admin.id)
+    db.add(scan)
+    await db.flush()
+    h = Host(id=new_uuid(), scan_id=scan.id, ip="192.0.2.30", status="up")
+    db.add(h)
+    await db.flush()
+    db.add(Finding(id=new_uuid(), scan_id=scan.id, host_id=h.id,
+                   plugin_id="web.http_headers", severity="low", title="hardening only"))
+    await db.commit()
+    try:
+        body = (await client.get(f"/api/v1/scans/{scan.id}/attack-paths",
+                                 headers=auth_headers)).json()
+        assert body["paths"] == []
+        assert body["inferred_paths_available"] == 0
+    finally:
+        await db.execute(sa_delete(Finding).where(Finding.scan_id == scan.id))
+        await db.execute(sa_delete(Host).where(Host.scan_id == scan.id))
+        await db.execute(sa_delete(Scan).where(Scan.id == scan.id))
+        await db.commit()
