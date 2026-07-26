@@ -67,6 +67,13 @@ OVERALL_TIMEOUT_SECONDS = 60.0
 #: design is what keeps it correct across the multiple loops a worker creates.
 #: Making the number configurable is the honest middle: the ceiling is a
 #: deliberate choice per deployment rather than an accident of pool size.
+#:
+#: If you are checking whether this cap works, do not count processes. Chromium
+#: forks helpers, so the count scales at roughly 6 per browser plus a baseline —
+#: measured 7 / 13 / 19 processes at caps of 1 / 2 / 3. A `pgrep chromium | wc -l`
+#: sanity check therefore reads as though the cap were broken when it is holding
+#: exactly. Count concurrent *launches* instead, as tests/unit/test_validation.py
+#: does.
 MAX_CONCURRENT = 2
 _slots: "asyncio.Semaphore | None" = None
 _slots_loop: object = None
