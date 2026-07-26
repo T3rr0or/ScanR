@@ -100,6 +100,14 @@ class Settings(BaseSettings):
     sandbox_image: str = "scanr-sandbox:latest"
     sandbox_cmd_timeout: int = 120  # per-command wall-clock seconds
 
+    # ── Browser validation (see scanr/core/browser.py) ────────────────────────
+    # Concurrent headless-browser validations per worker *process*. A hostile
+    # page can pin a core for the full 60s cap, so this is the CPU ceiling for
+    # one process — and prefork means the deployment ceiling is this multiplied
+    # by the worker's --concurrency (4 by default → 8). Raise --concurrency and
+    # the browser ceiling rises with it, so tune this down on a small host.
+    browser_validation_concurrency: int = 2
+
     # Reports output directory
     reports_dir: Path = Path("./reports")
 

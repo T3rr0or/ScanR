@@ -302,10 +302,37 @@ async def test_concurrent_validations_are_bounded(monkeypatch):
                         type("m", (), {"async_playwright": lambda: PW()}))
     # Reset the per-loop semaphore so the cap under test is the one asserted.
     monkeypatch.setattr(browser, "_slots", None)
-    monkeypatch.setattr(browser, "MAX_CONCURRENT", 2)
+    monkeypatch.setattr(browser, "_configured_concurrency", lambda: 2)
 
     await asyncio.gather(*[
         browser.observe_url("http://192.0.2.10/", "scanr0123456789abcdef", settle_seconds=0)
         for _ in range(10)
     ])
     assert peak <= 2, f"{peak} browsers ran at once against a cap of 2"
+
+
+def test_the_concurrency_cap_is_configurable():
+    """The deployment ceiling is this × the Celery pool size, so an operator on a
+    small host needs to be able to turn it down without editing code."""
+    from scanr.core import browser
+    from scanr.config import get_settings
+
+    assert get_settings().browser_validation_concurrency == browser.MAX_CONCURRENT
+    assert browser._configured_concurrency() >= 1
+
+
+def test_a_broken_setting_does_not_remove_the_cap(monkeypatch):
+    """Falling open here would restore the unbounded amplifier."""
+    from scanr.core import browser
+
+    def boom():
+        raise RuntimeError("no settings")
+
+    monkeypatch.setattr("scanr.config.get_settings", boom)
+    assert browser._configured_concurrency() == browser.MAX_CONCURRENT
+
+    class Zero:
+        browser_validation_concurrency = 0
+
+    monkeypatch.setattr("scanr.config.get_settings", lambda: Zero())
+    assert browser._configured_concurrency() == 1, "zero would mean a deadlock, not no limit"

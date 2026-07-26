@@ -48,15 +48,25 @@ MAX_TEXT = 2000
 #: what makes the worst case bounded regardless of what the page does.
 OVERALL_TIMEOUT_SECONDS = 60.0
 
-#: How many attempts may hold a browser at once, per worker process.
+#: Default concurrent validations **per event loop**, overridable via
+#: BROWSER_VALIDATION_CONCURRENCY.
 #:
 #: The wall-clock cap above makes one hostile page *survivable*, not cheap: a page
 #: spinning in a JS loop still pins a core for the full 60 seconds. Unbounded
-#: concurrency turns that into an amplifier — N validations against a target that
-#: chooses to spin cost N cores for a minute, and the target picks N by deciding
-#: which of its pages hang. Serialising past a small number caps the damage at a
-#: predictable slice of the host, at the cost of queueing validations, which are
-#: not latency-sensitive.
+#: concurrency turns that into an amplifier — the target picks the multiplier by
+#: choosing which of its pages hang.
+#:
+#: Be precise about what this bounds. It is per event loop, which under Celery's
+#: prefork pool means per worker *process*, so the deployment ceiling is this
+#: value × the worker's --concurrency. At the shipped defaults (2 × 4) that is 8
+#: concurrent spinning browsers, ~8 cores for a minute — half of a 16-core host,
+#: not two cores. Raising --concurrency raises this ceiling linearly.
+#:
+#: A genuinely global cap would need a cross-process primitive (a file lock, a
+#: POSIX semaphore, a Redis lease) rather than an asyncio one; the per-loop
+#: design is what keeps it correct across the multiple loops a worker creates.
+#: Making the number configurable is the honest middle: the ceiling is a
+#: deliberate choice per deployment rather than an accident of pool size.
 MAX_CONCURRENT = 2
 _slots: "asyncio.Semaphore | None" = None
 _slots_loop: object = None
@@ -72,9 +82,18 @@ def _slot() -> "asyncio.Semaphore":
 
     loop = asyncio.get_running_loop()
     if _slots is None or _slots_loop is not loop:
-        _slots = asyncio.Semaphore(MAX_CONCURRENT)
+        _slots = asyncio.Semaphore(_configured_concurrency())
         _slots_loop = loop
     return _slots
+
+
+def _configured_concurrency() -> int:
+    try:
+        from scanr.config import get_settings
+
+        return max(1, int(get_settings().browser_validation_concurrency))
+    except Exception:  # noqa: BLE001 - a config problem must not disable the cap
+        return MAX_CONCURRENT
 
 
 async def observe_url(

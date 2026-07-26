@@ -297,8 +297,9 @@ export default function AttackPaths({ scanId }: { scanId: string }) {
                 {data.inferred_paths_available} likely route
                 {data.inferred_paths_available === 1 ? "" : "s"}
               </strong>{" "}
-              appear if credential reuse is assumed — reasoned from the authentication
-              services this scan observed, but not demonstrated.
+              {data.inferred_paths_available === 1 ? "appears" : "appear"} if credential
+              reuse is assumed — reasoned from the authentication services this scan
+              observed, but not demonstrated.
               <div style={{ marginTop: 8 }}>
                 <button className="btn btn-ghost btn-sm" onClick={() => setIncludeInferred(true)}>
                   Show likely routes

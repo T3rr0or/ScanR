@@ -514,10 +514,15 @@ through a JS channel — a dialog or the console — counts as proof, so the age
 cannot manufacture one.
 
 Each attempt is bounded — per-call timeouts plus a 60-second wall-clock cap — and
-at most two run concurrently per worker. Both matter because a hostile page
-chooses how long it holds you: a JS loop pins a core for as long as it is allowed
-to, so the cap makes one attempt survivable and the concurrency limit stops it
-being multiplied.
+concurrency is limited, because a hostile page chooses how long it holds you: a
+JS loop pins a core for as long as it is allowed to. The cap makes one attempt
+survivable; the concurrency limit stops it being multiplied.
+
+`BROWSER_VALIDATION_CONCURRENCY` (default `2`) is **per worker process**, so the
+deployment ceiling is that value times the Celery worker's `--concurrency` (`4`
+in the shipped compose file, giving 8). Eight pages spinning for a minute is
+eight cores — on a small host, turn one of the two numbers down. Raising
+`--concurrency` raises the browser ceiling with it.
 
 Verdicts are `proved`, `reflected`, `not_reproduced`, and `inconclusive` (the
 page would not load — never reported as clean, for the same reason an
@@ -730,6 +735,7 @@ to turn them on. A local `make dev` run has them on by default.
 | `SANDBOX_RELAY_IMAGE` | built image | Image for the per-run SOCKS5 egress relay |
 | `SANDBOX_IMAGE` | `ghcr.io/t3rr0or/scanr-sandbox:latest` | Toolkit image the sandbox runs |
 | `SANDBOX_CMD_TIMEOUT` | `120` | Per-command timeout (seconds) in the sandbox |
+| `BROWSER_VALIDATION_CONCURRENCY` | `2` | Concurrent `browser_validate` attempts **per worker process**. Total ceiling = this × the worker's `--concurrency`. |
 | `DATABASE_URL` | compose-managed | SQLAlchemy database URL |
 | `REDIS_URL` | compose-managed | Redis URL |
 | `CELERY_BROKER_URL` | compose-managed | Celery broker URL |
