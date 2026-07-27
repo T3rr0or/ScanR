@@ -6,6 +6,7 @@ import { useState, useRef, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Plus } from "lucide-react";
 import api from "@/api/client";
+import { PROVIDER_LABEL } from "@/api/ai";
 import { useAuthStore } from "@/store/auth";
 import { isAdminToken } from "@/utils/jwt";
 import { StatusPill } from "@/components/ui";
@@ -92,12 +93,6 @@ const CAP_LABEL: Record<string, string> = {
 	analyze: "Read-only",
 	active: "Active",
 	full: "Full",
-};
-
-const PROVIDER_LABEL: Record<string, string> = {
-	anthropic: "Claude",
-	openai: "ChatGPT",
-	deepseek: "DeepSeek",
 };
 
 const SETTINGS_KEY = "scanr_agent_settings";

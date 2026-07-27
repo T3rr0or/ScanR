@@ -9,6 +9,7 @@ import {
 import { scansApi, type ScanCreate, type ScanCredentialIn } from '@/api/scans'
 import { templatesApi, type ScanTemplate } from '@/api/templates'
 import { wordlistsApi } from '@/api/wordlists'
+import { aiApi, configuredProviders, effectiveModelFor, providerLabel } from '@/api/ai'
 import { useAuthStore } from '@/store/auth'
 import { isAdminToken, isViewerToken } from '@/utils/jwt'
 import { ALL_CATEGORIES, PORT_RANGES, configToJson, defaultProfileConfig, jsonToConfig, type ProfileConfig } from '@/components/ProfileEditor'
@@ -732,11 +733,36 @@ function NewScanModal({
     enabled: false,
     mode: 'guided' as 'guided' | 'autonomous',
     objective: '',
+    // Empty means "whatever Settings → AI defaults to", which is what most runs
+    // want; a per-scan choice is for the cases where it isn't.
+    provider: '',
+    model: '',
     aggressive: false,
     allowExploit: false,
     allowPrivesc: false,
     allowCmd: false,
     allowEgress: false,
+  })
+
+  const { data: aiStatus } = useQuery({
+    queryKey: ['ai-status'],
+    queryFn: aiApi.status,
+  })
+  const aiProviders = configuredProviders(aiStatus)
+  const aiProviderChoice = ai.provider || aiStatus?.default_provider || ''
+
+  // The provider's own model list. Admin-only server-side, so a rejection is
+  // expected rather than exceptional — fall back to a free-text model id.
+  const {
+    data: aiModels,
+    isError: aiModelsUnavailable,
+    isFetching: aiModelsLoading,
+  } = useQuery({
+    queryKey: ['ai-models', aiProviderChoice],
+    queryFn: () => aiApi.availableModels(aiProviderChoice),
+    enabled: ai.enabled && Boolean(aiProviderChoice),
+    retry: false,
+    staleTime: 5 * 60_000,
   })
 
   const { data: apiTemplates = [] } = useQuery({
@@ -917,6 +943,10 @@ function NewScanModal({
             enabled: true,
             mode: ai.mode,
             objective: ai.objective.trim() || undefined,
+            // Omitted rather than sent empty: the backend reads "absent" as
+            // "use the configured default", which is not the same as a choice.
+            provider: ai.provider || undefined,
+            model: ai.model.trim() || undefined,
             aggressive: isAdmin && ai.aggressive,
             allow_exploitation: isAdmin && ai.aggressive && ai.allowExploit,
             allow_privilege_escalation: isAdmin && ai.aggressive && ai.allowPrivesc,
@@ -1116,6 +1146,68 @@ function NewScanModal({
                         <option value="autonomous">Autonomous — runs hands-off</option>
                       </select>
                     </div>
+
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                      <span style={{ fontSize: 12, color: 'var(--text-2)' }}>Provider</span>
+                      <select
+                        className="select-field"
+                        style={{ width: 'auto' }}
+                        value={ai.provider}
+                        // Changing provider invalidates the model: model ids are
+                        // provider-specific, so carrying one across would send
+                        // Claude a DeepSeek id and fail at the first call.
+                        onChange={e => setAi(a => ({ ...a, provider: e.target.value, model: '' }))}
+                        title="Which provider runs this scan's agent. Defaults to Settings → AI."
+                      >
+                        <option value="">
+                          {aiStatus?.default_provider
+                            ? `Default (${providerLabel(aiStatus.default_provider)})`
+                            : 'Default'}
+                        </option>
+                        {aiProviders.map(p => (
+                          <option key={p} value={p}>{providerLabel(p)}</option>
+                        ))}
+                      </select>
+
+                      <span style={{ fontSize: 12, color: 'var(--text-2)' }}>Model</span>
+                      {aiModelsUnavailable ? (
+                        // No model list (non-admin, or the provider's API refused).
+                        // A free-text id still beats offering nothing.
+                        <input
+                          className="input"
+                          style={{ width: 240, fontSize: 12 }}
+                          value={ai.model}
+                          onChange={e => setAi(a => ({ ...a, model: e.target.value }))}
+                          placeholder={effectiveModelFor(aiStatus, aiProviderChoice) || 'provider default'}
+                          title="Model id. The list could not be fetched, so type one or leave blank for the default."
+                        />
+                      ) : (
+                        <select
+                          className="select-field"
+                          style={{ width: 'auto', maxWidth: 260 }}
+                          value={ai.model}
+                          onChange={e => setAi(a => ({ ...a, model: e.target.value }))}
+                          disabled={aiModelsLoading && !aiModels}
+                          title="Model for this scan's agent. Defaults to the provider's configured model."
+                        >
+                          <option value="">
+                            {aiModelsLoading && !aiModels
+                              ? 'Loading…'
+                              : `Default (${effectiveModelFor(aiStatus, aiProviderChoice) || 'provider default'})`}
+                          </option>
+                          {(aiModels ?? []).map(m => (
+                            <option key={m.id} value={m.id}>{m.display_name || m.id}</option>
+                          ))}
+                        </select>
+                      )}
+                    </div>
+
+                    {aiStatus && aiProviders.length === 0 && (
+                      <div style={{ fontSize: 11, color: 'var(--sev-high)' }}>
+                        ⚠ No provider key is configured — the agent will fail to start.
+                        Add one in Settings → AI.
+                      </div>
+                    )}
                     <textarea
                       className="textarea"
                       rows={2}
@@ -1326,7 +1418,13 @@ function NewScanModal({
               credentialCount={credentials.length}
               bruteForce={bruteForce}
               aiSummary={ai.enabled
-                ? `${ai.mode}${isAdmin && ai.aggressive ? ' · aggressive' : ''} — runs during the scan`
+                ? [
+                    ai.mode,
+                    // Name the model that will actually run, whether chosen here
+                    // or inherited, so Review never hides which one it will be.
+                    `${providerLabel(aiProviderChoice) || 'default provider'} · ${ai.model || effectiveModelFor(aiStatus, aiProviderChoice) || 'default model'}`,
+                    ...(isAdmin && ai.aggressive ? ['aggressive'] : []),
+                  ].join(' · ') + ' — runs during the scan'
                 : 'disabled'}
             />
           )}
