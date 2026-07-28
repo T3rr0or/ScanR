@@ -17,6 +17,31 @@ interface HostNode {
   status: string
 }
 
+/** A node in the force simulation. Extends D3's datum so x/y/fx/fy are typed. */
+interface SimNode extends d3.SimulationNodeDatum {
+  id: string
+  _kind: 'scanner' | 'subnet' | 'host'
+  ip?: string
+  subnet?: string
+  label?: string
+  openPorts?: number
+  severity?: string
+  hostData?: HostNode
+}
+
+/** D3 rewrites source/target from id strings to node objects once the
+ *  simulation starts, which is why both shapes are in the type. */
+interface SimLink extends d3.SimulationLinkDatum<SimNode> {
+  source: string | SimNode
+  target: string | SimNode
+  _kind: 'trunk' | 'branch'
+}
+
+/** Post-simulation coordinate read, for the tick handler. */
+function xy(end: string | SimNode | number | undefined, fallback: number): number {
+  return typeof end === 'object' && end !== null ? (end.x ?? fallback) : fallback
+}
+
 interface Props {
   hosts: HostNode[]
   findingsByHost?: Record<string, { severity: string }[]>
@@ -142,6 +167,14 @@ export default function NetworkTopology({ hosts, findingsByHost, onSelectHost, s
   const svgRef = useRef<SVGSVGElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const [tooltip, setTooltip] = useState<{ x: number; y: number; host: HostNode } | null>(null)
+
+  // Held in a ref rather than listed as an effect dependency. The effect tears
+  // down and rebuilds the entire force simulation, so depending on a callback
+  // the parent recreates each render would restart the layout on every render —
+  // the graph would never settle. The ref keeps the click handler current
+  // without making the simulation's lifetime depend on it.
+  const onSelectHostRef = useRef(onSelectHost)
+  useEffect(() => { onSelectHostRef.current = onSelectHost }, [onSelectHost])
   const [exporting, setExporting] = useState(false)
 
   useEffect(() => {
@@ -176,15 +209,6 @@ export default function NetworkTopology({ hosts, findingsByHost, onSelectHost, s
     const multiSubnet = subnets.length > 1
 
     // Build simulation nodes
-    type SimNode = {
-      id: string; _kind: 'scanner' | 'subnet' | 'host'
-      ip?: string; subnet?: string; label?: string
-      openPorts?: number; severity?: string
-      hostData?: HostNode
-      fx?: number | null; fy?: number | null
-      x?: number; y?: number
-    }
-
     const simNodes: SimNode[] = []
 
     // Scanner (fixed center)
@@ -210,7 +234,7 @@ export default function NetworkTopology({ hosts, findingsByHost, onSelectHost, s
     })
 
     // Build links
-    const links: { source: string; target: string; _kind: 'trunk' | 'branch' }[] = []
+    const links: SimLink[] = []
 
     if (multiSubnet) {
       // Scanner → subnet gateways (trunk lines, stronger/longer)
@@ -228,14 +252,14 @@ export default function NetworkTopology({ hosts, findingsByHost, onSelectHost, s
       })
     }
 
-    const sim = d3.forceSimulation(simNodes as any)
-      .force('link', d3.forceLink(links as any)
-        .id((d: any) => d.id)
-        .distance((d: any) => d._kind === 'trunk' ? 180 : 90)
-        .strength((d: any) => d._kind === 'trunk' ? 0.18 : 0.25)
+    const sim = d3.forceSimulation<SimNode>(simNodes)
+      .force('link', d3.forceLink<SimNode, SimLink>(links)
+        .id(d => d.id)
+        .distance(d => d._kind === 'trunk' ? 180 : 90)
+        .strength(d => d._kind === 'trunk' ? 0.18 : 0.25)
       )
-      .force('charge', d3.forceManyBody().strength((d: any) => d._kind === 'subnet' ? -400 : -220))
-      .force('collision', d3.forceCollide().radius((d: any) => {
+      .force('charge', d3.forceManyBody<SimNode>().strength(d => d._kind === 'subnet' ? -400 : -220))
+      .force('collision', d3.forceCollide<SimNode>().radius(d => {
         if (d._kind === 'scanner') return 30
         if (d._kind === 'subnet') return 22
         return nodeRadius(d.openPorts ?? 0) + 12
@@ -245,24 +269,24 @@ export default function NetworkTopology({ hosts, findingsByHost, onSelectHost, s
     const g = svg.append('g')
     svg.call(d3.zoom<SVGSVGElement, unknown>()
       .scaleExtent([0.1, 8])
-      .on('zoom', e => g.attr('transform', e.transform.toString())) as any)
+      .on('zoom', e => g.attr('transform', e.transform.toString())))
 
     // ── Draw layers (back to front) ──
 
     // 1. All edges
     const edgeGroup = g.append('g')
-    const edges = edgeGroup.selectAll('line')
+    const edges = edgeGroup.selectAll<SVGLineElement, SimLink>('line')
       .data(links).enter().append('line')
-      .attr('stroke', (d: any) => d._kind === 'trunk' ? '#1e3a5f' : '#1a2535')
-      .attr('stroke-width', (d: any) => d._kind === 'trunk' ? 1.5 : 1)
-      .attr('stroke-opacity', (d: any) => d._kind === 'trunk' ? 0.8 : 0.5)
-      .attr('stroke-dasharray', (d: any) => d._kind === 'trunk' ? 'none' : '3,2')
+      .attr('stroke', d => d._kind === 'trunk' ? '#1e3a5f' : '#1a2535')
+      .attr('stroke-width', d => d._kind === 'trunk' ? 1.5 : 1)
+      .attr('stroke-opacity', d => d._kind === 'trunk' ? 0.8 : 0.5)
+      .attr('stroke-dasharray', d => d._kind === 'trunk' ? 'none' : '3,2')
 
     // 2. Subnet gateway nodes
     const subnetGroup = g.append('g')
     if (multiSubnet) {
       const subnetNodes = simNodes.filter(n => n._kind === 'subnet')
-      const subnetGs = subnetGroup.selectAll('g')
+      const subnetGs = subnetGroup.selectAll<SVGGElement, SimNode>('g')
         .data(subnetNodes).enter().append('g')
         .attr('cursor', 'default')
 
@@ -283,7 +307,7 @@ export default function NetworkTopology({ hosts, findingsByHost, onSelectHost, s
 
       // Subnet label
       subnetGs.append('text')
-        .text((d: any) => (d.subnet ?? '').split('.').slice(0, 3).join('.') + '.x')
+        .text(d => (d.subnet ?? '').split('.').slice(0, 3).join('.') + '.x')
         .attr('text-anchor', 'middle')
         .attr('dy', '0.35em')
         .attr('font-size', 7.5)
@@ -294,7 +318,7 @@ export default function NetworkTopology({ hosts, findingsByHost, onSelectHost, s
 
       // /24 label below
       subnetGs.append('text')
-        .text((_d: any) => '/24')
+        .text(() => '/24')
         .attr('text-anchor', 'middle')
         .attr('dy', 28)
         .attr('font-size', 8.5)
@@ -306,48 +330,48 @@ export default function NetworkTopology({ hosts, findingsByHost, onSelectHost, s
 
     // 3. Host nodes
     const hostSimNodes = simNodes.filter(n => n._kind === 'host')
-    const hostGs = g.append('g').selectAll('g')
+    const hostGs = g.append('g').selectAll<SVGGElement, SimNode>('g')
       .data(hostSimNodes).enter().append('g')
       .attr('cursor', 'pointer')
-      .call(d3.drag<SVGGElement, any>()
-        .on('start', (ev, d: any) => { if (!ev.active) sim.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y })
-        .on('drag',  (ev, d: any) => { d.fx = ev.x; d.fy = ev.y })
-        .on('end',   (ev, d: any) => { if (!ev.active) sim.alphaTarget(0); d.fx = null; d.fy = null })
+      .call(d3.drag<SVGGElement, SimNode>()
+        .on('start', (ev, d) => { if (!ev.active) sim.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y })
+        .on('drag',  (ev, d) => { d.fx = ev.x; d.fy = ev.y })
+        .on('end',   (ev, d) => { if (!ev.active) sim.alphaTarget(0); d.fx = null; d.fy = null })
       )
 
     // Glow ring for critical/high
-    hostGs.filter((d: any) => d.severity === 'critical' || d.severity === 'high')
+    hostGs.filter(d => d.severity === 'critical' || d.severity === 'high')
       .append('circle')
-      .attr('r', (d: any) => nodeRadius(d.openPorts ?? 0) + 5)
+      .attr('r', d => nodeRadius(d.openPorts ?? 0) + 5)
       .attr('fill', 'none')
-      .attr('stroke', (d: any) => SEV_HEX[d.severity ?? 'none'] as string)
+      .attr('stroke', d => SEV_HEX[d.severity ?? 'none'])
       .attr('stroke-width', 1.5)
       .attr('stroke-opacity', 0.35)
 
     hostGs.append('circle')
-      .attr('r', (d: any) => nodeRadius(d.openPorts ?? 0))
-      .attr('fill', (d: any) => SEV_HEX[d.severity ?? 'none'])
+      .attr('r', d => nodeRadius(d.openPorts ?? 0))
+      .attr('fill', d => SEV_HEX[d.severity ?? 'none'])
       .attr('fill-opacity', 0.88)
       .attr('stroke', '#0d1117')
       .attr('stroke-width', 1.5)
 
     hostGs.append('text')
-      .text((d: any) => d.ip ?? '')
+      .text(d => d.ip ?? '')
       .attr('text-anchor', 'middle')
-      .attr('dy', (d: any) => nodeRadius(d.openPorts ?? 0) + 12)
+      .attr('dy', d => nodeRadius(d.openPorts ?? 0) + 12)
       .attr('font-size', 9)
       .attr('font-family', 'var(--font-mono, monospace)')
       .attr('fill', '#6b7280')
       .attr('pointer-events', 'none')
 
     hostGs
-      .on('mouseenter', (ev, d: any) => {
+      .on('mouseenter', (ev, d) => {
         if (!svgRef.current || !d.hostData) return
         const rect = svgRef.current.getBoundingClientRect()
         setTooltip({ x: ev.clientX - rect.left, y: ev.clientY - rect.top, host: d.hostData })
       })
       .on('mouseleave', () => setTooltip(null))
-      .on('click', (_, d: any) => { if (d.hostData) onSelectHost?.(d.hostData) })
+      .on('click', (_, d) => { if (d.hostData) onSelectHostRef.current?.(d.hostData) })
 
     // 4. Scanner node (topmost)
     const scannerG = g.append('g').attr('cursor', 'default')
@@ -373,16 +397,16 @@ export default function NetworkTopology({ hosts, findingsByHost, onSelectHost, s
       scannerG.attr('transform', `translate(${cx},${cy})`)
 
       edges
-        .attr('x1', (d: any) => (typeof d.source === 'object' ? d.source.x : cx) ?? cx)
-        .attr('y1', (d: any) => (typeof d.source === 'object' ? d.source.y : cy) ?? cy)
-        .attr('x2', (d: any) => (typeof d.target === 'object' ? d.target.x : 0) ?? 0)
-        .attr('y2', (d: any) => (typeof d.target === 'object' ? d.target.y : 0) ?? 0)
+        .attr('x1', d => xy(d.source, cx))
+        .attr('y1', d => xy(d.source, cy))
+        .attr('x2', d => xy(d.target, 0))
+        .attr('y2', d => xy(d.target, 0))
 
       if (subnetNodeEls) {
-        subnetNodeEls.attr('transform', (d: any) => `translate(${d.x ?? cx},${d.y ?? cy})`)
+        subnetNodeEls.attr('transform', d => `translate(${d.x ?? cx},${d.y ?? cy})`)
       }
 
-      hostGs.attr('transform', (d: any) => `translate(${d.x ?? 0},${d.y ?? 0})`)
+      hostGs.attr('transform', d => `translate(${d.x ?? 0},${d.y ?? 0})`)
     })
 
     return () => { sim.stop() }

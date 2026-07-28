@@ -17,6 +17,11 @@ services:
       POSTGRES_USER: scanr
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}
       POSTGRES_DB: scanr
+    # Docker's 64MB default /dev/shm is too small for Postgres parallel workers:
+    # a manual VACUUM (ANALYZE) on a multi-GB findings table fails with "could
+    # not resize shared memory segment". Autovacuum never goes parallel so normal
+    # operation is unaffected — this is for the ops runbook.
+    shm_size: 1gb
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U scanr -d scanr"]
       interval: 5s
@@ -59,6 +64,16 @@ services:
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:?ADMIN_PASSWORD must be set in .env}
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost}
       SECURE_COOKIES: ${SECURE_COOKIES:-true}
+      # The frontend nginx proxies /api and /ws, so the API's direct peer is
+      # always a container on the Docker network. Without trusting it, every
+      # client is rate-limited under nginx's IP as a single shared bucket.
+      # 172.16.0.0/12 covers Docker's default bridge pools. Narrow this if you
+      # expose the API directly via SCANR_API_BIND. See .env.example.
+      TRUSTED_PROXIES: ${TRUSTED_PROXIES:-172.16.0.0/12}
+      # /docs, /redoc and /openapi.json are unauthenticated and publish the whole
+      # API surface. Off by default here since this is the deployment that can be
+      # exposed; set DOCS_ENABLED=true in .env if you want them.
+      DOCS_ENABLED: ${DOCS_ENABLED:-false}
       # Self-update is OFF by default. It requires mounting the host Docker
       # socket into the API container, which grants it root-equivalent control
       # of the host. Enable it only via the docker-compose.self-update.yml
@@ -171,11 +186,22 @@ services:
       SANDBOX_NETWORK: scanr_sandbox
       SANDBOX_PROXY_URL: ${SANDBOX_PROXY_URL:-http://sandbox-proxy:8888}
       SANDBOX_MAX_LIFETIME: ${SANDBOX_MAX_LIFETIME:-3600}
+      SANDBOX_MAX_SESSIONS: ${SANDBOX_MAX_SESSIONS:-8}
+      # Per-run SOCKS5 egress relay, started only when a scan opts into target
+      # egress. It is the one thing bridging scanr_sandbox (internal) and the
+      # egress network, and it refuses any destination outside the scan's scope.
+      SANDBOX_RELAY_IMAGE: ${SANDBOX_RELAY_IMAGE:-ghcr.io/t3rr0or/scanr-sandbox-relay:${SCANR_VERSION:-latest}}
+      SANDBOX_EGRESS_NETWORK: scanr_sandbox_egress
+      SANDBOX_RELAY_PORT: ${SANDBOX_RELAY_PORT:-1080}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+    # Deliberately NOT attached to sandbox_net. The runner holds the Docker
+    # socket, which is root-equivalent on the host — it must not be reachable
+    # from the very containers it sandboxes. It creates them via the Docker API
+    # over the socket, so it never needs to be on their network. (sandbox_net
+    # still gets created: sandbox-proxy is attached to it.)
     networks:
       - default
-      - sandbox_net
 
   # Filtering forward-proxy: package installs reach allowlisted mirrors only.
   # Self-built minimal image (replaces third-party vimagick/tinyproxy:latest).
@@ -195,6 +221,18 @@ services:
       - sandbox_net
       - sandbox_egress
 
+  # Per-run SOCKS5 egress relay image. Built here so `docker compose build`
+  # produces it, but never *run* by compose: the runner starts one container per
+  # agent run with that run's scope baked into its environment, and destroys it
+  # with the session. A long-lived shared relay would mean one scope for every
+  # scan, which is the opposite of the point.
+  sandbox-relay:
+    image: ghcr.io/t3rr0or/scanr-sandbox-relay:${SCANR_VERSION:-latest}
+    build:
+      context: ./backend
+      dockerfile: sandbox/Dockerfile.relay
+    profiles: ["build-only"]
+
 volumes:
   redis_data:
   postgres_data:
@@ -209,5 +247,8 @@ networks:
   sandbox_net:
     name: scanr_sandbox
     internal: true
-  # Egress leg for sandbox-proxy only. Never attach sandboxed containers here.
+  # Egress leg for sandbox-proxy and the per-run SOCKS5 relays only. Never attach
+  # sandboxed containers here — the whole containment argument is that their only
+  # network is the internal one above.
   sandbox_egress:
+    name: scanr_sandbox_egress

@@ -5,10 +5,31 @@ import { scansApi } from '@/api/scans'
 import { SevTag, relTime, EmptyState } from '@/components/ui'
 import SortableTh from '@/components/SortableTh'
 import { useSortableFindings } from '@/hooks/useSortableFindings'
+import { safeUrl } from "@/utils/safeUrl"
 
 const SEVERITIES = ['', 'critical', 'high', 'medium', 'low', 'info']
 
-type TriageFilter = 'all' | 'open' | 'false_positive' | 'accepted_risk' | 'resolved'
+type TriageFilter = 'all' | 'open' | 'false_positive' | 'accepted_risk' | 'resolved' | 'validated'
+
+/* ─── Verified badge ───────────────────────────────
+   Only set when ScanR reproduced the issue mechanically, so it means the same
+   thing everywhere it appears: nobody needs to re-test this one. */
+function VerifiedTag({ method }: { method?: string | null }) {
+  return (
+    <span
+      title={method ? `Reproduced by ScanR (${method})` : 'Reproduced by ScanR'}
+      style={{
+        fontSize: 10, fontWeight: 700, letterSpacing: '0.04em', textTransform: 'uppercase',
+        padding: '1px 6px', borderRadius: 3, whiteSpace: 'nowrap',
+        color: 'var(--ok)',
+        background: 'oklch(0.75 0.15 145 / 0.12)',
+        border: '1px solid oklch(0.75 0.15 145 / 0.35)',
+      }}
+    >
+      ✓ verified
+    </span>
+  )
+}
 
 function safeParse(s: string | null): string[] {
   if (!s) return []
@@ -109,11 +130,20 @@ function FindingDrawer({
   onClose: () => void
 }) {
   const qc = useQueryClient()
-  const [notes, setNotes] = useState(finding.analyst_notes ?? '')
 
-  useEffect(() => {
+  /* Reset the draft when a different finding is selected — the documented
+     "adjust state during render" pattern rather than an effect.
+     The effect this replaces depended on finding.id alone and deliberately
+     omitted analyst_notes: adding it (as the lint rule wants) would overwrite
+     whatever the analyst is mid-way through typing every time the findings
+     query refetches. Resetting during render sidesteps that, and lands before
+     paint instead of after, so the previous finding's notes never flash. */
+  const [notes, setNotes] = useState(finding.analyst_notes ?? '')
+  const [notesFor, setNotesFor] = useState(finding.id)
+  if (notesFor !== finding.id) {
+    setNotesFor(finding.id)
     setNotes(finding.analyst_notes ?? '')
-  }, [finding.id])
+  }
 
   const [drawerErr, setDrawerErr] = useState<string | null>(null)
   const _onErr = (e: unknown) => setDrawerErr(e instanceof Error ? e.message : String(e))
@@ -164,6 +194,7 @@ function FindingDrawer({
             <span className={statusPillClass(finding.remediation_status, finding.false_positive)}>
               {statusLabel(finding)}
             </span>
+            {finding.validated && <VerifiedTag method={finding.validation_method} />}
           </div>
           <div
             style={{
@@ -280,6 +311,37 @@ function FindingDrawer({
           </div>
         )}
 
+        {/* Validation — how ScanR proved it, so the reader doesn't have to */}
+        {finding.validated && (
+          <div style={{ marginBottom: 14 }}>
+            <div className="label" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              Validation <VerifiedTag method={finding.validation_method} />
+            </div>
+            <pre
+              className="mono"
+              style={{
+                background: 'oklch(0.75 0.15 145 / 0.08)',
+                borderLeft: '3px solid var(--ok)',
+                color: 'var(--text-1)',
+                borderRadius: '0 4px 4px 0',
+                padding: '10px 12px',
+                fontSize: 11,
+                overflowX: 'auto',
+                whiteSpace: 'pre-wrap',
+                wordBreak: 'break-all',
+                margin: 0,
+              }}
+            >
+              {finding.validation_evidence || 'Reproduced by ScanR.'}
+            </pre>
+            {finding.validated_at && (
+              <div style={{ fontSize: 10.5, color: 'var(--text-3)', marginTop: 4 }}>
+                Verified {relTime(finding.validated_at)}
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Remediation */}
         {finding.remediation && (
           <div style={{ marginBottom: 14 }}>
@@ -383,7 +445,7 @@ function FindingDrawer({
               {refs.map(url => (
                 <a
                   key={url}
-                  href={url}
+                  href={safeUrl(url)}
                   target="_blank"
                   rel="noreferrer"
                   style={{
@@ -456,36 +518,37 @@ export default function Findings() {
     queryFn: () => scansApi.list({ limit: 200 }),
   })
 
-  const apiParams: Record<string, string> = {}
+  /* Every filter goes to the server.
+     These used to run client-side over whatever the first page happened to
+     contain, so a filter would quietly return fewer rows than exist — five
+     validated findings among 303 showed as four. A filter that under-reports
+     without saying so is worse than no filter. */
+  const PAGE_LIMIT = 500
+  // Ask for one more than we display, so "there are more" is a fact rather than
+  // an inference from a full page — which was wrong at exactly PAGE_LIMIT rows.
+  const apiParams: Record<string, string | number | boolean> = { limit: PAGE_LIMIT + 1 }
   if (severity) apiParams.severity = severity
   if (scanId) apiParams.scan_id = scanId
   if (complianceTag) apiParams.compliance_tag = complianceTag
+  if (search.trim()) apiParams.q = search.trim()
+  switch (triageStatus) {
+    case 'open':            apiParams.remediation_status = 'open'; apiParams.false_positive = false; break
+    case 'false_positive':  apiParams.false_positive = true; break
+    case 'accepted_risk':   apiParams.remediation_status = 'accepted_risk'; break
+    case 'resolved':        apiParams.remediation_status = 'resolved'; break
+    case 'validated':       apiParams.validated = true; break
+  }
 
-  const { data: rawFindings = [] } = useQuery({
-    queryKey: ['findings', severity, scanId, complianceTag],
-    queryFn: () => findingsApi.list(Object.keys(apiParams).length ? apiParams : undefined),
+  const { data: fetched = [] } = useQuery({
+    queryKey: ['findings', severity, scanId, complianceTag, triageStatus, search.trim()],
+    queryFn: () => findingsApi.list(apiParams),
+    placeholderData: prev => prev,
   })
 
-  // Client-side filters: triage status + search
-  const filteredFindings = rawFindings.filter(f => {
-    // Triage filter
-    if (triageStatus === 'open' && !(f.remediation_status === 'open' && !f.false_positive)) return false
-    if (triageStatus === 'false_positive' && !f.false_positive) return false
-    if (triageStatus === 'accepted_risk' && f.remediation_status !== 'accepted_risk') return false
-    if (triageStatus === 'resolved' && f.remediation_status !== 'resolved') return false
-    // Search filter
-    if (search) {
-      const q = search.toLowerCase()
-      if (
-        !f.title.toLowerCase().includes(q) &&
-        !(f.host_ip ?? '').toLowerCase().includes(q) &&
-        !(f.plugin_id ?? '').toLowerCase().includes(q)
-      ) return false
-    }
-    return true
-  })
+  const truncated = fetched.length > PAGE_LIMIT
+  const rawFindings = truncated ? fetched.slice(0, PAGE_LIMIT) : fetched
 
-  const { sorted: findings, sortKey, sortDir, toggleSort } = useSortableFindings(filteredFindings)
+  const { sorted: findings, sortKey, sortDir, toggleSort } = useSortableFindings(rawFindings)
 
   // Bulk mutations
   const [bulkErr, setBulkErr] = useState<string | null>(null)
@@ -563,6 +626,15 @@ export default function Findings() {
           <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)' }}>
             {findings.length} result{findings.length !== 1 ? 's' : ''}
           </span>
+          {truncated && (
+            <span
+              className="mono"
+              title="Narrow the filters, or use Export CSV for the full set"
+              style={{ fontSize: 11, color: 'var(--sev-medium)' }}
+            >
+              first {PAGE_LIMIT} shown — there are more
+            </span>
+          )}
         </div>
 
         {/* Filter bar */}
@@ -628,6 +700,7 @@ export default function Findings() {
           >
             <option value="all">All statuses</option>
             <option value="open">Open</option>
+            <option value="validated">Verified only</option>
             <option value="false_positive">False Positive</option>
             <option value="accepted_risk">Accepted Risk</option>
             <option value="resolved">Resolved</option>
@@ -638,10 +711,12 @@ export default function Findings() {
             className="btn btn-ghost btn-sm"
             style={{ flexShrink: 0 }}
             onClick={() => {
+              // Mirror every active filter, so the CSV is the list you are
+              // looking at rather than a differently-filtered one.
               const params = new URLSearchParams()
-              if (severity) params.set('severity', severity)
-              if (scanId) params.set('scan_id', scanId)
-              if (complianceTag) params.set('compliance_tag', complianceTag)
+              for (const [k, v] of Object.entries(apiParams)) {
+                if (k !== 'limit') params.set(k, String(v))
+              }
               window.location.href = `/api/v1/findings/export?${params}`
             }}
             title="Download filtered findings as CSV"
@@ -758,6 +833,7 @@ export default function Findings() {
                         color: 'var(--text-0)',
                       }}
                     >
+                      {f.validated && <><VerifiedTag method={f.validation_method} />{' '}</>}
                       {f.title}
                     </td>
                     <td className="mono" style={{ fontSize: 11.5, color: 'var(--text-2)' }}>

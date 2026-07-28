@@ -9,12 +9,25 @@ from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from scanr.db import get_db
-from scanr.deps import get_current_user
+from scanr.deps import get_current_user, require_scope
 from scanr.models.base import new_uuid
 from scanr.models.scan_template import ScanTemplate
 from scanr.models.user import User
+from scanr.schemas.profile import validate_profile_dict
 
 router = APIRouter(prefix="/templates", tags=["templates"])
+
+
+def _validated_profile(profile: dict) -> str:
+    """Validate a template's profile against the scan profile schema before
+    storing it. Templates are scan presets, so an invalid one would surface as a
+    rejected scan later — or, for fields that reach scanner arguments, as an
+    injection route (see scanr.schemas.profile)."""
+    try:
+        validate_profile_dict(profile, field="profile_json")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return json.dumps(profile)
 
 
 class TemplateCreate(BaseModel):
@@ -70,14 +83,14 @@ async def list_templates(
 async def create_template(
     body: TemplateCreate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_scope("scans:write")),
 ):
     template = ScanTemplate(
         id=new_uuid(),
         user_id=current_user.id,
         name=body.name,
         description=body.description,
-        profile_json=json.dumps(body.profile_json) if body.profile_json else None,
+        profile_json=_validated_profile(body.profile_json) if body.profile_json else None,
         is_system=False,
     )
     db.add(template)
@@ -109,7 +122,7 @@ async def update_template(
     template_id: str,
     body: TemplateUpdate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_scope("scans:write")),
 ):
     result = await db.execute(
         select(ScanTemplate).where(ScanTemplate.id == template_id, ScanTemplate.user_id == current_user.id)
@@ -125,7 +138,7 @@ async def update_template(
     if body.description is not None:
         t.description = body.description
     if body.profile_json is not None:
-        t.profile_json = json.dumps(body.profile_json)
+        t.profile_json = _validated_profile(body.profile_json)
 
     await db.commit()
     await db.refresh(t)
@@ -136,7 +149,7 @@ async def update_template(
 async def delete_template(
     template_id: str,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_scope("scans:write")),
 ):
     result = await db.execute(
         select(ScanTemplate).where(ScanTemplate.id == template_id, ScanTemplate.user_id == current_user.id)

@@ -6,6 +6,7 @@ import { useState, useRef, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Plus } from "lucide-react";
 import api from "@/api/client";
+import { PROVIDER_LABEL } from "@/api/ai";
 import { useAuthStore } from "@/store/auth";
 import { isAdminToken } from "@/utils/jwt";
 import { StatusPill } from "@/components/ui";
@@ -59,6 +60,7 @@ const CAPS: Record<
 		allow_exploitation: boolean;
 		allow_privilege_escalation: boolean;
 		allow_command_exec: boolean;
+		allow_target_egress: boolean;
 	}
 > = {
 	analyze: {
@@ -66,18 +68,24 @@ const CAPS: Record<
 		allow_exploitation: false,
 		allow_privilege_escalation: false,
 		allow_command_exec: false,
+		allow_target_egress: false,
 	},
 	active: {
 		aggressive: true,
 		allow_exploitation: false,
 		allow_privilege_escalation: false,
 		allow_command_exec: false,
+		allow_target_egress: false,
 	},
+	// Full grants the sandbox shell AND lets it reach the scan's authorized
+	// targets through the scope-enforcing relay. Without target egress the shell
+	// can only do local work.
 	full: {
 		aggressive: true,
 		allow_exploitation: true,
 		allow_privilege_escalation: true,
 		allow_command_exec: true,
+		allow_target_egress: true,
 	},
 };
 
@@ -85,12 +93,6 @@ const CAP_LABEL: Record<string, string> = {
 	analyze: "Read-only",
 	active: "Active",
 	full: "Full",
-};
-
-const PROVIDER_LABEL: Record<string, string> = {
-	anthropic: "Claude",
-	openai: "ChatGPT",
-	deepseek: "DeepSeek",
 };
 
 const SETTINGS_KEY = "scanr_agent_settings";
@@ -199,6 +201,7 @@ export default function AgentPanel({
 					allow_exploitation: isAdmin && c.allow_exploitation,
 					allow_privilege_escalation: isAdmin && c.allow_privilege_escalation,
 					allow_command_exec: isAdmin && c.allow_command_exec,
+					allow_target_egress: isAdmin && c.allow_target_egress,
 				})
 				.then((r) => r.data);
 		},

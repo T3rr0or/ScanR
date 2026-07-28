@@ -1,16 +1,18 @@
 from __future__ import annotations
 
-import ipaddress
 import json
-import socket
 from datetime import datetime
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from scanr.core.webhook_dispatcher import (
+    _validate_webhook_host,
+    encrypt_secret,
+)
 from scanr.db import get_db
 from scanr.deps import require_scope
 from scanr.models.base import new_uuid
@@ -29,30 +31,42 @@ VALID_EVENTS = {
 
 
 def _validate_webhook_url(url: str) -> str:
+    """Synchronous, DNS-free shape check, safe to run inside a pydantic validator."""
     parsed = urlparse(url)
     if parsed.scheme not in ("http", "https"):
         raise ValueError("Webhook URL must use http or https")
-    hostname = parsed.hostname
-    if not hostname:
+    if not parsed.hostname:
         raise ValueError("Invalid webhook URL")
-    # Resolve all addresses (IPv4 + IPv6) and block private/internal ranges
-    try:
-        infos = socket.getaddrinfo(hostname, None)
-        for info in infos:
-            addr = ipaddress.ip_address(info[4][0])
-            if addr.is_private or addr.is_loopback or addr.is_link_local or addr.is_reserved or addr.is_multicast:
-                raise ValueError("Webhook URL cannot target private or internal addresses")
-    except socket.gaierror:
-        pass  # unresolvable hostname — allow it (will fail at dispatch time)
-    except ValueError:
-        raise
     return url
 
 
+async def _reject_internal_url(url: str | None) -> None:
+    """Resolve the URL's host and reject private/internal addresses.
+
+    Kept out of the pydantic validator because it does DNS: a blocking
+    getaddrinfo in a sync validator stalls the whole event loop while a slow or
+    unreachable resolver times out. The dispatcher re-runs this check at send
+    time, which is what actually closes the DNS-rebinding window — this one is
+    for immediate operator feedback on an obviously wrong URL.
+    """
+    if not url:
+        return
+    hostname = urlparse(url).hostname
+    if not hostname:
+        return
+    try:
+        await _validate_webhook_host(hostname)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Webhook URL cannot target private or internal addresses: {exc}",
+        )
+
+
 class WebhookCreate(BaseModel):
-    name: str
-    url: str
-    secret: str | None = None
+    name: str = Field(max_length=255)
+    url: str = Field(max_length=2048)
+    secret: str | None = Field(default=None, max_length=255)
     events: list[str] = ["scan.completed", "finding.critical"]
     enabled: bool = True
 
@@ -63,9 +77,9 @@ class WebhookCreate(BaseModel):
 
 
 class WebhookUpdate(BaseModel):
-    name: str | None = None
-    url: str | None = None
-    secret: str | None = None
+    name: str | None = Field(default=None, max_length=255)
+    url: str | None = Field(default=None, max_length=2048)
+    secret: str | None = Field(default=None, max_length=255)
     events: list[str] | None = None
     enabled: bool | None = None
 
@@ -111,12 +125,13 @@ async def create_webhook(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_scope("webhooks:write")),
 ):
+    await _reject_internal_url(body.url)
     webhook = Webhook(
         id=new_uuid(),
         user_id=current_user.id,
         name=body.name,
         url=body.url,
-        secret=body.secret,
+        secret=encrypt_secret(body.secret),
         events=json.dumps(body.events),
         enabled=body.enabled,
     )
@@ -137,13 +152,15 @@ async def update_webhook(
     webhook = result.scalar_one_or_none()
     if not webhook:
         raise HTTPException(status_code=404, detail="Webhook not found")
+    await _reject_internal_url(body.url)
 
     if body.name is not None:
         webhook.name = body.name
     if body.url is not None:
         webhook.url = body.url
     if body.secret is not None:
-        webhook.secret = body.secret
+        # Empty string clears the secret (disables signing).
+        webhook.secret = encrypt_secret(body.secret)
     if body.events is not None:
         webhook.events = json.dumps(body.events)
     if body.enabled is not None:

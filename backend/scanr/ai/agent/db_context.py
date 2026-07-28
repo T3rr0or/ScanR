@@ -295,6 +295,33 @@ class DbAgentContext(AgentContext):
         finally:
             await r.aclose()
 
+    async def read_scratchpad(self) -> dict:
+        from scanr.ai.agent.memory import empty_scratchpad
+        from scanr.models import AiAgentRun
+
+        if not self._run_id:
+            return empty_scratchpad()
+        run = await self._db.get(AiAgentRun, self._run_id)
+        if run is None or not run.scratchpad:
+            return empty_scratchpad()
+        try:
+            stored = json.loads(run.scratchpad)
+        except ValueError:
+            return empty_scratchpad()
+        # A stored value of the wrong shape is a bug, not a reason to fail the run.
+        return stored if isinstance(stored, dict) else empty_scratchpad()
+
+    async def write_scratchpad(self, scratchpad: dict) -> None:
+        from scanr.models import AiAgentRun
+
+        if not self._run_id:
+            return  # ad-hoc use with no run to attach memory to
+        run = await self._db.get(AiAgentRun, self._run_id)
+        if run is None:
+            return
+        run.scratchpad = json.dumps(scratchpad)
+        await self._db.commit()
+
     async def note_web_url(self, url: str) -> None:
         """Remember a renderable URL the agent fetched (deduped, capped) so it can
         be screenshotted at run end."""
@@ -347,6 +374,116 @@ class DbAgentContext(AgentContext):
                 await capture_urls(cast(Any, shot_ctx), host, targets)
             except Exception as exc:  # noqa: BLE001 - best-effort
                 await self._log.debug(f"agent endpoint screenshots failed: {exc}", phase="ai_agent")
+
+    async def validate_in_browser(self, url_template: str, finding_id: str | None = None) -> dict:
+        """Substitute a fresh canary into the URL, load it in Chromium with JS on,
+        and record the outcome on the finding when the payload actually executed.
+
+        The canary is generated here, not accepted from the caller: proof means
+        "a token this run issued came back through a JS execution channel", and
+        that only holds if the agent never chose the token.
+        """
+        import hashlib
+        from datetime import datetime, timezone
+        from urllib.parse import urlparse
+
+        from scanr.core.browser import observe_url
+        from scanr.core.validation import evaluate, new_canary
+
+        if "{CANARY}" not in url_template:
+            raise ValueError(
+                "url must contain the literal {CANARY} placeholder — ScanR substitutes "
+                "a token it generated, which is what makes the result proof"
+            )
+
+        canary = new_canary()
+        url = url_template.replace("{CANARY}", canary)
+
+        # Land the screenshot next to the scan's other captures so the proof is
+        # visible in the Screenshots tab, not just described in text.
+        shot_path: str | None = None
+        host = None
+        parsed = urlparse(url)
+        if parsed.hostname:
+            host = (
+                await self._db.execute(
+                    select(Host).where(Host.scan_id == self.scan_id, Host.ip == parsed.hostname)
+                )
+            ).scalar_one_or_none()
+            if host is None:
+                host = (
+                    await self._db.execute(
+                        select(Host).where(
+                            Host.scan_id == self.scan_id, Host.hostname == parsed.hostname
+                        )
+                    )
+                ).scalar_one_or_none()
+        if host is not None:
+            from scanr.plugins.web.screenshot import _screenshots_dir
+
+            shots = _screenshots_dir(self.scan_id)
+            shots.mkdir(parents=True, exist_ok=True)
+            shot_path = str(shots / f"validate_{hashlib.md5(url.encode()).hexdigest()[:12]}.png")
+
+        await self._log.info(f"validating in browser: {parsed.hostname or url}", phase="ai_agent")
+        obs = await observe_url(url, canary, screenshot_path=shot_path)
+        result = evaluate(obs, canary)
+
+        out = {
+            "verdict": result.verdict,
+            "method": result.method,
+            "summary": result.summary,
+            "evidence": result.evidence,
+            "validated_finding": False,
+        }
+
+        if obs.get("screenshot") and host is not None:
+            from scanr.plugins.web.screenshot import _save_screenshot
+
+            class _ShotCtx:
+                def __init__(self, scan_id, db, log):
+                    import asyncio
+
+                    self.scan_id, self.db, self.log = scan_id, db, log
+                    self.db_lock = asyncio.Lock()
+
+            try:
+                await _save_screenshot(
+                    context=_ShotCtx(self.scan_id, self._db, self._log),
+                    host=host,
+                    port_number=parsed.port or (443 if parsed.scheme == "https" else 80),
+                    url=url,
+                    file_path=obs["screenshot"],
+                    title=obs.get("title"),
+                    status_code=obs.get("status"),
+                    content_type=None,
+                )
+            except Exception as exc:  # noqa: BLE001 - the proof stands without the picture
+                await self._log.debug(f"validation screenshot not recorded: {exc}", phase="ai_agent")
+
+        if finding_id and result.proved:
+            finding = (
+                await self._db.execute(
+                    select(Finding).where(
+                        Finding.id == finding_id, Finding.scan_id == self.scan_id
+                    )
+                )
+            ).scalar_one_or_none()
+            if finding is None:
+                out["note"] = f"finding {finding_id!r} is not part of this scan — not marked"
+            else:
+                finding.validated = True
+                finding.validated_at = datetime.now(timezone.utc)
+                finding.validation_method = result.method
+                finding.validation_evidence = f"{result.summary}\n\n{result.evidence}"[:8000]
+                # A reproduced finding is by definition not a false positive.
+                finding.false_positive = False
+                await self._db.commit()
+                out["validated_finding"] = True
+                await self._log.info(
+                    f"validated finding {finding.title!r}: {result.summary}", phase="ai_agent"
+                )
+        return out
 
     async def run_plugin(self, plugin_id: str, host_ip: str) -> dict:
         from scanr.core import plugin_manager
@@ -473,9 +610,21 @@ class DbAgentContext(AgentContext):
         if not scope:
             return {"denied": True, "reason": "no in-scope targets to constrain the sandbox to."}
 
-        await self._log.warn(f"agent running command in sandbox: {command[:160]}", phase="ai_agent")
+        # Reaching live targets from the shell is its own opt-in: allow_command_exec
+        # gets you a jailed toolbox, allow_target_egress points it at hosts.
+        target_egress = self.policy.allows_capability("allow_target_egress")
+        await self._log.warn(
+            f"agent running command in sandbox (target egress "
+            f"{'ON' if target_egress else 'OFF'}): {command[:160]}",
+            phase="ai_agent",
+        )
         try:
-            result = await client.run(command=command, scope=scope, run_id=self._run_id or "")
+            result = await client.run(
+                command=command,
+                scope=scope,
+                run_id=self._run_id or "",
+                target_egress=target_egress,
+            )
         except SandboxUnavailable as exc:
             await self._log.error(f"sandbox unavailable: {exc}", phase="ai_agent")
             return {"denied": True, "reason": f"sandbox unavailable: {exc}"}
@@ -488,17 +637,44 @@ class DbAgentContext(AgentContext):
         }
 
     async def _scope_cidrs(self) -> list[str]:
-        """The scan's authorized targets (filtered through is_forbidden_target),
-        used to constrain the sandbox's egress. Falls back to discovered host IPs."""
+        """The scan's authorized scope as addresses/CIDRs, for the egress relay.
+
+        Two sources, unioned rather than either/or:
+          * Target rows that are already IPs or CIDRs.
+          * Every discovered Host IP for this scan.
+
+        The host IPs matter because the relay can only enforce addresses — a
+        hostname is not an egress rule, since what it resolves to can change. A
+        domain-target scan would therefore produce an empty allowlist and fail
+        closed with no explanation; including the hosts that the domain actually
+        resolved to during discovery is both enforceable and what the agent would
+        be acting on anyway.
+
+        Everything is filtered through is_forbidden_target, so loopback, cloud
+        metadata and ScanR's own infrastructure can never enter the allowlist. The
+        relay re-checks all of this independently.
+        """
         from scanr.models import Target
-        from scanr.utils.ip_utils import is_forbidden_target
+        from scanr.utils.ip_utils import canonical_ip, is_forbidden_target
+
+        scope: list[str] = []
 
         rows = await self._db.execute(select(Target.value).where(Target.scan_id == self.scan_id))
-        targets = [str(t) for t in rows.scalars().all()]
-        if not targets:
-            hrows = await self._db.execute(select(Host.ip).where(Host.scan_id == self.scan_id))
-            targets = [str(ip) for ip in hrows.scalars().all()]
-        return [t for t in targets if t and not is_forbidden_target(t, self.denylist)]
+        for raw in rows.scalars().all():
+            value = str(raw).strip()
+            # Keep CIDRs as-is; normalize bare/legacy-encoded IPs; drop hostnames.
+            if "/" in value:
+                scope.append(value)
+            elif canonical_ip(value):
+                scope.append(canonical_ip(value) or value)
+
+        hrows = await self._db.execute(select(Host.ip).where(Host.scan_id == self.scan_id))
+        for ip in hrows.scalars().all():
+            value = str(ip).strip()
+            if value and value not in scope:
+                scope.append(value)
+
+        return [t for t in scope if t and not is_forbidden_target(t, self.denylist)]
 
     async def _persist_findings(self, scan, host_id: str | None, findings: list) -> int:
         """Route plugin findings through ResultCollector so agent discoveries

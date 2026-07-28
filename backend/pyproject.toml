@@ -71,6 +71,10 @@ dev = [
   "anyio>=4.0.0",
   "fakeredis>=2.20.0",
   "aiosqlite>=0.20.0",
+  # Validates the SARIF export against the official 2.1.0 schema (vendored at
+  # tests/fixtures/) so a malformed document is caught here rather than by
+  # whatever the customer uploads it to. Test-only — nothing at runtime needs it.
+  "jsonschema>=4.0.0",
   # pinned to installed minors: major/minor drift broke CI silently before
   "ruff>=0.15,<0.16",
   "mypy>=2.1,<2.2",

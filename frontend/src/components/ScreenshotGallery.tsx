@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { ExternalLink, X } from 'lucide-react'
 import { screenshotsApi, type Screenshot } from '@/api/screenshots'
+import { safeUrl } from "@/utils/safeUrl"
 
 interface Props {
   scanId: string
@@ -149,7 +150,7 @@ export default function ScreenshotGallery({ scanId }: Props) {
                 </span>
               )}
               <a
-                href={lightbox.url}
+                href={safeUrl(lightbox.url)}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="btn btn-ghost btn-icon btn-sm"

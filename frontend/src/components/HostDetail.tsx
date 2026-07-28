@@ -162,7 +162,7 @@ export default function HostDetail({ host, findings = [], onClose }: Props) {
                   <tbody>
                     {sortedFindings.map(f => (
                       <tr key={f.id} onClick={() => setDetailFinding(f)} style={{ cursor: 'pointer' }} title="Click for details">
-                        <td><SevTag severity={f.severity as any} /></td>
+                        <td><SevTag severity={f.severity} /></td>
                         <td style={{ fontSize: 12, color: 'var(--text-0)' }}>{f.title}</td>
                         <td className="mono dimmer" style={{ fontSize: 11 }}>{f.port_number ? `${f.port_number}/${f.protocol}` : '—'}</td>
                         <td>

@@ -18,11 +18,15 @@ ScanR is a self-hosted vulnerability scanner for authorized internal and externa
 - **Nmap, masscan, Nuclei, and native plugins** - host discovery, port scanning, service detection, CVE checks, web checks, TLS checks, vulnerable JS library detection (retire.js-style), and service misconfiguration checks.
 - **Live console and persisted history** - stream scan progress while the scan runs and replay it later.
 - **Findings triage** - false positive, accepted risk, analyst notes, compliance tags, MITRE ATT&CK tags, and evidence.
+- **Retest** - re-run one finding's check against its original target and record the verdict, so a remediation cycle does not need a full rescan. Keeps a dated history per finding.
 - **Peer-review evidence** - findings can include command/probe evidence so another tester can validate the result.
 - **Screenshots** - Playwright captures discovered web services when enabled.
+- **Attack paths** - ranked routes from the attacker's position to a domain or privileged objective, built from findings rather than guesswork, with chokepoint analysis showing which single fix breaks the most routes.
 - **Scan deltas** - compare scans to see new, resolved, and persisting findings, plus host/port changes.
 - **Templates and schedules** - save reusable scan profiles and run them on a schedule.
-- **Reports** - export executive and technical reports in multiple formats.
+- **Reports** - export executive and technical reports as HTML, PDF, JSON, CSV, BloodHound JSON, or **SARIF 2.1.0** for GitHub code scanning, DefectDojo and other DevSecOps pipelines.
+- **TOPdesk integration** - file a finding as a TOPdesk incident, deduplicated so a re-scan links the existing ticket instead of opening a second one.
+- **CI/CD gate** - `scanr ci` blocks on a scan, writes SARIF, and exits non-zero above a severity threshold; a reusable GitHub Action uploads results to code scanning.
 - **API keys, webhooks, and agents** - integrate ScanR into automated workflows and scan from different network vantage points.
 - **AI-augmented pentesting (optional)** - findings summaries, report narratives, and false-positive testing, plus a gated guided/autonomous agent that actively investigates a scan (with an optional sandboxed shell). Conversational with follow-ups and mid-chat model switching. Bring your own ChatGPT, DeepSeek, or Anthropic key.
 
@@ -49,6 +53,148 @@ The review step summarizes scope, selected capabilities, credentials, warnings, 
 ### Findings
 
 ![Findings](docs/screenshots/findings.png)
+
+### Retest
+
+A client says "fixed". Retest re-runs **only that finding's plugin** against the
+same host and port, and records what it concluded — no full rescan required. Each
+attempt is kept, so a finding carries a dated trail: *still present on the 12th,
+verified fixed on the 3rd*.
+
+Verdicts are deliberately conservative, because "resolved" is a claim someone acts
+on by closing the ticket:
+
+| Verdict | Meaning |
+|---|---|
+| `still_present` | The check ran and reported the same issue. |
+| `resolved` | The check ran against a reachable host and no longer reports it. |
+| `inconclusive` | The host did not answer. **Not** remediation — a box switched off during the retest window has not been fixed. |
+
+A plugin that crashes records a failure, never a verdict.
+
+```bash
+curl -X POST -H "X-API-Key: sk_..." http://localhost:8000/api/v1/findings/<id>/retest
+curl -H "X-API-Key: sk_..." http://localhost:8000/api/v1/findings/<id>/retests
+```
+
+Requires the `findings:triage` scope rather than `findings:read` — a retest sends
+live traffic to the target.
+
+### CI/CD
+
+`scanr ci` runs a scan to completion and turns the result into an exit code, so a
+pipeline can gate on it:
+
+```bash
+export SCANR_URL=https://scanr.internal
+export SCANR_TOKEN=sk_...          # API key: scans:write, findings:read, reports:read/create
+
+scanr ci --target 192.0.2.0/24 --fail-on high --sarif scanr.sarif
+```
+
+| Exit | Meaning |
+|---|---|
+| `0` | Scan completed, nothing at or above `--fail-on` |
+| `1` | Scan completed, findings at or above `--fail-on` |
+| `2` | No verdict — API error, timeout, or the scan failed |
+
+`1` and `2` are deliberately distinct: a broken scanner must not be
+indistinguishable from a clean report. `--fail-on never` gives report-only mode
+for teams adopting the gate before enforcing it. A SARIF write failure never
+changes the verdict — the scan already ran.
+
+**GitHub Action:**
+
+```yaml
+permissions:
+  contents: read
+  security-events: write   # required for the code-scanning upload
+
+steps:
+  - uses: T3rr0or/ScanR/.github/actions/scanr-scan@master
+    with:
+      url: ${{ secrets.SCANR_URL }}
+      token: ${{ secrets.SCANR_API_KEY }}
+      targets: |
+        staging.example.com
+        192.0.2.0/24
+      fail-on: high
+```
+
+Findings land in the repository's **Security → Code scanning** tab, deduplicated
+across runs by the SARIF fingerprints, and the SARIF is uploaded even when the
+build fails so the results are visible either way.
+
+### TOPdesk
+
+Findings can be filed straight into TOPdesk as incidents, so remediation is
+tracked where the service desk already works.
+
+Configure it under **Settings → Integrations** (admin only): instance base URL,
+username, and a TOPdesk **application password** — the per-integration credential
+TOPdesk issues under a user's settings, not an operator's own password. It is
+stored Fernet-encrypted and never returned by the API. *Test connection* makes one
+authenticated call so setup is confirmed there rather than discovered on first use.
+
+**Filing is idempotent.** Each incident is stamped with
+`externalNumber = scanr:<fingerprint>`, using the same plugin + host + port + title
+identity as the SARIF export. Before creating anything, ScanR searches TOPdesk for
+that number and adopts an existing incident if one is found — so pressing the
+button twice, restoring a database, or running a second ScanR instance links the
+same ticket instead of opening duplicates. The response says whether it created or
+adopted.
+
+Instance-specific fields (category, subcategory, call type, operator group,
+caller, priority names) come from an optional JSON defaults blob. Anything left
+unset is omitted rather than guessed, because an incident filed under the wrong
+taxonomy is one the service desk has to re-file by hand.
+
+```bash
+curl -X POST -H "X-API-Key: sk_..." \
+  http://localhost:8000/api/v1/integrations/topdesk/findings/<finding-id>/ticket
+```
+
+Requires `findings:triage` — it writes to a system outside ScanR.
+
+### Attack Paths
+
+Findings sorted by CVSS say which issue is worst in isolation. The Attack Paths
+tab answers a different question: which chain of issues actually reaches something
+that matters, and what single fix breaks the most chains.
+
+Each route is a sequence of attacker steps — initial access, credential access,
+lateral movement, privilege escalation, domain compromise — and **every step cites
+the finding that justifies it**. Routes are ranked by attacker effort rather than
+hop count, so a two-hop chain through unauthenticated criticals outranks a one-hop
+chain through a theoretical info leak.
+
+The graph is **evidence-only by default**: every edge cites a finding. Findings
+marked false positive are excluded.
+
+Credential reuse is available as a reasoned step — a credential obtained on one
+host is worth trying against any host exposing an authentication service the scan
+observed — but it is **opt-in** (`include_inferred=true`), on measurement. Being
+credentials × hosts, it dominated the graph it was added to: 92% of all edges on
+a 1000-host scan, and 1.6M edges / 833MB peak on a 4000-host one. Against that,
+no ranked path ever used an inferred edge — priced above every demonstrated step
+by design, they never win where a real route exists. Turn it on for a sparse scan
+where nothing else connects; leave it off otherwise. Inferred steps are labelled
+`inferred` everywhere they appear, and capped either way.
+
+Large graphs are trimmed for transport (`truncated: true`, with `totals` giving
+the real counts). Ranked paths are never trimmed.
+
+Because the default excludes hypotheses, a scan whose only route was inference
+now shows no paths. That is correct but easy to misread, so when the
+evidence-only graph finds nothing the response carries
+`inferred_paths_available`: how many routes appear with reuse assumed (`0` means
+nothing connects at all). The UI turns that into "N likely routes — show them"
+rather than an empty panel.
+
+```bash
+curl -H "X-API-Key: sk_..." \
+  "http://localhost:8000/api/v1/scans/<scan-id>/attack-paths?include_inferred=true"
+```
 
 ### Templates
 
@@ -116,10 +262,22 @@ Services:
 - **redis** - task queue, result backend, and event bus
 - **sandbox-runner** - AI agent command-execution sandbox
 - **sandbox-proxy** - filtered egress for sandbox package installs
+- **sandbox-relay** - per-run SOCKS5 relay giving the sandbox scope-limited
+  access to a scan's targets (started on demand, only when opted in)
 
 First boot runs migrations and seeds system templates/plugins.
 
-For local development from source, use `docker compose up -d --build`.
+For local development from source:
+
+```bash
+docker compose --profile build-only build   # or: make docker-build
+docker compose up -d
+```
+
+The `build-only` profile carries **sandbox-relay**. The runner spawns it per agent
+run through the Docker API, so compose never starts it — but a plain
+`docker compose build` skips profiled services, and the image has to exist before
+a scan can opt into target egress.
 
 ### 4. Open
 
@@ -251,7 +409,21 @@ Reports can include:
 - compliance tags
 - analyst notes
 
-Supported exports include HTML, PDF, JSON, CSV, and SARIF where configured.
+Formats: **HTML**, **PDF**, **JSON**, **CSV**, **BloodHound JSON**, and
+**SARIF 2.1.0**.
+
+SARIF is the interchange format GitHub code scanning, DefectDojo and Azure DevOps
+ingest natively, so a scan's findings can land in an existing triage queue rather
+than a PDF someone has to read. ScanR's output is validated against the official
+2.1.0 schema in CI, and each result carries a `partialFingerprints` entry derived
+from plugin + host + port + title — so a consumer recognises the same finding
+across re-scans instead of treating every run as a fresh set of alerts.
+
+```bash
+curl -X POST -H "X-API-Key: sk_..." -H 'Content-Type: application/json' \
+  -d '{"scan_id":"<scan-id>","format":"sarif"}' \
+  http://localhost:8000/api/v1/reports
+```
 
 ---
 
@@ -324,10 +496,60 @@ Tools available to the agent today: read the scan's hosts/findings/evidence,
 `create_finding` (record what it discovers), `fetch_url` (HTTP GET,
 non-intrusive), `list_plugins`, `run_plugin` (run a ScanR plugin against a
 discovered host), `run_port_scan` (nmap a host), `submit_form` (HTTP POST —
-intrusive, aggressive-gated), and `run_command` (sandboxed shell — see below).
+intrusive, aggressive-gated), `browser_validate` (prove it in a real browser —
+see below), `run_command` (sandboxed shell — see below), and the
+working-memory/skill tools described below.
 Active tools are intrusive, so they are approval-gated in guided mode. Pages the
 agent fetches with `fetch_url` are also screenshotted into the Screenshots tab,
 so its discoveries are captured visually alongside the scan's.
+
+**Proving findings.** `browser_validate` loads a payload URL in a real headless
+Chromium with JavaScript enabled and reports whether it *executed* — the
+difference between a reflected parameter (the most common false positive in web
+scanning) and an actual client-side vulnerability. The agent writes the payload
+but not the marker: it puts the literal `{CANARY}` where a token belongs, e.g.
+`http://10.0.0.5/search?q=<script>alert('{CANARY}')</script>`, and ScanR
+substitutes an unguessable token it generated. Only that token coming back
+through a JS channel — a dialog or the console — counts as proof, so the agent
+cannot manufacture one.
+
+Each attempt is bounded — per-call timeouts plus a 60-second wall-clock cap — and
+concurrency is limited, because a hostile page chooses how long it holds you: a
+JS loop pins a core for as long as it is allowed to. The cap makes one attempt
+survivable; the concurrency limit stops it being multiplied.
+
+`BROWSER_VALIDATION_CONCURRENCY` (default `2`) is **per worker process**, so the
+deployment ceiling is that value times the Celery worker's `--concurrency` (`4`
+in the shipped compose file, giving 8). Eight pages spinning for a minute is
+eight cores — on a small host, turn one of the two numbers down. Raising
+`--concurrency` raises the browser ceiling with it.
+
+Verdicts are `proved`, `reflected`, `not_reproduced`, and `inconclusive` (the
+page would not load — never reported as clean, for the same reason an
+unreachable host is not "remediated"). A `proved` result stamps `validated` on
+the finding along with the method and the evidence, clears any false-positive
+mark, and captures a screenshot into the Screenshots tab. Verified findings
+carry a badge in the UI and the HTML/PDF report, a `validated` tag in the SARIF
+export, and a `validated` column in the CSV; filter for them with
+`GET /api/v1/findings?validated=true` or **Verified only** in the Findings
+filter. Nothing else sets the flag — not a model asserting it, not an analyst
+ticking a box — which is what makes it worth filtering on.
+
+**Working memory.** The agent keeps a plan and durable notes on the run
+(`todo_write` / `todo_read`, `note_write` / `note_read`, plus `think` for
+reasoning without acting). A long run's early turns fall out of the model's
+context window; the plan and notes do not, so it stops re-deriving what it
+already established. Both are persisted on the run, survive a restart, and are
+included in the exported markdown trace — you can see what the agent intended
+and what it believed, not just the calls it made.
+
+**Skills.** Procedural expertise ships as markdown in
+`backend/scanr/ai/skills/` — Active Directory, web authentication, TLS triage,
+pivoting, and deciding whether a finding is real. Only the one-line index sits
+in the system prompt; the agent pulls a full body with `load_skill` when it hits
+that ground, so methodology it doesn't need costs nothing per turn. Adding a
+skill is dropping in a `.md` file with a `name`/`description` header — no code
+change.
 
 The agent is **conversational**: after a run finishes you can send follow-up
 messages to continue it (the full transcript is kept), and switch the model
@@ -374,6 +596,26 @@ print `http://sandbox-runner:8090`.
 services won't start on the next `docker compose up -d` unless you remove the
 `stop`.
 
+**What the shell can reach.** Two levels, both opt-in and admin-only:
+
+| | Package mirrors | Scan targets |
+|---|---|---|
+| `allow_command_exec` only (default) | yes, via allowlisting proxy | **no route at all** |
+| `+ allow_target_egress` | yes | this scan's authorized scope only |
+
+Without target egress the sandbox is for local work — analysing collected data,
+offline cracking, generating payloads, building tooling — and the agent reaches
+targets through the scope-checked `run_port_scan` / `run_plugin` / `fetch_url` /
+`submit_form` tools instead.
+
+With it, the runner starts a per-run SOCKS5 relay carrying that scan's scope. It
+refuses every other destination, re-checks loopback / cloud metadata /
+infrastructure, and validates the *resolved* address, so a hostname can't be used
+to escape scope. Inside the sandbox, reach targets via `$ALL_PROXY`
+(`proxychains nmap -sT -Pn <target>`, `curl --socks5-hostname`). Raw-socket scans
+(`-sS`) don't work through a TCP relay — the container is non-root anyway, so it
+was always TCP-connect only.
+
 To use `run_command` in a scan, you must also enable **"Allow command
 execution"** when launching the AI agent (admin-only aggressive opt-in).
 
@@ -381,11 +623,26 @@ Isolation model: only a dedicated **sandbox-runner** holds the Docker socket and
 it carries **no ScanR secrets**; the secret-holding worker can't touch the
 socket. The agent gets **one persistent, hardened container per run** (state
 persists across commands) that is non-root, read-only-rootfs, `cap-drop ALL`,
-and resource/time-limited. Egress is restricted to the scan's authorized targets
-plus allowlisted package mirrors, and the path is **fail-closed** — if the runner
-is unavailable, command execution is denied. `run_command` requires admin +
-the aggressive `allow_command_exec` opt-in. Strict per-target L3 egress requires
-a host firewall and must be validated on your deployment. Full architecture:
+and resource/time-limited, on an `internal` Docker network with no route anywhere
+by default. The path is **fail-closed** — if the runner is unavailable, command
+execution is denied — and `run_command` requires admin + the aggressive
+`allow_command_exec` opt-in.
+
+Two levels of network reach, both narrow:
+
+- **Package mirrors only (default).** The sandbox can `pip`/`apt` install through
+  an allowlisting proxy, but has no route to any scan target. Good for local work:
+  analysis, offline cracking, payload generation, tooling.
+- **Scan targets (opt-in, `allow_target_egress`).** The runner starts a per-run
+  SOCKS5 relay holding that scan's authorized scope. It refuses every other
+  destination, re-checks loopback/metadata/infrastructure, and validates the
+  *resolved* address — so a hostname cannot be used to escape scope. Tools reach
+  targets through `proxychains` / `--socks5-hostname`; use TCP connect scans
+  (`-sT`), as a TCP relay cannot carry raw-socket scans.
+
+Chosen over per-run firewall rules deliberately: rules would need `NET_ADMIN` and
+host networking on the Docker-socket holder, and a rule that failed to apply would
+fail *open*. Full architecture and rationale:
 [`docs/ai-sandbox-design.md`](docs/ai-sandbox-design.md).
 
 ---
@@ -424,7 +681,30 @@ curl -X POST http://localhost:8000/api/v1/scans \
   }'
 ```
 
-API docs are available at **http://localhost:8000/docs**.
+### API key scopes
+
+Scopes are checked per endpoint. Two are worth calling out because they changed:
+
+| Scope | Covers |
+|---|---|
+| `reports:read` | list, inspect, download an existing report |
+| `reports:create` | generate a new report (spawns a background job) |
+| `reports:export` | **deprecated** — still accepted, expands to `reports:read` + `reports:create`. New keys cannot be minted with it. |
+| `ai:generate` | anything that spends LLM budget: finding summaries, report narratives, false-positive testing |
+
+> **Breaking change for existing keys.** AI generation used to be reachable with
+> `findings:read`; it now requires `ai:generate`, and unlike `reports:export`
+> there is deliberately **no alias** — read access should not imply the right to
+> spend money on an upstream API. A key holding only `findings:read` will start
+> getting `403` on `POST /api/v1/ai/scans/{id}/summary`,
+> `POST /api/v1/ai/scans/{id}/report`, and
+> `POST /api/v1/ai/scans/{id}/false-positives`. Add `ai:generate` to any key
+> that needs them.
+
+Interactive API docs are available at **http://localhost:8000/docs** when
+`DOCS_ENABLED=true`. They are unauthenticated and publish the full API surface, so
+the Docker deployment ships with them **off**; set `DOCS_ENABLED=true` in `.env`
+to turn them on. A local `make dev` run has them on by default.
 
 ---
 
@@ -451,8 +731,11 @@ API docs are available at **http://localhost:8000/docs**.
 | `DEEPSEEK_API_KEY` | empty | Key for the DeepSeek provider |
 | `SANDBOX_RUNNER_URL` | empty | URL of the sandbox-runner; enables the agent's `run_command` shell when set (fail-closed if unset) |
 | `SANDBOX_TOKEN` | empty | Shared token authenticating the worker to the sandbox-runner |
+| `SANDBOX_MAX_SESSIONS` | 8 | Ceiling on live sandbox containers |
+| `SANDBOX_RELAY_IMAGE` | built image | Image for the per-run SOCKS5 egress relay |
 | `SANDBOX_IMAGE` | `ghcr.io/t3rr0or/scanr-sandbox:latest` | Toolkit image the sandbox runs |
 | `SANDBOX_CMD_TIMEOUT` | `120` | Per-command timeout (seconds) in the sandbox |
+| `BROWSER_VALIDATION_CONCURRENCY` | `2` | Concurrent `browser_validate` attempts **per worker process**. Total ceiling = this × the worker's `--concurrency`. |
 | `DATABASE_URL` | compose-managed | SQLAlchemy database URL |
 | `REDIS_URL` | compose-managed | Redis URL |
 | `CELERY_BROKER_URL` | compose-managed | Celery broker URL |

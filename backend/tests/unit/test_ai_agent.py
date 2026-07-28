@@ -310,6 +310,163 @@ def test_parse_ports():
         _parse_ports("1-3000")  # >2000 ports
 
 
+# ── browser validation ───────────────────────────────────────────────────────
+
+class ValidatingContext(FakeContext):
+    """A context whose browser always reports the payload executed."""
+
+    async def validate_in_browser(self, url_template, finding_id=None):
+        self.validations = getattr(self, "validations", [])
+        self.validations.append((url_template, finding_id))
+        return {"verdict": "proved", "method": "browser-dialog",
+                "summary": "script executed", "evidence": "...", "validated_finding": bool(finding_id)}
+
+
+@pytest.mark.asyncio
+async def test_browser_validate_is_approval_gated_but_not_aggressive_gated():
+    """Firing a payload deserves an operator prompt in guided mode. Requiring the
+    admin-only 'aggressive' opt-in on top would mean a default run can never turn
+    a maybe into a proof — and this is a GET that changes no state."""
+    from scanr.ai.agent.tools import default_registry
+
+    reg = default_registry()
+    assert "browser_validate" in reg.names()
+
+    guided = ValidatingContext(AgentPolicy(mode=AutonomyMode.guided), approve=False)
+    out = await reg.dispatch(guided, "browser_validate", {"url": "http://192.0.2.10/?q={CANARY}"})
+    assert out.startswith("DENIED")
+    assert getattr(guided, "validations", []) == [], "the browser must not run unapproved"
+
+    # autonomous, no capabilities at all -> runs
+    auto = ValidatingContext(AgentPolicy(mode=AutonomyMode.autonomous))
+    out2 = await reg.dispatch(auto, "browser_validate",
+                              {"url": "http://192.0.2.10/?q={CANARY}", "finding_id": "f1"})
+    assert '"verdict": "proved"' in out2
+    assert auto.validations == [("http://192.0.2.10/?q={CANARY}", "f1")]
+
+
+@pytest.mark.asyncio
+async def test_browser_validate_respects_scope():
+    from scanr.ai.agent.tools import default_registry
+
+    reg = default_registry()
+    ctx = ValidatingContext(AgentPolicy(mode=AutonomyMode.autonomous))
+    for url in ("http://127.0.0.1/?q={CANARY}", "http://169.254.169.254/?q={CANARY}"):
+        assert (await reg.dispatch(ctx, "browser_validate", {"url": url})).startswith("DENIED")
+    assert getattr(ctx, "validations", []) == []
+
+
+@pytest.mark.asyncio
+async def test_browser_validate_rejects_a_non_http_url():
+    from scanr.ai.agent.tools import default_registry
+
+    reg = default_registry()
+    ctx = ValidatingContext(AgentPolicy(mode=AutonomyMode.autonomous))
+    assert (await reg.dispatch(ctx, "browser_validate", {"url": "file:///etc/passwd"})).startswith("ERROR")
+    assert (await reg.dispatch(ctx, "browser_validate", {"url": ""})).startswith("ERROR")
+
+
+@pytest.mark.asyncio
+async def test_a_context_without_a_browser_denies_rather_than_crashing():
+    """The base context has no Chromium; the model should be told so and adapt."""
+    from scanr.ai.agent.tools import default_registry
+
+    reg = default_registry()
+    ctx = FakeContext(AgentPolicy(mode=AutonomyMode.autonomous))  # no override
+    out = await reg.dispatch(ctx, "browser_validate", {"url": "http://192.0.2.10/?q={CANARY}"})
+    assert out.startswith("DENIED") and "not available" in out
+
+
+@pytest.mark.asyncio
+async def test_a_missing_placeholder_comes_back_as_an_actionable_error():
+    from scanr.ai.agent.tools import default_registry
+
+    class Strict(FakeContext):
+        async def validate_in_browser(self, url_template, finding_id=None):
+            if "{CANARY}" not in url_template:
+                raise ValueError("url must contain the literal {CANARY} placeholder")
+            return {"verdict": "proved"}
+
+    reg = default_registry()
+    ctx = Strict(AgentPolicy(mode=AutonomyMode.autonomous))
+    out = await reg.dispatch(ctx, "browser_validate", {"url": "http://192.0.2.10/?q=alert(1)"})
+    assert out.startswith("ERROR") and "{CANARY}" in out
+
+
+# ── working memory + skills ──────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_memory_tools_need_no_capability_or_approval():
+    """These are how the agent keeps a plan straight; gating them behind
+    aggressive/approval would make guided runs strictly dumber for no safety
+    gain — they touch nothing outside the run's own row."""
+    from scanr.ai.agent.tools import default_registry
+
+    reg = default_registry()
+    for name in ("todo_write", "todo_read", "note_write", "note_read", "think",
+                 "list_skills", "load_skill"):
+        assert name in reg.names(), name
+
+    # The most restrictive policy there is: guided, no capabilities, approval denied.
+    ctx = FakeContext(AgentPolicy(mode=AutonomyMode.guided), approve=False)
+    assert "[ ] enumerate" in await reg.dispatch(
+        ctx, "todo_write", {"todos": [{"title": "enumerate", "status": "pending"}]}
+    )
+    assert "saved note" in await reg.dispatch(
+        ctx, "note_write", {"topic": "domain", "content": "corp.local"}
+    )
+    assert "corp.local" in await reg.dispatch(ctx, "note_read", {"topic": "domain"})
+    assert ctx.approvals == [], "memory is not an intrusive action"
+
+
+@pytest.mark.asyncio
+async def test_memory_round_trips_through_the_context():
+    """Written on one turn, readable on the next — the whole point of the feature."""
+    from scanr.ai.agent.tools import default_registry
+
+    reg = default_registry()
+    ctx = FakeContext(AgentPolicy(mode=AutonomyMode.autonomous))
+    await reg.dispatch(ctx, "todo_write", {"todos": ["a", "b"]})
+    await reg.dispatch(ctx, "note_write", {"topic": "creds", "content": "admin:admin"})
+
+    assert "(2 of 2 remaining)" in await reg.dispatch(ctx, "todo_read", {})
+    assert "admin:admin" in await reg.dispatch(ctx, "note_read", {})
+
+    # a rewrite replaces the plan rather than appending to it
+    await reg.dispatch(ctx, "todo_write", {"todos": [{"title": "a", "status": "done"}]})
+    plan = await reg.dispatch(ctx, "todo_read", {})
+    assert "[x] a" in plan and " b" not in plan
+
+
+@pytest.mark.asyncio
+async def test_bad_memory_input_is_an_error_the_model_can_act_on():
+    """A ToolError comes back as text so the model retries; an unhandled
+    exception would kill the run."""
+    from scanr.ai.agent.tools import default_registry
+
+    reg = default_registry()
+    ctx = FakeContext(AgentPolicy(mode=AutonomyMode.autonomous))
+    assert (await reg.dispatch(ctx, "todo_write", {"todos": [{"status": "done"}]})).startswith("ERROR")
+    assert (await reg.dispatch(ctx, "note_write", {"topic": "", "content": "x"})).startswith("ERROR")
+    assert (await reg.dispatch(ctx, "think", {"thought": ""})).startswith("ERROR")
+
+
+@pytest.mark.asyncio
+async def test_load_skill_names_the_alternatives_when_it_misses():
+    from scanr.ai.agent.tools import default_registry
+
+    reg = default_registry()
+    ctx = FakeContext(AgentPolicy(mode=AutonomyMode.autonomous))
+    index = await reg.dispatch(ctx, "list_skills", {})
+    assert "active-directory" in index
+
+    body = await reg.dispatch(ctx, "load_skill", {"name": "Active-Directory"})
+    assert len(body) > 200 and not body.startswith("ERROR")
+
+    miss = await reg.dispatch(ctx, "load_skill", {"name": "../../../etc/passwd"})
+    assert miss.startswith("ERROR") and "active-directory" in miss
+
+
 # ── loop ─────────────────────────────────────────────────────────────────────
 
 @pytest.mark.asyncio
@@ -424,3 +581,68 @@ def test_budget_zero_means_unlimited():
 
 async def _ok_handler(ctx, args) -> str:
     return "OK"
+
+
+# ── target egress capability ─────────────────────────────────────────────────
+
+def test_target_egress_requires_aggressive():
+    """Every aggressive sub-capability needs aggressive=True as well; the flag
+    alone must not unlock it."""
+    assert not AgentPolicy(
+        mode=AutonomyMode.autonomous, allow_target_egress=True
+    ).allows_capability("allow_target_egress")
+    assert AgentPolicy(
+        mode=AutonomyMode.autonomous, aggressive=True, allow_target_egress=True
+    ).allows_capability("allow_target_egress")
+
+
+def test_target_egress_is_independent_of_command_exec():
+    """Running tooling in a jail that can reach nothing is a much smaller
+    decision than pointing it at live hosts, so the two are separate."""
+    exec_only = AgentPolicy(mode=AutonomyMode.autonomous, aggressive=True, allow_command_exec=True)
+    assert exec_only.allows_capability("allow_command_exec")
+    assert not exec_only.allows_capability("allow_target_egress")
+
+
+def test_run_command_description_tells_the_truth_about_the_network():
+    """The old static description claimed target egress that was never
+    implemented, so the agent burned iterations on commands that could not work.
+    The description must track the capability."""
+    from scanr.ai.agent.tools import command_tools
+
+    off = command_tools(
+        AgentPolicy(mode=AutonomyMode.autonomous, aggressive=True, allow_command_exec=True)
+    )[0].definition.description
+    assert "NOT reachable" in off
+    assert "ALL_PROXY" not in off
+
+    on = command_tools(
+        AgentPolicy(
+            mode=AutonomyMode.autonomous, aggressive=True,
+            allow_command_exec=True, allow_target_egress=True,
+        )
+    )[0].definition.description
+    assert "ALL_PROXY" in on and "proxychains" in on
+    assert "NOT reachable" not in on
+    # Raw-socket scans can't traverse a TCP relay; say so rather than let the
+    # model discover it by failing.
+    assert "-sS" in on
+
+
+def test_run_command_description_defaults_to_no_egress_without_policy():
+    from scanr.ai.agent.tools import command_tools
+
+    assert "NOT reachable" in command_tools()[0].definition.description
+
+
+@pytest.mark.asyncio
+async def test_registry_passes_policy_to_command_tools():
+    from scanr.ai.agent.tools import default_registry
+
+    pol = AgentPolicy(
+        mode=AutonomyMode.autonomous, aggressive=True,
+        allow_command_exec=True, allow_target_egress=True,
+    )
+    reg = default_registry(pol)
+    desc = next(d for d in reg.definitions() if d.name == "run_command").description
+    assert "ALL_PROXY" in desc

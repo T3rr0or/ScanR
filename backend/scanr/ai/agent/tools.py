@@ -172,7 +172,13 @@ def read_only_tools() -> list[Tool]:
     ]
 
 
-async def _http_request(url: str, method: str, body_raw: str | None, content_type: str) -> str:
+async def _http_request(
+    url: str,
+    method: str,
+    body_raw: str | None,
+    content_type: str,
+    denylist: set[str] | None = None,
+) -> str:
     import httpx
     from urllib.parse import urlparse
 
@@ -181,12 +187,14 @@ async def _http_request(url: str, method: str, body_raw: str | None, content_typ
     # DNS-rebinding guard: the dispatch scope check is string-based, so a
     # hostname that passes the string check could still resolve to loopback /
     # link-local (cloud metadata) / reserved infrastructure. Resolve before
-    # connecting and refuse if any resolved address is forbidden.
+    # connecting and refuse if any resolved address is forbidden. The configured
+    # denylist is passed through so a name resolving to ScanR's own
+    # postgres/redis is caught here too, not just the built-in ranges.
     # Residual TOCTOU: a hostile DNS server could rebind between this
     # resolution and httpx's own connect-time resolution; closing that fully
     # would require connecting to the pre-resolved IP.
     host = urlparse(url).hostname or ""
-    if host and await resolve_and_check_target(host):
+    if host and await resolve_and_check_target(host, denylist):
         raise ToolError(
             f"request target {host!r} resolves to a forbidden address (loopback / metadata / reserved)"
         )
@@ -218,7 +226,7 @@ async def _fetch_url(ctx: AgentContext, args: dict) -> str:
         raise ToolError("url is required")
     if not url.startswith(("http://", "https://")):
         raise ToolError("url must start with http:// or https://")
-    result = await _http_request(url, "GET", None, "")
+    result = await _http_request(url, "GET", None, "", ctx.denylist)
     # Note renderable pages so the agent's discoveries get screenshotted into the
     # Screenshots tab (batched at run end by the DB-backed context).
     try:
@@ -240,14 +248,17 @@ async def _submit_form(ctx: AgentContext, args: dict) -> str:
         raise ToolError("url must start with http:// or https://")
     body_raw = str(args.get("body", "")).strip() or None
     content_type = str(args.get("content_type", "application/x-www-form-urlencoded")).strip()
-    return await _http_request(url, "POST", body_raw, content_type)
+    return await _http_request(url, "POST", body_raw, content_type, ctx.denylist)
 
 
 def web_tools() -> list[Tool]:
     """Active tools that talk to discovered hosts over HTTP. Scope-checked on
     the host. fetch_url (GET) is non-intrusive; submit_form (POST) is
     intrusive — it can submit credentials/forms, so it requires the
-    'aggressive' capability and (in guided mode) operator approval."""
+    'aggressive' capability and (in guided mode) operator approval.
+    browser_validate sits between them: intrusive (it fires a payload) but
+    state-preserving (a GET), so it is approval-gated without needing
+    'aggressive'."""
     return [
         Tool(
             ToolDef(
@@ -291,7 +302,62 @@ def web_tools() -> list[Tool]:
             required_capability="aggressive",
             target_args=("url",),
         ),
+        Tool(
+            ToolDef(
+                name="browser_validate",
+                description=(
+                    "Prove a client-side issue by loading a payload URL in a real headless "
+                    "browser with JavaScript enabled, and report whether it executed. Put the "
+                    "literal {CANARY} inside your payload where a marker should go — ScanR "
+                    "substitutes a token it generated, and only that token coming back through "
+                    "a JS channel counts as proof. Example: "
+                    "http://10.0.0.5/search?q=<script>alert('{CANARY}')</script>. "
+                    "Pass finding_id to mark that finding as validated when it executes. "
+                    "Verdicts: proved (it ran), reflected (echoed but inert — NOT a "
+                    "vulnerability), not_reproduced, inconclusive (the page would not load). "
+                    "Intrusive: approval-gated in guided mode."
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "url": {
+                            "type": "string",
+                            "description": "Absolute http(s) URL containing the literal {CANARY}",
+                        },
+                        "finding_id": {
+                            "type": "string",
+                            "description": "Finding to mark validated if the payload executes.",
+                        },
+                    },
+                    "required": ["url"],
+                    "additionalProperties": False,
+                },
+            ),
+            _browser_validate,
+            # Intrusive (it fires a payload at the target) but deliberately NOT
+            # aggressive-gated: it is a GET that changes no state, and gating it
+            # behind the admin-only opt-in would mean the default run can never
+            # turn a maybe into a proof — which is the entire point.
+            intrusive=True,
+            target_args=("url",),
+        ),
     ]
+
+
+async def _browser_validate(ctx: AgentContext, args: dict) -> str:
+    url = str(args.get("url", "")).strip()
+    if not url:
+        raise ToolError("url is required")
+    if not url.startswith(("http://", "https://")):
+        raise ToolError("url must start with http:// or https://")
+    finding_id = str(args.get("finding_id", "")).strip() or None
+    try:
+        result = await ctx.validate_in_browser(url, finding_id)
+    except ValueError as exc:
+        raise ToolError(str(exc))
+    if result.get("denied"):
+        return f"DENIED: {result.get('reason', 'not permitted')}"
+    return json.dumps(result)[:8000]
 
 
 async def _list_plugins(ctx: AgentContext, args: dict) -> str:
@@ -405,26 +471,61 @@ async def _run_command(ctx: AgentContext, args: dict) -> str:
     return json.dumps(result)[:8000]
 
 
-def command_tools() -> list[Tool]:
+_RUN_COMMAND_BASE = (
+    "Run a shell command in a PERSISTENT, isolated sandbox container (Kali). "
+    "State persists across calls in this run: installs, downloaded files, the "
+    "working directory (/work), and footholds all survive between commands, so "
+    "build on previous steps instead of repeating setup. A broad toolkit is "
+    "ALREADY installed — nmap, masscan, nikto, sqlmap, gobuster, ffuf, "
+    "feroxbuster, wfuzz, whatweb, wpscan, hydra, john, smbclient, curl, git, "
+    "python3/pip — and SecLists wordlists are at /usr/share/seclists. Do NOT "
+    "waste steps reinstalling these; just run them. Only install (pip install "
+    "--user / git clone / go install) for tools not already present. "
+)
+
+# The network reality differs by capability, and the model wastes iterations if
+# the description does not match it. Keep these truthful.
+_RUN_COMMAND_NO_EGRESS = (
+    "IMPORTANT — NETWORK: the sandbox sits on an isolated network whose only "
+    "route out is an HTTP proxy allowlisting package mirrors (PyPI, Debian/"
+    "Ubuntu, GitHub, Kali). Scan targets are NOT reachable from here, so do not "
+    "try to scan or exploit a target with this tool — it will time out. Use it "
+    "for local work: analysing data you already have, offline cracking, "
+    "generating payloads, or building tooling. To touch a target, use "
+    "run_port_scan, run_plugin, fetch_url or submit_form, which run from the "
+    "worker and are scope-checked."
+)
+
+_RUN_COMMAND_WITH_EGRESS = (
+    "NETWORK: the sandbox reaches the scan's authorized targets through a SOCKS5 "
+    "proxy at $ALL_PROXY (also $SCANR_SOCKS_PROXY); the scope is in $SCANR_SCOPE. "
+    "Anything outside that scope is refused by the proxy, as are loopback, cloud "
+    "metadata and ScanR's own infrastructure. There is NO direct route, so tools "
+    "must go through the proxy: use `proxychains <tool>`, or a tool's own SOCKS "
+    "option (curl --socks5-hostname, nmap --proxies, sqlmap --proxy). Package "
+    "mirrors (PyPI, Debian/Ubuntu, GitHub, Kali) remain reachable over HTTP(S) "
+    "for installs. Because this is a TCP relay and the container is non-root, use "
+    "TCP connect scans (nmap -sT / -Pn); raw-socket scans (-sS) will not work."
+)
+
+
+def command_tools(policy=None) -> list[Tool]:
     """Arbitrary shell in the isolated sandbox — the highest-risk tool. Requires
-    the allow_command_exec capability (admin + aggressive opt-in)."""
+    the allow_command_exec capability (admin + aggressive opt-in).
+
+    The description is built from the policy so it describes the network the
+    sandbox actually has: claiming target reachability that isn't configured just
+    burns iterations on commands that cannot succeed.
+    """
+    egress = policy is not None and policy.allows_capability("allow_target_egress")
+    description = _RUN_COMMAND_BASE + (
+        _RUN_COMMAND_WITH_EGRESS if egress else _RUN_COMMAND_NO_EGRESS
+    )
     return [
         Tool(
             ToolDef(
                 name="run_command",
-                description=(
-                    "Run a shell command in a PERSISTENT, isolated sandbox container (Kali). "
-                    "State persists across calls in this run: installs, downloaded files, the "
-                    "working directory (/work), and footholds all survive between commands, so "
-                    "build on previous steps instead of repeating setup. A broad toolkit is "
-                    "ALREADY installed — nmap, masscan, nikto, sqlmap, gobuster, ffuf, "
-                    "feroxbuster, wfuzz, whatweb, wpscan, hydra, john, smbclient, curl, git, "
-                    "python3/pip — and SecLists wordlists are at /usr/share/seclists. Do NOT "
-                    "waste steps reinstalling these; just run them. Only install (pip install "
-                    "--user / git clone / go install) for tools not already present. Network "
-                    "egress is restricted to the scan's authorized targets plus package mirrors. "
-                    "Runs non-root, so raw-socket scans fall back to TCP connect."
-                ),
+                description=description,
                 parameters={
                     "type": "object",
                     "properties": {"command": {"type": "string", "description": "Shell command to run"}},
@@ -439,6 +540,212 @@ def command_tools() -> list[Tool]:
     ]
 
 
+
+# ── working memory + skills ──────────────────────────────────────────────────
+
+async def _todo_write(ctx: AgentContext, args: dict) -> str:
+    from scanr.ai.agent.memory import write_todos
+
+    try:
+        state, summary = write_todos(await ctx.read_scratchpad(), args.get("todos") or [])
+    except ValueError as exc:
+        raise ToolError(str(exc))
+    await ctx.write_scratchpad(state)
+    return summary
+
+
+async def _todo_read(ctx: AgentContext, args: dict) -> str:
+    from scanr.ai.agent.memory import format_todos
+
+    return format_todos((await ctx.read_scratchpad()).get("todos") or [])
+
+
+async def _note_write(ctx: AgentContext, args: dict) -> str:
+    from scanr.ai.agent.memory import upsert_note
+
+    try:
+        state, summary = upsert_note(
+            await ctx.read_scratchpad(),
+            str(args.get("topic", "")),
+            str(args.get("content", "")),
+        )
+    except ValueError as exc:
+        raise ToolError(str(exc))
+    await ctx.write_scratchpad(state)
+    return summary
+
+
+async def _note_read(ctx: AgentContext, args: dict) -> str:
+    from scanr.ai.agent.memory import format_notes
+
+    notes = (await ctx.read_scratchpad()).get("notes") or {}
+    topic = str(args.get("topic", "")).strip() or None
+    return format_notes(notes, topic)[:8000]
+
+
+async def _think(ctx: AgentContext, args: dict) -> str:
+    thought = str(args.get("thought", "")).strip()
+    if not thought:
+        raise ToolError("thought is required")
+    await ctx.log(f"thinking: {thought[:200]}")
+    return "Noted. Continue."
+
+
+async def _list_skills(ctx: AgentContext, args: dict) -> str:
+    from scanr.ai.skills import list_skills
+
+    skills = list_skills()
+    if not skills:
+        return "(no skills available)"
+    return "\n".join(f"- {s.name}: {s.description}" for s in skills)
+
+
+async def _load_skill(ctx: AgentContext, args: dict) -> str:
+    from scanr.ai.skills import get_skill, list_skills
+
+    name = str(args.get("name", "")).strip().lower()
+    skill = get_skill(name)
+    if skill is None:
+        available = ", ".join(s.name for s in list_skills()) or "none"
+        raise ToolError(f"unknown skill {name!r}; available: {available}")
+    await ctx.log(f"loaded skill: {skill.name}")
+    return skill.body[:12000]
+
+
+def memory_tools() -> list[Tool]:
+    """Working memory and loadable expertise.
+
+    None of these touch the network or the database beyond the run's own row, so
+    they need no capability and no approval — they are how the agent keeps a plan
+    and its findings straight across a long run.
+    """
+    return [
+        Tool(
+            ToolDef(
+                name="todo_write",
+                description=(
+                    "Record or update your plan. Pass the COMPLETE list every time — "
+                    "it replaces the previous one, so include finished items with "
+                    "status 'done'. Write a plan before starting multi-step work, and "
+                    "update it as you go; it is what keeps you on track once earlier "
+                    "turns fall out of context."
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "todos": {
+                            "type": "array",
+                            "description": "The full plan, in order.",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "title": {"type": "string"},
+                                    "status": {
+                                        "type": "string",
+                                        "enum": ["pending", "in_progress", "done"],
+                                    },
+                                },
+                                "required": ["title"],
+                                "additionalProperties": False,
+                            },
+                        }
+                    },
+                    "required": ["todos"],
+                    "additionalProperties": False,
+                },
+            ),
+            _todo_write,
+        ),
+        Tool(
+            ToolDef(
+                name="todo_read",
+                description="Re-read your current plan. Useful after a long detour.",
+                parameters={"type": "object", "properties": {}, "additionalProperties": False},
+            ),
+            _todo_read,
+        ),
+        Tool(
+            ToolDef(
+                name="note_write",
+                description=(
+                    "Save a durable fact under a topic, so it survives the conversation "
+                    "window: credentials that worked, the domain name, an endpoint worth "
+                    "returning to. Writing the same topic replaces it; writing empty "
+                    "content deletes it (use that to retract something you found to be "
+                    "wrong)."
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "topic": {"type": "string", "description": "Short key, e.g. 'domain' or '10.0.0.5'."},
+                        "content": {"type": "string", "description": "The fact. Empty deletes the note."},
+                    },
+                    "required": ["topic", "content"],
+                    "additionalProperties": False,
+                },
+            ),
+            _note_write,
+        ),
+        Tool(
+            ToolDef(
+                name="note_read",
+                description="Read one note by topic, or all of them when topic is omitted.",
+                parameters={
+                    "type": "object",
+                    "properties": {"topic": {"type": "string"}},
+                    "additionalProperties": False,
+                },
+            ),
+            _note_read,
+        ),
+        Tool(
+            ToolDef(
+                name="think",
+                description=(
+                    "Reason out loud without taking an action. Use before a decision "
+                    "with consequences — which host to pivot to, whether evidence is "
+                    "sufficient to file a finding. Records nothing and changes nothing."
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {"thought": {"type": "string"}},
+                    "required": ["thought"],
+                    "additionalProperties": False,
+                },
+            ),
+            _think,
+        ),
+        Tool(
+            ToolDef(
+                name="list_skills",
+                description=(
+                    "List available skills — methodology for a class of problem "
+                    "(Active Directory, web auth, TLS triage, pivoting, deciding whether "
+                    "a finding is real). Check this when you hit unfamiliar ground."
+                ),
+                parameters={"type": "object", "properties": {}, "additionalProperties": False},
+            ),
+            _list_skills,
+        ),
+        Tool(
+            ToolDef(
+                name="load_skill",
+                description=(
+                    "Load a skill's full guidance by name. Do this before working a "
+                    "domain it covers, rather than improvising."
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {"name": {"type": "string"}},
+                    "required": ["name"],
+                    "additionalProperties": False,
+                },
+            ),
+            _load_skill,
+        ),
+    ]
+
+
 def default_registry(policy=None) -> "ToolRegistry":
     """The tool set for a guided/autonomous run: read-only + web + plugins, and
     the sandbox shell only when the policy unlocks allow_command_exec (so the
@@ -447,9 +754,9 @@ def default_registry(policy=None) -> "ToolRegistry":
     list_plugins is read-only; run_plugin/run_port_scan are intrusive
     (approval-gated in guided mode; destructive plugins gated on exploitation).
     """
-    tools = read_only_tools() + web_tools() + plugin_tools()
+    tools = read_only_tools() + memory_tools() + web_tools() + plugin_tools()
     if policy is not None and policy.allows_capability("allow_command_exec"):
-        tools += command_tools()
+        tools += command_tools(policy)
     return ToolRegistry(tools)
 
 

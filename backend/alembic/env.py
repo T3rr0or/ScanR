@@ -12,7 +12,14 @@ from alembic import context
 config = context.config
 
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    # disable_existing_loggers=False is essential, not cosmetic. run_migrations()
+    # is called from the app's lifespan startup, by which point every module has
+    # already created its logger via getLogger(__name__). fileConfig's default
+    # (True) sets .disabled on all of them, so the API and worker would run with
+    # application logging silently switched off for the rest of the process —
+    # losing failed-login warnings, blocked-webhook warnings, scope-violation
+    # warnings and the rest.
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 # Pull DATABASE_URL from environment so both CLI and programmatic use work
 _db_url = config.get_main_option("sqlalchemy.url") or os.environ.get("DATABASE_URL", "")

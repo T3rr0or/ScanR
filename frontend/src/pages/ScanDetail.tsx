@@ -12,6 +12,7 @@ import {
 	Camera,
 	Server,
 	Network,
+	Route,
 	Shield,
 	ChevronLeft,
 	GitCompare,
@@ -32,6 +33,7 @@ import ScreenshotGallery from "@/components/ScreenshotGallery";
 import ScanDelta from "@/pages/ScanDelta";
 import { useScanConsole } from "@/hooks/useScanConsole";
 import ScanTimeline from "@/components/ScanTimeline";
+import AttackPaths from "@/components/AttackPaths";
 import NetworkTopology from "@/components/NetworkTopology";
 import HostDetail from "@/components/HostDetail";
 import type { HostRead } from "@/api/hosts";
@@ -44,6 +46,7 @@ import {
 	relTime,
 	fmtDuration,
 } from "@/components/ui";
+import { safeUrl } from "@/utils/safeUrl"
 
 interface Props {
 	scanId: string;
@@ -55,6 +58,7 @@ type Tab =
 	| "findings"
 	| "hosts"
 	| "topology"
+	| "attack-paths"
 	| "screenshots"
 	| "exclusions"
 	| "chains"
@@ -285,7 +289,7 @@ export default function ScanDetail({ scanId, onBack }: Props) {
 						<DStat label="Findings" value={totalFindings} />
 						<DStat
 							label="Duration"
-							value={fmtDuration((scan as any)?.duration_s)}
+							value={fmtDuration(scan?.duration_s)}
 						/>
 						<DStat label="Started" value={relTime(scan?.started_at)} />
 					</div>
@@ -300,12 +304,12 @@ export default function ScanDetail({ scanId, onBack }: Props) {
 						}}
 					>
 						<Meter
-							value={(scan as any)?.progress ?? 0.5}
+							value={scan?.progress ?? 0.5}
 							color="var(--accent-2)"
 						/>
 					</div>
 				)}
-				{scan?.status === "failed" && (scan as any)?.error_message && (
+				{scan?.status === "failed" && scan?.error_message && (
 					<div
 						style={{
 							marginTop: 10,
@@ -318,7 +322,7 @@ export default function ScanDetail({ scanId, onBack }: Props) {
 							fontFamily: "var(--font-mono)",
 						}}
 					>
-						{(scan as any).error_message}
+						{scan.error_message}
 					</div>
 				)}
 			</div>
@@ -352,6 +356,12 @@ export default function ScanDetail({ scanId, onBack }: Props) {
 					onClick={() => setTab("topology")}
 					icon={<Network size={12} />}
 					label="Topology"
+				/>
+				<TabBtn
+					active={tab === "attack-paths"}
+					onClick={() => setTab("attack-paths")}
+					icon={<Route size={12} />}
+					label="Attack Paths"
 				/>
 				<TabBtn
 					active={tab === "screenshots"}
@@ -438,6 +448,12 @@ export default function ScanDetail({ scanId, onBack }: Props) {
 						scanId={scanId}
 					/>
 				)}
+				{tab === "attack-paths" && (
+					<div className="page-pad" style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
+						<AttackPaths scanId={scanId} />
+					</div>
+				)}
+
 				{tab === "topology" && (
 					<div className="page-pad" style={{ flex: 1, minHeight: 0 }}>
 						{hostsLoading ? (
@@ -1004,10 +1020,10 @@ function FindingDrawer({
 			return [];
 		}
 	}
-	const cves = safeParse((finding as any).cve_ids);
-	const mitre = safeParse((finding as any).mitre_tags);
-	const comp = safeParse((finding as any).compliance_tags);
-	const refs = safeParse((finding as any).references);
+	const cves = safeParse(finding.cve_ids);
+	const mitre = safeParse(finding.mitre_tags);
+	const comp = safeParse(finding.compliance_tags);
+	const refs = safeParse(finding.references);
 
 	return (
 		<div
@@ -1163,7 +1179,7 @@ function FindingDrawer({
 						{refs.map((u: string) => (
 							<a
 								key={u}
-								href={u}
+								href={safeUrl(u)}
 								target="_blank"
 								rel="noreferrer"
 								style={{

@@ -10,7 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from scanr.core.limiter import limiter
 from scanr.db import get_db
 from scanr.deps import require_scope
-from scanr.models import Finding, Host, Scan
+from scanr.models import Finding, FindingRetest, Host, Scan
+from scanr.models.base import new_uuid
 from scanr.models.user import User
 from scanr.schemas import FindingBulkUpdate, FindingRead, FindingUpdate
 
@@ -24,9 +25,16 @@ async def list_findings(
     severity: str | None = Query(None),
     plugin_id: str | None = Query(None),
     false_positive: bool | None = Query(None),
+    validated: bool | None = Query(None, description="Only findings ScanR mechanically reproduced"),
+    remediation_status: str | None = Query(None, description="open | accepted_risk | resolved"),
+    q_text: str | None = Query(None, alias="q", max_length=200,
+                               description="Substring match on title, host IP, or plugin id"),
     mitre_technique: str | None = Query(None, description="Filter by ATT&CK technique ID, e.g. T1110.001"),
     compliance_tag: str | None = Query(None, description="Filter by compliance framework prefix or tag, e.g. 'PCI-DSS' or 'PCI-DSS:6.4.1'"),
-    limit: int = Query(200, le=500),
+    # Raised past 500 so a client showing a 500-row page can ask for 501 and know
+    # whether a 501st exists, rather than inferring "there is more" from a full
+    # page — which is wrong at exactly 500.
+    limit: int = Query(200, le=1000),
     cursor: str | None = Query(None, description="Cursor from previous page: ISO timestamp,finding_id"),
     offset: int = Query(0, description="Deprecated: use cursor instead"),
     db: AsyncSession = Depends(get_db),
@@ -49,6 +57,21 @@ async def list_findings(
         q = q.where(Finding.plugin_id == plugin_id)
     if false_positive is not None:
         q = q.where(Finding.false_positive == false_positive)
+    if validated is not None:
+        q = q.where(Finding.validated == validated)
+    if remediation_status:
+        if remediation_status not in ("open", "accepted_risk", "resolved"):
+            raise HTTPException(status_code=400, detail="Invalid remediation_status")
+        q = q.where(Finding.remediation_status == remediation_status)
+    if q_text:
+        # Server-side because the UI's search box used to filter one page of
+        # results client-side, which silently under-reported whenever the match
+        # lay past the page boundary.
+        from sqlalchemy import or_
+
+        like = f"%{q_text}%"
+        q = q.where(or_(Finding.title.ilike(like), Host.ip.ilike(like),
+                        Finding.plugin_id.ilike(like)))
     if mitre_technique:
         if not re.match(r'^T\d{4}(\.\d{3})?$', mitre_technique):
             raise HTTPException(status_code=400, detail="Invalid MITRE technique ID (e.g. T1110 or T1110.001)")
@@ -94,6 +117,9 @@ async def export_findings(
     severity: str | None = Query(None),
     plugin_id: str | None = Query(None),
     false_positive: bool | None = Query(None),
+    validated: bool | None = Query(None),
+    remediation_status: str | None = Query(None),
+    q_text: str | None = Query(None, alias="q", max_length=200),
     compliance_tag: str | None = Query(None),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_scope("findings:read")),
@@ -122,6 +148,18 @@ async def export_findings(
         q = q.where(Finding.plugin_id == plugin_id)
     if false_positive is not None:
         q = q.where(Finding.false_positive == false_positive)
+    if validated is not None:
+        q = q.where(Finding.validated == validated)
+    if remediation_status:
+        if remediation_status not in ("open", "accepted_risk", "resolved"):
+            raise HTTPException(status_code=400, detail="Invalid remediation_status")
+        q = q.where(Finding.remediation_status == remediation_status)
+    if q_text:
+        from sqlalchemy import or_
+
+        like = f"%{q_text}%"
+        q = q.where(or_(Finding.title.ilike(like), Host.ip.ilike(like),
+                        Finding.plugin_id.ilike(like)))
     if compliance_tag:
         if not re.match(r'^[A-Z0-9][A-Z0-9:.\-]{1,40}$', compliance_tag, re.IGNORECASE):
             raise HTTPException(status_code=400, detail="Invalid compliance tag format")
@@ -133,14 +171,16 @@ async def export_findings(
     buf = io.StringIO()
     writer = csv.writer(buf)
     writer.writerow(["severity", "title", "host_ip", "plugin_id", "cvss_score", "port",
-                     "false_positive", "remediation_status", "analyst_notes",
+                     "false_positive", "validated", "validation_method", "remediation_status", "analyst_notes",
                      "description", "remediation"])
     for row in rows:
         f, ip = row[0], row[1]
         writer.writerow([
             f.severity, f.title, ip or "", f.plugin_id, f.cvss_score or "",
             f"{f.port_number}/{f.protocol}" if f.port_number else "",
-            "yes" if f.false_positive else "", f.remediation_status or "",
+            "yes" if f.false_positive else "",
+            "yes" if f.validated else "", f.validation_method or "",
+            f.remediation_status or "",
             (f.analyst_notes or "").replace("\n", " "),
             (f.description or "").replace("\n", " ")[:300],
             (f.remediation or "").replace("\n", " ")[:200],
@@ -286,3 +326,110 @@ async def finding_history(
         }
         for r in history_result.all()
     ]
+
+
+# ── retest ────────────────────────────────────────────────────────────────────
+
+async def _own_finding(finding_id: str, user_id: str, db: AsyncSession) -> Finding:
+    result = await db.execute(
+        select(Finding)
+        .join(Scan, Finding.scan_id == Scan.id)
+        .where(Finding.id == finding_id, Scan.user_id == user_id)
+    )
+    finding = result.scalar_one_or_none()
+    if not finding:
+        raise HTTPException(status_code=404, detail="Finding not found")
+    return finding
+
+
+def _retest_read(r: FindingRetest) -> dict:
+    return {
+        "id": r.id,
+        "finding_id": r.finding_id,
+        "status": r.status,
+        "verdict": r.verdict,
+        "evidence": r.evidence,
+        "error": r.error,
+        "started_at": r.started_at,
+        "finished_at": r.finished_at,
+        "created_at": r.created_at,
+    }
+
+
+@router.post("/{finding_id}/retest", status_code=202)
+@limiter.limit("30/minute")
+async def request_retest(
+    request: Request,
+    finding_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_scope("findings:triage")),
+):
+    """Re-run the plugin that produced this finding, against the same target.
+
+    Retesting sends live traffic to the host, so it needs the triage scope rather
+    than read — and it is refused when a retest for this finding is already in
+    flight, since two concurrent runs would race to write the verdict.
+    """
+    finding = await _own_finding(finding_id, current_user.id, db)
+
+    if finding.host_id is None:
+        raise HTTPException(
+            status_code=400,
+            detail="This finding is not attached to a host, so there is nothing to re-check.",
+        )
+
+    from scanr.core import plugin_manager
+
+    if finding.plugin_id not in plugin_manager.get_all_plugin_classes():
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Plugin {finding.plugin_id!r} is not available in this installation, "
+                f"so this finding cannot be re-verified automatically."
+            ),
+        )
+
+    in_flight = await db.execute(
+        select(FindingRetest.id).where(
+            FindingRetest.finding_id == finding_id,
+            FindingRetest.status.in_(("pending", "running")),
+        )
+    )
+    if in_flight.scalar_one_or_none() is not None:
+        raise HTTPException(status_code=409, detail="A retest for this finding is already running")
+
+    retest = FindingRetest(
+        id=new_uuid(),
+        finding_id=finding_id,
+        requested_by=current_user.id,
+        status="pending",
+    )
+    db.add(retest)
+    await db.commit()
+    await db.refresh(retest)
+
+    from scanr.tasks.retest_tasks import retest_finding_task
+
+    retest_finding_task.delay(retest.id)
+    return _retest_read(retest)
+
+
+@router.get("/{finding_id}/retests")
+async def list_retests(
+    finding_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_scope("findings:read")),
+):
+    """Retest history for a finding, newest first — the remediation evidence trail."""
+    await _own_finding(finding_id, current_user.id, db)
+    rows = (
+        await db.execute(
+            select(FindingRetest)
+            .where(FindingRetest.finding_id == finding_id)
+            # id as a tiebreak: created_at has second resolution on SQLite, so two
+            # retests in the same second would otherwise come back in arbitrary
+            # (and unstable) order.
+            .order_by(FindingRetest.created_at.desc(), FindingRetest.id.desc())
+        )
+    ).scalars().all()
+    return [_retest_read(r) for r in rows]

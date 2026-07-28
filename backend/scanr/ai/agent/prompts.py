@@ -28,7 +28,15 @@ tool output.
 security-relevant, then finish with a clear written conclusion.
 
 When you have nothing left to investigate, stop calling tools and write your \
-final assessment in GitHub-flavored Markdown."""
+final assessment in GitHub-flavored Markdown.
+
+How to work:
+- Start multi-step work with todo_write, and keep it current. Earlier turns fall \
+out of your context on a long run; the plan is what survives.
+- Save anything you will want later with note_write — a credential that worked, \
+a domain name, an endpoint to come back to. Re-deriving it costs budget.
+- Before working unfamiliar ground, load_skill the relevant methodology instead \
+of improvising."""
 
 _MODE_NOTE = {
     AutonomyMode.guided: (
@@ -52,6 +60,15 @@ def build_system_prompt(policy: AgentPolicy, scan_summary: str = "") -> str:
     if policy.allow_exploitation:
         caps.append("exploitation")
     prompt += "\n\nEnabled capabilities: " + (", ".join(caps) if caps else "none (read-only/non-intrusive only).")
+    # Only the index (name + one line) goes in the always-on prompt; bodies are
+    # fetched with load_skill, so unused methodology costs nothing per turn.
+    from scanr.ai.skills import list_skills
+
+    skills = list_skills()
+    if skills:
+        prompt += "\n\nAvailable skills (load_skill to read one in full):\n" + "\n".join(
+            f"- {s.name}: {s.description}" for s in skills
+        )
     if scan_summary:
         prompt += f"\n\nScan context:\n{scan_summary}"
     return prompt

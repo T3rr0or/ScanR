@@ -17,23 +17,77 @@ from scanr.models.webhook import Webhook
 logger = logging.getLogger(__name__)
 
 
-def _validate_webhook_host(hostname: str) -> None:
+def encrypt_secret(secret: str | None) -> str | None:
+    """Encrypt a webhook HMAC secret for storage.
+
+    The secret authenticates ScanR to the customer's endpoint, so a database read
+    should not yield a usable signing key. Falls back to plaintext when VAULT_KEY
+    is unconfigured (it is optional) rather than refusing to save the webhook —
+    decrypt_secret reads both forms.
+    """
+    if not secret:
+        return None
+    from scanr.credentials import vault
+    from scanr.utils.exceptions import VaultError
+
+    try:
+        return vault.encrypt({"v": secret})
+    except VaultError:
+        logger.warning(
+            "VAULT_KEY is not set — storing the webhook signing secret in plaintext. "
+            "Set VAULT_KEY to encrypt secrets at rest."
+        )
+        return secret
+
+
+def decrypt_secret(stored: str | None) -> str | None:
+    """Return the usable secret from a stored value.
+
+    Accepts both Fernet ciphertext and legacy plaintext, so rows written before
+    encryption keep working without a data migration.
+    """
+    if not stored:
+        return None
+    from scanr.credentials import vault
+
+    try:
+        return vault.decrypt(stored).get("v") or None
+    except Exception:
+        return stored  # legacy plaintext, or no VAULT_KEY configured
+
+
+async def _validate_webhook_host(hostname: str) -> None:
     """Re-validate webhook host at dispatch time to prevent TOCTOU SSRF.
-    
+
     An attacker could register a domain resolving to a safe public IP,
     then change DNS to an internal IP after creation. Re-resolving at
     dispatch time closes this window.
+
+    Uses the loop's resolver rather than socket.getaddrinfo: this runs on the
+    async request/worker path, and a slow or hanging DNS lookup would otherwise
+    block the event loop for every other request.
     """
     import ipaddress
     import socket
+
     try:
-        infos = socket.getaddrinfo(hostname, None)
-        for info in infos:
-            addr = ipaddress.ip_address(info[4][0])
-            if addr.is_private or addr.is_loopback or addr.is_link_local or addr.is_reserved or addr.is_multicast:
-                raise ValueError(f"Webhook target {hostname} resolves to internal address {addr}")
-    except socket.gaierror:
-        pass  # unresolvable — allow, will fail naturally
+        infos = await asyncio.get_running_loop().getaddrinfo(
+            hostname, None, type=socket.SOCK_STREAM
+        )
+    except (OSError, UnicodeError):  # gaierror is an OSError subclass
+        return  # unresolvable — allow, will fail naturally
+    for info in infos:
+        addr = ipaddress.ip_address(info[4][0])
+        if (
+            addr.is_private
+            or addr.is_loopback
+            or addr.is_link_local
+            or addr.is_reserved
+            or addr.is_multicast
+        ):
+            raise ValueError(
+                f"Webhook target {hostname} resolves to internal address {addr}"
+            )
 
 
 async def dispatch(event: str, payload: dict, user_id: str, db: AsyncSession) -> None:
@@ -58,7 +112,7 @@ async def _send(webhook: Webhook, event: str, payload: dict, db: AsyncSession) -
     hostname = urlparse(webhook.url).hostname
     if hostname:
         try:
-            _validate_webhook_host(hostname)
+            await _validate_webhook_host(hostname)
         except ValueError:
             logger.warning("Webhook %s blocked: %s resolves to internal IP", webhook.id, hostname)
             webhook.last_status = 403
@@ -79,8 +133,9 @@ async def _send(webhook: Webhook, event: str, payload: dict, db: AsyncSession) -
         "X-ScanR-Delivery": delivery_id,
     }
 
-    if webhook.secret:
-        sig = hmac.new(webhook.secret.encode(), body.encode(), hashlib.sha256).hexdigest()  # type: ignore[attr-defined]
+    signing_secret = decrypt_secret(webhook.secret)
+    if signing_secret:
+        sig = hmac.new(signing_secret.encode(), body.encode(), hashlib.sha256).hexdigest()
         headers["X-ScanR-Signature"] = f"sha256={sig}"
 
     status_code: int = 0

@@ -13,10 +13,11 @@ from scanr.deps import require_scope
 from scanr.models import Schedule
 from scanr.models.base import new_uuid
 from scanr.models.user import User
+from scanr.schemas.profile import validate_profile_dict
 
-# Schedules launch scans, so they reuse the scans scopes. Target denylist and
-# credential-ownership validation mirror the scans create path — a schedule
-# must not be a way to bypass either.
+# Schedules launch scans, so they reuse the scans scopes. Profile schema, target
+# denylist, and credential-ownership validation mirror the scans create path — a
+# schedule must not be a way to bypass any of them.
 
 router = APIRouter(prefix="/schedules", tags=["schedules"])
 
@@ -90,19 +91,28 @@ class ScheduleRead(BaseModel):
 
 
 def _parse_schedule_profile(raw: str) -> dict:
+    """Parse AND fully validate a schedule's profile against the scan profile
+    schema. A schedule's profile is copied verbatim into a Scan at fire time, so
+    skipping the schema here would let a schedule become an argument-injection
+    route into the scanners (see scanr.schemas.profile)."""
     try:
         data = json.loads(raw or "{}")
     except Exception:
         raise HTTPException(status_code=400, detail="scan_profile_json is not valid JSON")
-    if not isinstance(data, dict):
-        raise HTTPException(status_code=400, detail="scan_profile_json must be a JSON object")
+    try:
+        validate_profile_dict(data, field="scan_profile_json")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    # Return the caller's dict, not the normalized one: credential_id and
+    # template_id are consumed from it at fire time and are not profile fields.
     return data
 
 
 async def _validate_schedule_inputs(
     targets: list[str], scan_profile_json: str, user_id: str, db: AsyncSession
 ) -> None:
-    """Apply the same target denylist and credential-ownership checks as scan creation."""
+    """Apply the same profile schema, target denylist, and credential-ownership
+    checks as scan creation."""
     from scanr.api.v1.scans import _validate_targets, _verify_credential_owner
 
     if not targets:

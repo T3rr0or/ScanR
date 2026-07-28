@@ -33,6 +33,9 @@
   .badge-medium { background: #fef9c3; color: #854d0e; }
   .badge-low { background: #dcfce7; color: #166534; }
   .badge-info { background: #eff6ff; color: #1e40af; }
+  /* Reproduced by ScanR, not pattern-matched — the one badge a reader can act on
+     without re-testing it themselves. */
+  .badge-validated { background: #ecfdf5; color: #065f46; border: 1px solid #6ee7b7; }
   .finding-title { font-weight: 600; font-size: 13px; flex: 1; }
   .finding-count { font-size: 11px; background: #e2e8f0; color: #475569; padding: 2px 8px; border-radius: 10px; flex-shrink: 0; }
   .finding-plugin { font-size: 10px; color: #94a3b8; flex-shrink: 0; font-family: monospace; }
@@ -139,6 +142,8 @@
 <div class="finding">
   <div class="finding-header">
     <span class="badge badge-{{ group.severity }}">{{ group.severity }}</span>
+    {% set verified = group.findings | selectattr('validated') | list %}
+    {% if verified %}<span class="badge badge-validated">verified{% if group.count > 1 %} {{ verified | length }}/{{ group.count }}{% endif %}</span>{% endif %}
     <span class="finding-title">{{ group.title }}</span>
     {% if group.count > 1 %}
     <span class="finding-count">{{ group.count }} instances</span>
@@ -166,6 +171,10 @@
     {% if f.evidence %}
     <div class="section-label">Evidence</div>
     <div class="evidence">{{ f.evidence }}</div>
+    {% endif %}
+    {% if f.validated %}
+    <div class="section-label">Validation <span class="badge badge-validated">verified</span></div>
+    <div class="evidence">{{ f.validation_evidence or 'Reproduced by ScanR.' }}</div>
     {% endif %}
     <p style="margin-top:8px;font-size:11px;color:#64748b;">
       {% if f.host_ip %}Host: <strong>{{ f.host_ip }}</strong>{% endif %}

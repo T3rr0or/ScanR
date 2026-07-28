@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from scanr.db import get_db
-from scanr.deps import get_current_user
+from scanr.deps import get_current_user, require_scope
 from scanr.models.base import new_uuid
 from scanr.models.exclusion import Exclusion
 from scanr.models.scan import Scan
@@ -60,7 +60,7 @@ async def create_exclusion(
     scan_id: str,
     body: ExclusionCreate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_scope("scans:write")),
 ):
     await _own_scan(scan_id, current_user.id, db)
 
@@ -85,8 +85,12 @@ async def delete_exclusion(
     scan_id: str,
     excl_id: str,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_scope("scans:write")),
 ):
+    # Ownership must be checked against the scan, not just the exclusion's
+    # scan_id: an exclusion is a scope guardrail ("never touch this host"), so
+    # deleting someone else's would widen their scan's blast radius.
+    await _own_scan(scan_id, current_user.id, db)
     result = await db.execute(select(Exclusion).where(Exclusion.id == excl_id, Exclusion.scan_id == scan_id))
     excl = result.scalar_one_or_none()
     if not excl:

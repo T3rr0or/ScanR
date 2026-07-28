@@ -38,6 +38,22 @@ class AgentContext(ABC):
     async def log(self, message: str) -> None:
         """Surface a line to the live scan console / audit trail."""
 
+    async def read_scratchpad(self) -> dict:
+        """The run's working memory: {"todos": [...], "notes": {topic: body}}.
+
+        Concrete rather than abstract, with an in-memory default: memory is a
+        convenience for the agent, not part of the scope/capability boundary this
+        class exists to enforce, so an implementation that does not persist it is
+        still correct. The DB-backed context overrides both to store it on the run.
+        """
+        from scanr.ai.agent.memory import empty_scratchpad
+
+        return getattr(self, "_scratchpad", None) or empty_scratchpad()
+
+    async def write_scratchpad(self, scratchpad: dict) -> None:
+        """Persist working memory, so it survives a restart and lands in the trace."""
+        self._scratchpad = scratchpad
+
     async def should_stop(self) -> bool:
         """Whether the operator has asked to stop the run. Checked each loop
         iteration. Default False; the DB-backed impl checks a cancel flag."""
@@ -83,11 +99,27 @@ class AgentContext(ABC):
         persist newly discovered ports/services, and return the open ports.
         Raises ValueError on bad input."""
 
+    async def validate_in_browser(self, url_template: str, finding_id: str | None = None) -> dict:
+        """Reproduce a finding by loading a payload URL in a real browser.
+
+        ``url_template`` must contain the literal ``{CANARY}``; the implementation
+        substitutes a token it generated itself. That is what makes the result
+        trustworthy — the agent cannot supply the marker it is later judged
+        against, so it cannot manufacture a proof. Returns a result dict, or
+        ``{"denied": True, "reason": ...}`` where no browser is available.
+
+        Concrete-with-a-denial rather than abstract: a context without a browser
+        is a valid context, and the caller already handles denial.
+        """
+        return {"denied": True, "reason": "browser validation is not available in this context"}
+
     @abstractmethod
     async def run_command(self, command: str) -> dict:
-        """Run a shell command in the isolated sandbox (egress scoped to the
-        scan's targets + package mirrors). Returns a result dict, or
-        {"denied": True, "reason": ...} when the sandbox is unavailable/disabled."""
+        """Run a shell command in the isolated sandbox. The sandbox network is
+        Docker-``internal``, so its only egress is the package-mirror proxy —
+        scan targets are NOT reachable from it (see docs/ai-sandbox-design.md §4).
+        Returns a result dict, or {"denied": True, "reason": ...} when the sandbox
+        is unavailable/disabled."""
 
     @abstractmethod
     async def create_finding(

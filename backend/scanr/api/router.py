@@ -7,11 +7,13 @@ from .v1 import (
     analytics,
     api_keys,
     assets,
+    attack_paths,
     auth,
     credentials,
     exclusions,
     findings,
     host_tags,
+    integrations,
     plugins,
     profile_suggest,
     reports,
@@ -32,6 +34,7 @@ api_router.include_router(auth.router)
 api_router.include_router(ai.router)
 api_router.include_router(profile_suggest.router)
 api_router.include_router(scans.router)
+api_router.include_router(attack_paths.router)
 api_router.include_router(findings.router)
 api_router.include_router(plugins.router)
 api_router.include_router(credentials.router)
@@ -50,6 +53,7 @@ api_router.include_router(users.router)
 api_router.include_router(assets.router)
 api_router.include_router(vulnerabilities.router)
 api_router.include_router(host_tags.router)
+api_router.include_router(integrations.router)
 api_router.include_router(wordlists.router)
 
 # WebSocket (no v1 prefix — cleaner WS URLs)

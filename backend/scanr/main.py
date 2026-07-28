@@ -64,11 +64,19 @@ async def lifespan(app: FastAPI):
 
 
 def create_app() -> FastAPI:
+    # /docs, /redoc and /openapi.json are unauthenticated (Swagger UI is a plain
+    # browser page) and publish every route, parameter and schema — useful
+    # reconnaissance, in the same category as the version string that
+    # /system/version deliberately requires auth for. Make them switchable so a
+    # deployment that exposes the API can turn them off.
     app = FastAPI(
         title="ScanR",
         description="Professional vulnerability scanner for authorized penetration testing",
         version=settings.app_version,
         lifespan=lifespan,
+        docs_url="/docs" if settings.docs_enabled else None,
+        redoc_url="/redoc" if settings.docs_enabled else None,
+        openapi_url="/openapi.json" if settings.docs_enabled else None,
     )
 
     cors_origins = settings.cors_origins

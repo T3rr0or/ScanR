@@ -13,6 +13,62 @@ export interface ScanSummary {
   profile_json?: string | null
 }
 
+/* ── Scan delta (see backend core/delta_engine.compute_delta) ─────────────── */
+
+export interface DeltaFinding {
+  id: string
+  plugin_id: string
+  severity: string
+  title: string
+  host_ip: string
+  port_number: number | null
+  cvss_score: number | null
+  compliance_tags: string[]
+}
+
+export interface DeltaHost {
+  id: string
+  ip: string
+  hostname: string | null
+  os_fingerprint: string | null
+}
+
+export interface DeltaPort {
+  port: number
+  protocol: string
+}
+
+export interface DeltaPortChange {
+  ip: string
+  opened: DeltaPort[]
+  closed: DeltaPort[]
+}
+
+export interface ScanDeltaResult {
+  baseline_scan_id: string
+  new_scan_id: string
+  summary: {
+    new_findings: number
+    resolved_findings: number
+    persisting_findings: number
+    new_hosts: number
+    removed_hosts: number
+    port_changes: number
+    new_subdomains: number
+    removed_subdomains: number
+  }
+  new_findings: DeltaFinding[]
+  resolved_findings: DeltaFinding[]
+  persisting_findings: DeltaFinding[]
+  new_hosts: DeltaHost[]
+  removed_hosts: DeltaHost[]
+  new_subdomains: string[]
+  removed_subdomains: string[]
+  port_changes: DeltaPortChange[]
+  /** Only present on the /delta/latest route, which picks the baseline itself. */
+  baseline_scan?: { id: string; name: string; created_at: string | null }
+}
+
 export interface ScanCredentialIn {
   role: string
   type: string
@@ -33,6 +89,7 @@ export interface ScanAiAgentConfig {
   allow_privilege_escalation?: boolean
   allow_exploitation?: boolean
   allow_command_exec?: boolean
+  allow_target_egress?: boolean
 }
 
 export interface ScanCreate {
@@ -58,6 +115,7 @@ export const scansApi = {
   clone: (id: string) => api.post<ScanSummary>(`/scans/${id}/clone`).then(r => r.data),
   hosts: (id: string) => api.get(`/scans/${id}/hosts`).then(r => r.data),
   delta: (id: string, baseline: string) =>
-    api.get(`/scans/${id}/delta`, { params: { baseline } }).then(r => r.data),
-  latestDelta: (id: string) => api.get(`/scans/${id}/delta/latest`).then(r => r.data),
+    api.get<ScanDeltaResult>(`/scans/${id}/delta`, { params: { baseline } }).then(r => r.data),
+  latestDelta: (id: string) =>
+    api.get<ScanDeltaResult>(`/scans/${id}/delta/latest`).then(r => r.data),
 }

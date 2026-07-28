@@ -15,7 +15,10 @@ class Webhook(Base, TimestampMixin):
     user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id"), nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     url: Mapped[str] = mapped_column(Text, nullable=False)
-    secret: Mapped[str | None] = mapped_column(String(255), nullable=True)  # HMAC signing secret
+    # HMAC signing secret, stored as Fernet ciphertext when VAULT_KEY is set (see
+    # scanr.core.webhook_dispatcher.decrypt_secret). Text, not String(255):
+    # ciphertext is substantially longer than the plaintext it wraps.
+    secret: Mapped[str | None] = mapped_column(Text, nullable=True)
     events: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON list[str]
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     last_status: Mapped[int | None] = mapped_column(Integer, nullable=True)

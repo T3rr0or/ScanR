@@ -26,6 +26,13 @@ class Settings(BaseSettings):
     allowed_origins: str = "http://localhost"
     secure_cookies: bool = True
 
+    # Interactive API docs (/docs, /redoc, /openapi.json). These are
+    # unauthenticated by design and publish the full API surface, so they are
+    # disabled in the Docker deployment (see docker-compose.yml) and left on for
+    # local development, where the API binds to loopback anyway. Turn them off if
+    # you expose the API directly via SCANR_API_BIND.
+    docs_enabled: bool = True
+
     # Database
     database_url: str = "sqlite+aiosqlite:///./scanr.db"
     # For PostgreSQL: postgresql+asyncpg://user:pass@localhost/scanr
@@ -92,6 +99,14 @@ class Settings(BaseSettings):
     sandbox_token: str = ""
     sandbox_image: str = "scanr-sandbox:latest"
     sandbox_cmd_timeout: int = 120  # per-command wall-clock seconds
+
+    # ── Browser validation (see scanr/core/browser.py) ────────────────────────
+    # Concurrent headless-browser validations per worker *process*. A hostile
+    # page can pin a core for the full 60s cap, so this is the CPU ceiling for
+    # one process — and prefork means the deployment ceiling is this multiplied
+    # by the worker's --concurrency (4 by default → 8). Raise --concurrency and
+    # the browser ceiling rises with it, so tune this down on a small host.
+    browser_validation_concurrency: int = 2
 
     # Reports output directory
     reports_dir: Path = Path("./reports")

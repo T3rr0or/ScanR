@@ -50,6 +50,14 @@ jobs:
           - name: scanr-sandbox-proxy
             context: ./backend
             file: sandbox/Dockerfile.proxy
+          # Spawned per agent run by the sandbox-runner, never started by compose,
+          # so it is easy to forget here — and its absence only shows up at
+          # runtime as a denied session when a scan opts into target egress.
+          # tests/unit/test_release_images.py guards this list against the
+          # compose file so the next omission fails CI instead.
+          - name: scanr-sandbox-relay
+            context: ./backend
+            file: sandbox/Dockerfile.relay
 
     steps:
       - name: Check out repository

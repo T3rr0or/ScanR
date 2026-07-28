@@ -5,6 +5,9 @@
 import { X, ExternalLink } from 'lucide-react'
 import { SevTag } from '@/components/ui'
 import type { Finding } from '@/api/findings'
+import RetestPanel from "@/components/RetestPanel"
+import TicketPanel from "@/components/TicketPanel"
+import { safeUrl } from "@/utils/safeUrl"
 
 interface Props {
   finding: Finding | null
@@ -52,7 +55,7 @@ export default function FindingDetailPanel({ finding, onClose }: Props) {
 function PanelBody({ finding, onClose }: { finding: Finding; onClose: () => void }) {
   const refs = safeParse(finding.references)
   const cves = safeParse(finding.cve_ids)
-  const complianceTags = safeParse((finding as any).compliance_tags)
+  const complianceTags = safeParse(finding.compliance_tags)
 
   return (
     <>
@@ -63,7 +66,7 @@ function PanelBody({ finding, onClose }: { finding: Finding; onClose: () => void
         display: 'flex', alignItems: 'flex-start', gap: 10,
         flexShrink: 0,
       }}>
-        <SevTag severity={finding.severity as any} />
+        <SevTag severity={finding.severity} />
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-0)', lineHeight: 1.4 }}>
             {finding.title}
@@ -133,11 +136,19 @@ function PanelBody({ finding, onClose }: { finding: Finding; onClose: () => void
           </Section>
         )}
 
+        <Section label="Verification">
+          <RetestPanel findingId={finding.id} />
+        </Section>
+
+        <Section label="Ticket">
+          <TicketPanel findingId={finding.id} />
+        </Section>
+
         {refs.length > 0 && (
           <Section label="References">
             <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
               {refs.map((r: string, i: number) => (
-                <a key={i} href={r} target="_blank" rel="noopener noreferrer"
+                <a key={i} href={safeUrl(r)} target="_blank" rel="noopener noreferrer"
                   style={{ fontSize: 11, color: 'var(--accent)', display: 'flex', alignItems: 'flex-start', gap: 5, wordBreak: 'break-all', lineHeight: 1.5 }}>
                   <ExternalLink size={10} style={{ flexShrink: 0, marginTop: 2 }} />
                   {r}

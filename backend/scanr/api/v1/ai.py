@@ -265,7 +265,7 @@ async def summarize_scan(
     scan_id: str,
     body: SummaryRequest | None = None,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_scope("findings:read")),
+    current_user: User = Depends(require_scope("ai:generate")),
 ):
     """Generate an AI narrative summary of a scan's findings (read-only, assist mode)."""
     body = body or SummaryRequest()
@@ -336,7 +336,7 @@ async def report_narrative(
     scan_id: str,
     body: SummaryRequest | None = None,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_scope("findings:read")),
+    current_user: User = Depends(require_scope("ai:generate")),
 ):
     """Generate a structured engagement-report narrative (read-only, assist mode)."""
     body = body or SummaryRequest()
@@ -379,7 +379,7 @@ async def false_positives(
     scan_id: str,
     body: SummaryRequest | None = None,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_scope("findings:read")),
+    current_user: User = Depends(require_scope("ai:generate")),
 ):
     """Have the model flag findings likely to be false positives (advisory only)."""
     body = body or SummaryRequest()
@@ -429,9 +429,18 @@ class AgentRunRequest(BaseModel):
     allow_privilege_escalation: bool = False
     allow_exploitation: bool = False
     allow_command_exec: bool = False
+    # Only meaningful with allow_command_exec: lets sandbox commands reach the
+    # scan's authorized targets through the scope-enforcing SOCKS5 relay.
+    allow_target_egress: bool = False
 
     def aggressive_requested(self) -> bool:
-        return self.aggressive or self.allow_privilege_escalation or self.allow_exploitation or self.allow_command_exec
+        return (
+            self.aggressive
+            or self.allow_privilege_escalation
+            or self.allow_exploitation
+            or self.allow_command_exec
+            or self.allow_target_egress
+        )
 
 
 def _agent_run_dict(run: AiAgentRun) -> dict:
@@ -455,6 +464,7 @@ def _agent_run_dict(run: AiAgentRun) -> dict:
         "error": run.error,
         "pending_approval": _json.loads(run.pending_approval) if run.pending_approval else None,
         "conversation": _json.loads(run.conversation) if run.conversation else [],
+        "scratchpad": _json.loads(run.scratchpad) if run.scratchpad else None,
         "created_at": run.created_at.isoformat() if run.created_at else None,
     }
 
@@ -503,6 +513,7 @@ async def launch_agent(
         "allow_privilege_escalation": body.allow_privilege_escalation,
         "allow_exploitation": body.allow_exploitation,
         "allow_command_exec": body.allow_command_exec,
+        "allow_target_egress": body.allow_target_egress,
     }
     run = AiAgentRun(
         id=new_uuid(),
@@ -655,6 +666,20 @@ def _render_trace_markdown(run: AiAgentRun, scan, conv: list) -> str:
                     "```",
                     "",
                 ]
+    # The agent's own plan and notes, so a reviewer can see what it intended and
+    # what it believed — not just the calls it made.
+    if run.scratchpad:
+        try:
+            pad = _json.loads(run.scratchpad)
+        except ValueError:
+            pad = None
+        if isinstance(pad, dict):
+            from scanr.ai.agent.memory import format_notes, format_todos
+
+            if pad.get("todos"):
+                lines += ["---", "", "## Plan", "", "```", format_todos(pad["todos"]), "```", ""]
+            if pad.get("notes"):
+                lines += ["---", "", "## Notes", "", format_notes(pad["notes"]), ""]
     if run.final_text:
         lines += ["---", "", "## Final report", "", run.final_text.strip(), ""]
     return "\n".join(lines)

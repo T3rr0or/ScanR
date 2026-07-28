@@ -1,0 +1,106 @@
+name: "ScanR scan"
+description: >-
+  Run a ScanR scan against your targets, fail the build on findings above a
+  severity threshold, and upload results to GitHub code scanning as SARIF.
+
+inputs:
+  url:
+    description: "Base URL of your ScanR API (e.g. https://scanr.internal)."
+    required: true
+  token:
+    description: >-
+      ScanR API key (sk_...). Needs scans:write, findings:read, reports:read and
+      reports:create. Pass a secret, never a literal.
+    required: true
+  targets:
+    description: "Targets to scan, one per line."
+    required: true
+  profile:
+    description: "Scan profile: quick | standard | full | custom."
+    required: false
+    default: "standard"
+  profile-json:
+    description: "Raw profile_json, for full control over capabilities."
+    required: false
+    default: ""
+  fail-on:
+    description: >-
+      Fail the build when a finding at or above this severity is found:
+      critical | high | medium | low | info | never.
+    required: false
+    default: "high"
+  sarif-file:
+    description: "Where to write the SARIF report."
+    required: false
+    default: "scanr.sarif"
+  upload-sarif:
+    description: >-
+      Upload the SARIF to GitHub code scanning. Requires the security-events:
+      write permission on the job.
+    required: false
+    default: "true"
+  timeout:
+    description: "Seconds to wait for the scan."
+    required: false
+    default: "3600"
+
+outputs:
+  sarif-file:
+    description: "Path to the SARIF report that was written."
+    value: ${{ inputs.sarif-file }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install ScanR CLI
+      shell: bash
+      run: pip install --quiet "scanr @ git+https://github.com/T3rr0or/ScanR.git#subdirectory=backend"
+
+    - name: Run scan
+      id: scan
+      shell: bash
+      env:
+        SCANR_URL: ${{ inputs.url }}
+        SCANR_TOKEN: ${{ inputs.token }}
+      run: |
+        set -o pipefail
+        args=()
+        while IFS= read -r line; do
+          [ -n "$line" ] && args+=(--target "$line")
+        done <<< "${{ inputs.targets }}"
+
+        if [ -n "${{ inputs.profile-json }}" ]; then
+          args+=(--profile-json "${{ inputs.profile-json }}")
+        fi
+
+        # Capture the exit code rather than letting `set -e` abort: a findings
+        # exit (1) still needs the SARIF upload step to run, so the results reach
+        # code scanning even on a failing build. Only re-raise it at the end.
+        set +e
+        scanr ci \
+          --profile "${{ inputs.profile }}" \
+          --fail-on "${{ inputs.fail-on }}" \
+          --sarif "${{ inputs.sarif-file }}" \
+          --timeout "${{ inputs.timeout }}" \
+          "${args[@]}"
+        code=$?
+        set -e
+        echo "exit-code=$code" >> "$GITHUB_OUTPUT"
+        # 2 means the scan produced no verdict — surface that immediately, since
+        # uploading a SARIF that was never written would just add confusion.
+        if [ "$code" -eq 2 ]; then exit 2; fi
+
+    - name: Upload SARIF to code scanning
+      if: ${{ inputs.upload-sarif == 'true' && hashFiles(inputs.sarif-file) != '' }}
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: ${{ inputs.sarif-file }}
+
+    - name: Apply the scan verdict
+      shell: bash
+      run: |
+        code="${{ steps.scan.outputs.exit-code }}"
+        if [ "$code" -ne 0 ]; then
+          echo "::error::ScanR found findings at or above '${{ inputs.fail-on }}'."
+          exit "$code"
+        fi

@@ -1,5 +1,30 @@
 import api from './client'
 
+export interface TimelinePoint {
+  date: string
+  critical: number
+  high: number
+  medium: number
+  low: number
+  info: number
+}
+
+export interface TopVulnerableHost {
+  id: string
+  ip: string
+  hostname: string | null
+  finding_count: number
+  /** Weighted by severity, not a raw count — see analytics.risk_expr. */
+  risk_score: number
+  /** Worst severity present on the host. */
+  top_severity: string
+}
+
+export interface ScanActivityPoint {
+  date: string
+  scans: number
+}
+
 export const analyticsApi = {
   severityDistribution: (scan_id?: string) =>
     api.get<Record<string, number>>('/analytics/severity-distribution', {
@@ -7,17 +32,17 @@ export const analyticsApi = {
     }).then(r => r.data),
 
   findingsTimeline: (days = 30) =>
-    api.get<Array<{ date: string; critical: number; high: number; medium: number; low: number; info: number }>>(
+    api.get<TimelinePoint[]>(
       '/analytics/findings-timeline', { params: { days } }
     ).then(r => r.data),
 
   topVulnerableHosts: (limit = 10) =>
-    api.get<Array<{ id: string; ip: string; hostname: string | null; finding_count: number }>>(
+    api.get<TopVulnerableHost[]>(
       '/analytics/top-vulnerable-hosts', { params: { limit } }
     ).then(r => r.data),
 
   scanActivity: (days = 30) =>
-    api.get<Array<{ date: string; scans: number }>>(
+    api.get<ScanActivityPoint[]>(
       '/analytics/scan-activity', { params: { days } }
     ).then(r => r.data),
 
