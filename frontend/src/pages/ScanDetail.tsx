@@ -289,7 +289,7 @@ export default function ScanDetail({ scanId, onBack }: Props) {
 						<DStat label="Findings" value={totalFindings} />
 						<DStat
 							label="Duration"
-							value={fmtDuration((scan as any)?.duration_s)}
+							value={fmtDuration(scan?.duration_s)}
 						/>
 						<DStat label="Started" value={relTime(scan?.started_at)} />
 					</div>
@@ -304,12 +304,12 @@ export default function ScanDetail({ scanId, onBack }: Props) {
 						}}
 					>
 						<Meter
-							value={(scan as any)?.progress ?? 0.5}
+							value={scan?.progress ?? 0.5}
 							color="var(--accent-2)"
 						/>
 					</div>
 				)}
-				{scan?.status === "failed" && (scan as any)?.error_message && (
+				{scan?.status === "failed" && scan?.error_message && (
 					<div
 						style={{
 							marginTop: 10,
@@ -322,7 +322,7 @@ export default function ScanDetail({ scanId, onBack }: Props) {
 							fontFamily: "var(--font-mono)",
 						}}
 					>
-						{(scan as any).error_message}
+						{scan.error_message}
 					</div>
 				)}
 			</div>
@@ -1020,10 +1020,10 @@ function FindingDrawer({
 			return [];
 		}
 	}
-	const cves = safeParse((finding as any).cve_ids);
-	const mitre = safeParse((finding as any).mitre_tags);
-	const comp = safeParse((finding as any).compliance_tags);
-	const refs = safeParse((finding as any).references);
+	const cves = safeParse(finding.cve_ids);
+	const mitre = safeParse(finding.mitre_tags);
+	const comp = safeParse(finding.compliance_tags);
+	const refs = safeParse(finding.references);
 
 	return (
 		<div

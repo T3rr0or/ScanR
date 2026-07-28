@@ -1,8 +1,8 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { RefreshCw, Plus, Activity, Server, AlertTriangle, Clock, Radar } from 'lucide-react'
 import api from '@/api/client'
-import { scansApi } from '@/api/scans'
-import { analyticsApi } from '@/api/analytics'
+import { scansApi, type ScanSummary } from '@/api/scans'
+import { analyticsApi, type TimelinePoint } from '@/api/analytics'
 import {
   StatusPill, CHML, SeverityBar, Spark, Meter, relTime,
 } from '@/components/ui'
@@ -214,7 +214,7 @@ export default function Dashboard({ onOpenScan, onNavigate }: {
                 No data yet
               </div>
             )}
-            {topHosts.slice(0, 7).map((h: any) => {
+            {topHosts.slice(0, 7).map(h => {
               const sev = h.top_severity ?? 'high'
               return (
               <div key={h.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '7px 14px', fontSize: 12 }}>
@@ -342,7 +342,7 @@ function KpiCard({
   )
 }
 
-function LiveScanCard({ scan, onOpen }: { scan: any; onOpen: () => void }) {
+function LiveScanCard({ scan, onOpen }: { scan: ScanSummary; onOpen: () => void }) {
   const { events } = useScanConsole(scan.id)
   const recent = events.slice(-6)
   return (
@@ -407,7 +407,7 @@ function MiniStat({ k, v, sub }: { k: string; v: string; sub?: string }) {
   )
 }
 
-function TimelineChart({ data }: { data: any[] }) {
+function TimelineChart({ data }: { data: TimelinePoint[] }) {
   if (data.length === 0) {
     return <div style={{ height: 140, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-3)', fontSize: 12 }}>No data</div>
   }

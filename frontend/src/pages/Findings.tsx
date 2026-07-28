@@ -130,11 +130,20 @@ function FindingDrawer({
   onClose: () => void
 }) {
   const qc = useQueryClient()
-  const [notes, setNotes] = useState(finding.analyst_notes ?? '')
 
-  useEffect(() => {
+  /* Reset the draft when a different finding is selected — the documented
+     "adjust state during render" pattern rather than an effect.
+     The effect this replaces depended on finding.id alone and deliberately
+     omitted analyst_notes: adding it (as the lint rule wants) would overwrite
+     whatever the analyst is mid-way through typing every time the findings
+     query refetches. Resetting during render sidesteps that, and lands before
+     paint instead of after, so the previous finding's notes never flash. */
+  const [notes, setNotes] = useState(finding.analyst_notes ?? '')
+  const [notesFor, setNotesFor] = useState(finding.id)
+  if (notesFor !== finding.id) {
+    setNotesFor(finding.id)
     setNotes(finding.analyst_notes ?? '')
-  }, [finding.id])
+  }
 
   const [drawerErr, setDrawerErr] = useState<string | null>(null)
   const _onErr = (e: unknown) => setDrawerErr(e instanceof Error ? e.message : String(e))

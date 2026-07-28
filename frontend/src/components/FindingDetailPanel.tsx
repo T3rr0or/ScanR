@@ -55,7 +55,7 @@ export default function FindingDetailPanel({ finding, onClose }: Props) {
 function PanelBody({ finding, onClose }: { finding: Finding; onClose: () => void }) {
   const refs = safeParse(finding.references)
   const cves = safeParse(finding.cve_ids)
-  const complianceTags = safeParse((finding as any).compliance_tags)
+  const complianceTags = safeParse(finding.compliance_tags)
 
   return (
     <>
@@ -66,7 +66,7 @@ function PanelBody({ finding, onClose }: { finding: Finding; onClose: () => void
         display: 'flex', alignItems: 'flex-start', gap: 10,
         flexShrink: 0,
       }}>
-        <SevTag severity={finding.severity as any} />
+        <SevTag severity={finding.severity} />
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-0)', lineHeight: 1.4 }}>
             {finding.title}

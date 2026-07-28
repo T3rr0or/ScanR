@@ -300,8 +300,11 @@ function TemplateCard({
   }
 
   const pj = template.profile_json
+  // profile_json is Record<string, unknown>, so read the key and narrow it rather
+  // than casting the whole object away.
+  const portRange = typeof pj?.port_range === 'string' ? pj.port_range : undefined
   const portLabel = pj
-    ? PORT_RANGES.find(r => r.value === (pj as any).port_range)?.label.split(' —')[0] ?? (pj as any).port_range ?? 'default'
+    ? PORT_RANGES.find(r => r.value === portRange)?.label.split(' —')[0] ?? portRange ?? 'default'
     : 'default'
 
   if (editing) {

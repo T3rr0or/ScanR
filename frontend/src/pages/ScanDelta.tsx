@@ -5,7 +5,7 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { X, ArrowRight, TrendingUp, TrendingDown, Minus, Server, Unlock, Globe } from 'lucide-react'
-import { scansApi } from '@/api/scans'
+import { scansApi, type DeltaFinding, type DeltaHost, type DeltaPortChange } from '@/api/scans'
 import SeverityBadge from '@/components/SeverityBadge'
 
 interface Props {
@@ -417,7 +417,7 @@ function FindingList({
   emptyMsg,
   badge,
 }: {
-  findings: any[]
+  findings: DeltaFinding[]
   label: string
   emptyMsg: string
   badge: 'new' | 'resolved' | 'persisting'
@@ -579,8 +579,8 @@ function HostDelta({
   newHosts,
   removedHosts,
 }: {
-  newHosts: any[]
-  removedHosts: any[]
+  newHosts: DeltaHost[]
+  removedHosts: DeltaHost[]
 }) {
   if (newHosts.length === 0 && removedHosts.length === 0) {
     return (
@@ -664,7 +664,7 @@ function HostDelta({
 
 /* ── Port changes ──────────────────────────────────────────────────────────── */
 
-function PortChanges({ changes }: { changes: any[] }) {
+function PortChanges({ changes }: { changes: DeltaPortChange[] }) {
   if (changes.length === 0) {
     return (
       <p style={{ color: 'var(--text-3)', fontSize: 13, textAlign: 'center', padding: '32px 0' }}>
@@ -696,7 +696,7 @@ function PortChanges({ changes }: { changes: any[] }) {
               {c.ip}
             </div>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-              {c.opened.map((p: any, j: number) => (
+              {c.opened.map((p, j) => (
                 <span
                   key={j}
                   className="mono"
@@ -712,7 +712,7 @@ function PortChanges({ changes }: { changes: any[] }) {
                   +{p.port}/{p.protocol}
                 </span>
               ))}
-              {c.closed.map((p: any, j: number) => (
+              {c.closed.map((p, j) => (
                 <span
                   key={j}
                   className="mono"
