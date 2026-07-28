@@ -1177,6 +1177,9 @@ function NewScanModal({
                           className="input"
                           style={{ width: 240, fontSize: 12 }}
                           value={ai.model}
+                          // Matches the column and the schema bound, so an
+                          // over-long id is stopped here rather than 500ing.
+                          maxLength={120}
                           onChange={e => setAi(a => ({ ...a, model: e.target.value }))}
                           placeholder={effectiveModelFor(aiStatus, aiProviderChoice) || 'provider default'}
                           title="Model id. The list could not be fetched, so type one or leave blank for the default."
@@ -1204,8 +1207,9 @@ function NewScanModal({
 
                     {aiStatus && aiProviders.length === 0 && (
                       <div style={{ fontSize: 11, color: 'var(--sev-high)' }}>
-                        ⚠ No provider key is configured — the agent will fail to start.
-                        Add one in Settings → AI.
+                        ⚠ No provider key is configured. Creating the scan will be
+                        rejected while AI is enabled — the check runs before the scan
+                        row is written. Add a key in Settings → AI, or turn AI off.
                       </div>
                     )}
                     <textarea

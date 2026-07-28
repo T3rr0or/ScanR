@@ -256,3 +256,32 @@ async def test_schedule_sub_hourly_rejected(client, auth_headers):
     })
     assert resp.status_code == 400
     assert "interval" in resp.json()["detail"].lower()
+
+
+@pytest.mark.asyncio
+async def test_ai_model_longer_than_the_column_is_rejected_not_crashed(client, auth_headers):
+    """The New Scan wizard can send a free-text model id, and Scan.ai_agent_model
+    is varchar(120). Unbounded, an over-long id passes Pydantic and dies in the
+    driver — SQLite accepts it silently, so this stays green on the test suite
+    while Postgres raises StringDataRightTruncation and the request 500s.
+    """
+    r = await client.post("/api/v1/scans", headers=auth_headers, json={
+        "name": "oversized model",
+        "targets": ["192.0.2.10"],
+        "profile": "standard",
+        "ai_agent": {"enabled": True, "mode": "guided", "model": "m" * 500},
+    })
+    assert r.status_code == 422, r.text
+    assert "model" in r.text
+
+    # And a realistic id still fits.
+    ok = await client.post("/api/v1/scans", headers=auth_headers, json={
+        "name": "normal model",
+        "targets": ["192.0.2.10"],
+        "profile": "standard",
+        "ai_agent": {"enabled": True, "mode": "guided",
+                     "model": "claude-sonnet-4-5-20250929"},
+    })
+    # 400 when no key is configured is fine — the point is that it is not a 422
+    # on the model field, and never a 500.
+    assert ok.status_code in (201, 400), ok.text

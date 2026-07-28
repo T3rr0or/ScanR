@@ -44,7 +44,12 @@ class ScanAiAgentConfig(BaseModel):
     mode: str = Field(default="guided", pattern="^(guided|autonomous)$")
     objective: str = Field(default="", max_length=2000)
     provider: str | None = None
-    model: str | None = None
+    # Bounded to the Scan.ai_agent_model column width. Without this a long id
+    # passes validation and dies in the driver: SQLite silently accepts it, so
+    # the tests stay green while Postgres raises StringDataRightTruncation and
+    # the request 500s. The provider field needs no such bound — it is checked
+    # against SUPPORTED_PROVIDERS before it can reach a column.
+    model: str | None = Field(default=None, max_length=120)
     # Aggressive opt-ins — admin-only, each only takes effect with aggressive.
     aggressive: bool = False
     allow_privilege_escalation: bool = False
