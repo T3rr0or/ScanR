@@ -126,7 +126,13 @@ def _filter_plugins_by_capabilities(plugins: list, profile: dict) -> list:
             continue
         if not enum["subdomain_enum"] and pid == "network.subdomain_enum":
             continue
-        if safety == "safe" and (getattr(plugin, "intrusive", False) or "default_creds" in pid):
+        # risk_intrusive() covers both declarations — a plugin that can modify the
+        # target is intrusive too. Previously this read a bare `intrusive`
+        # attribute that no plugin defined and PluginBase did not declare, so the
+        # whole clause collapsed to the "default_creds" substring and a "safe"
+        # scan still sent SQLi, XXE, SSTI and JNDI payloads at the target.
+        is_intrusive = plugin.risk_intrusive() if hasattr(plugin, "risk_intrusive") else False
+        if safety == "safe" and (is_intrusive or "default_creds" in pid):
             continue
         allowed.append(plugin)
     return allowed

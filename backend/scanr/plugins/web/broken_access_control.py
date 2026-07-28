@@ -70,6 +70,7 @@ class BrokenAccessControlPlugin(PluginBase):
     name = "Broken Access Control"
     description = "Detect admin/management pages accessible without authentication"
     category = PluginCategory.web
+    intrusive = True
     severity = Severity.high
     ports = HTTP_PORTS
 

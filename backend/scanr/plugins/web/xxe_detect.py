@@ -55,6 +55,7 @@ class XxeDetectPlugin(PluginBase):
     name = "XXE Injection Detection"
     description = "Detect XML External Entity injection via error-based and SSRF probes"
     category = PluginCategory.web
+    intrusive = True
     severity = Severity.high
     ports = HTTP_PORTS
     timeout = 180

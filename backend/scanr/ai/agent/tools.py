@@ -370,6 +370,7 @@ async def _list_plugins(ctx: AgentContext, args: dict) -> str:
             "name": getattr(cls, "name", pid),
             "category": getattr(getattr(cls, "category", None), "value", str(getattr(cls, "category", ""))),
             "destructive": bool(getattr(cls, "destructive", False)),
+            "intrusive": bool(getattr(cls, "intrusive", False)),
             "requires_auth": bool(getattr(cls, "requires_auth", False)),
         }
         for pid, cls in classes.items()
@@ -431,7 +432,12 @@ def plugin_tools() -> list[Tool]:
         Tool(
             ToolDef(
                 name="list_plugins",
-                description="List available ScanR plugins (id, category, whether destructive) to choose from.",
+                description=(
+                    "List available ScanR plugins to choose from. Each entry reports "
+                    "'intrusive' (sends attack payloads) and 'destructive' (can modify "
+                    "the target); both are gated and will be refused without the "
+                    "matching capability."
+                ),
                 parameters={"type": "object", "properties": {}, "additionalProperties": False},
             ),
             _list_plugins,

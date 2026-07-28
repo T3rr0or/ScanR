@@ -53,6 +53,7 @@ class SqliBlindPlugin(PluginBase):
     name = "SQL Injection (Blind/Time-Based)"
     description = "Detect blind and time-based SQL injection using per-dialect SLEEP/WAITFOR payloads and boolean response diffing"
     category = PluginCategory.web
+    intrusive = True
     severity = Severity.critical
     ports = HTTP_PORTS
 

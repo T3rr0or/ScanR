@@ -50,6 +50,7 @@ class SstiDetectPlugin(PluginBase):
     name = "Server-Side Template Injection (SSTI)"
     description = "Detect SSTI via math-evaluation fingerprinting across Jinja2, FreeMarker, Velocity, Mako, Smarty, and ERB"
     category = PluginCategory.web
+    intrusive = True
     severity = Severity.critical
     ports = HTTP_PORTS
     timeout = 180

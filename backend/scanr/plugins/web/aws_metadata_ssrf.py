@@ -70,6 +70,7 @@ class AwsMetadataSsrfPlugin(PluginBase):
     name = "AWS Metadata SSRF / IMDSv1 Exposure"
     description = "Check for IMDSv1 SSRF and direct metadata endpoint access"
     category = PluginCategory.web
+    intrusive = True
     severity = Severity.critical
     ports = [80, 443, 8080, 8443, 8000, 3000]
 
