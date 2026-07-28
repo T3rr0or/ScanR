@@ -28,6 +28,7 @@ import AutonomyModeInfo from "@/components/AutonomyModeInfo";
 import { useAuthStore } from "@/store/auth";
 import { integrationsApi } from "@/api/integrations";
 import { parseJwtRole } from "@/utils/jwt";
+import { apiErrorMessage } from "@/utils/apiError";
 
 type Tab =
 	| "profile"
@@ -581,8 +582,7 @@ function ProfileSection() {
 			setPwdOk(true);
 			setTimeout(() => setPwdOk(false), 3000);
 		},
-		onError: (e: unknown) =>
-			setPwdErr(e instanceof Error ? e.message : "Failed"),
+		onError: (e: unknown) => setPwdErr(apiErrorMessage(e)),
 	});
 
 	return (

@@ -103,6 +103,12 @@ indistinguishable from a clean report. `--fail-on never` gives report-only mode
 for teams adopting the gate before enforcing it. A SARIF write failure never
 changes the verdict — the scan already ran.
 
+The CLI verifies the API's TLS certificate. Every request carries your API key,
+and the `ci` verdict is something a pipeline acts on, so neither should travel
+over a connection an interceptor can read or forge. A ScanR behind a private CA
+or a self-signed certificate needs `--insecure` (or `SCANR_INSECURE=1`) — prefer
+trusting the CA on the runner where you can.
+
 **GitHub Action:**
 
 ```yaml

@@ -43,6 +43,15 @@ inputs:
     description: "Seconds to wait for the scan."
     required: false
     default: "3600"
+  insecure:
+    description: >-
+      Skip TLS certificate verification when calling the ScanR API. Only for a
+      ScanR behind a private CA or self-signed certificate — it exposes the API
+      key to anyone who can intercept the connection, and lets them forge the
+      pass/fail verdict this action gates on. Prefer trusting the CA on the
+      runner.
+    required: false
+    default: "false"
 
 outputs:
   sarif-file:
@@ -62,6 +71,7 @@ runs:
       env:
         SCANR_URL: ${{ inputs.url }}
         SCANR_TOKEN: ${{ inputs.token }}
+        SCANR_INSECURE: ${{ inputs.insecure }}
       run: |
         set -o pipefail
         args=()

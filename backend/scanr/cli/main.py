@@ -12,12 +12,25 @@ from rich.table import Table
 console = Console()
 
 
+def _verify(ctx) -> bool:
+    """TLS verification setting for outbound API calls.
+
+    Verification is on unless the operator explicitly opts out. The CLI carries
+    an API key in the Authorization header of every request, so an unverified
+    connection hands that credential to anyone able to intercept the route — and
+    for `scanr ci` it also lets them forge the pass/fail verdict a pipeline gates
+    on. Self-signed internal deployments opt out with --insecure.
+    """
+    return bool(ctx.obj.get("verify", True))
+
+
 def _api(ctx, path: str, method: str = "GET", body: dict | None = None):
     base = ctx.obj["base_url"]
     token = ctx.obj.get("token", "")
     headers = {"Authorization": f"Bearer {token}"} if token else {}
     try:
-        resp = httpx.request(method, f"{base}{path}", json=body, headers=headers, timeout=30, verify=False)
+        resp = httpx.request(method, f"{base}{path}", json=body, headers=headers, timeout=30,
+                             verify=_verify(ctx))
         resp.raise_for_status()
         return resp.json()
     except httpx.HTTPStatusError as e:
@@ -31,12 +44,22 @@ def _api(ctx, path: str, method: str = "GET", body: dict | None = None):
 @click.group()
 @click.option("--url", default="http://localhost:8000", envvar="SCANR_URL", help="ScanR API base URL")
 @click.option("--token", envvar="SCANR_TOKEN", default="", help="JWT access token")
+@click.option("--insecure", is_flag=True, envvar="SCANR_INSECURE", default=False,
+              help="Skip TLS certificate verification (self-signed internal deployments only).")
 @click.pass_context
-def cli(ctx, url, token):
+def cli(ctx, url, token, insecure):
     """ScanR — Professional Vulnerability Scanner CLI"""
     ctx.ensure_object(dict)
     ctx.obj["base_url"] = url.rstrip("/")
     ctx.obj["token"] = token
+    ctx.obj["verify"] = not insecure
+    if insecure and url.lower().startswith("https://"):
+        # Say it out loud: the token in every request is exposed to anyone on the
+        # path, and a `ci` verdict can be forged.
+        console.print(
+            "[yellow]Warning: TLS certificate verification disabled (--insecure). "
+            "The API token is exposed to anyone able to intercept this connection.[/yellow]"
+        )
 
 
 # ── Auth ─────────────────────────────────────────────────────────────────────
@@ -172,7 +195,8 @@ def report_download(ctx, report_id, output):
     base = ctx.obj["base_url"]
     token = ctx.obj.get("token", "")
     headers = {"Authorization": f"Bearer {token}"}
-    resp = httpx.get(f"{base}/api/v1/reports/{report_id}/download", headers=headers, verify=False)
+    resp = httpx.get(f"{base}/api/v1/reports/{report_id}/download", headers=headers,
+                     verify=_verify(ctx))
     if resp.status_code != 200:
         console.print(f"[red]Error: {resp.status_code} {resp.text}[/red]")
         return
@@ -239,7 +263,7 @@ def _ci_request(ctx, path: str, method: str = "GET", body: dict | None = None,
     token = ctx.obj.get("token", "")
     headers = {"Authorization": f"Bearer {token}"} if token else {}
     resp = httpx.request(method, f"{base}{path}", json=body, headers=headers,
-                         timeout=60, verify=False)
+                         timeout=60, verify=_verify(ctx))
     resp.raise_for_status()
     return resp.content if raw else resp.json()
 
