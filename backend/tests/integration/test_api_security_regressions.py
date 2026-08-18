@@ -5,6 +5,49 @@ import pytest
 
 
 @pytest.mark.asyncio
+async def test_password_epoch_distinguishes_tokens_from_same_second(monkeypatch):
+    """Password revocation must not depend on a whole-second boundary."""
+    from fastapi import HTTPException
+    from scanr.api.v1 import auth as auth_api
+
+    async def epoch(_user_id):
+        return 1_700_000_000_500
+
+    monkeypatch.setattr(auth_api, "_get_pw_epoch", epoch)
+    old = {"exp": 1_700_604_800, "iat_ms": 1_700_000_000_499}
+    fresh = {"exp": 1_700_604_800, "iat_ms": 1_700_000_000_500}
+
+    with pytest.raises(HTTPException) as exc:
+        await auth_api._assert_not_pre_password_change("user", old)
+    assert exc.value.status_code == 401
+    await auth_api._assert_not_pre_password_change("user", fresh)
+
+
+@pytest.mark.asyncio
+async def test_login_handles_sqlite_naive_lockout_datetime(client, db):
+    """SQLite drops timezone metadata; login must not compare naive and aware."""
+    from datetime import datetime, timedelta, timezone
+    from sqlalchemy import select
+    from scanr.models.user import User
+
+    user = (await db.execute(
+        select(User).where(User.email == "admin@scanr.local")
+    )).scalar_one()
+    user.locked_until = (datetime.now(timezone.utc) + timedelta(minutes=5)).replace(tzinfo=None)
+    await db.commit()
+
+    response = await client.post("/api/v1/auth/login", json={
+        "email": "admin@scanr.local", "password": "testadminpass123",
+    })
+
+    # The test database is session-scoped, so do not leave the shared admin
+    # locked for the remaining integration tests.
+    user.locked_until = None
+    await db.commit()
+    assert response.status_code == 429, response.text
+
+
+@pytest.mark.asyncio
 async def test_patch_targets_denylist_rejected(client, auth_headers):
     r = await client.post("/api/v1/scans", headers=auth_headers, json={
         "name": "patch-bypass", "targets": ["192.0.2.10"],

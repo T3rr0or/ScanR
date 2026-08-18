@@ -57,12 +57,12 @@ async def _bump_pw_epoch(user_id: str) -> None:
     """Invalidate every refresh token issued before now for a user.
     Called on password change. Raises on Redis failure so the caller can
     abort rather than leave stale tokens valid."""
-    now_ts = int(datetime.now(timezone.utc).timestamp())
+    now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
     r = _get_redis()
     # The key only needs to outlive the longest-lived outstanding refresh token.
     await r.set(
         f"{_PW_EPOCH_PREFIX}{user_id}",
-        str(now_ts),
+        str(now_ms),
         ex=settings.refresh_token_expire_days * 86400 + 60,
     )
 
@@ -84,10 +84,16 @@ async def _assert_not_pre_password_change(user_id: str, payload: dict) -> None:
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Token service unavailable, please try again",
         )
-    # Refresh tokens carry no iat claim; derive issue time from exp minus the
-    # configured lifetime.
-    issued_at = int(payload["exp"]) - settings.refresh_token_expire_days * 86400
-    if epoch and issued_at < epoch:
+    # New tokens carry millisecond issuance time so a token minted immediately
+    # after a password change can be distinguished from one minted earlier in
+    # the same second. Keep accepting the old token format during rollout; an
+    # existing millisecond epoch will still reject those pre-change tokens.
+    issued_at_ms = payload.get("iat_ms")
+    if issued_at_ms is None:
+        issued_at_ms = (
+            int(payload["exp"]) - settings.refresh_token_expire_days * 86400
+        ) * 1000
+    if epoch and int(issued_at_ms) < epoch:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Session expired — please log in again",
@@ -108,6 +114,13 @@ def _set_refresh_cookie(response: Response, refresh_token: str) -> None:
 
 def _clear_refresh_cookie(response: Response) -> None:
     response.delete_cookie(key=_COOKIE_NAME, path=_COOKIE_PATH)
+
+
+def _as_utc(value: datetime) -> datetime:
+    """Normalize datetimes returned by timezone-losing DB drivers (SQLite)."""
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
 
 
 class RefreshRequest(BaseModel):
@@ -133,7 +146,7 @@ async def login(
     result = await db.execute(select(User).where(User.email == body.email.lower().strip(), User.is_active == True))
     user = result.scalar_one_or_none()
 
-    if user and user.locked_until and user.locked_until > now:
+    if user and user.locked_until and _as_utc(user.locked_until) > now:
         logger.warning("Locked account login attempt: email=%s ip=%s", body.email, ip)
         # Generic detail: a distinctive message would confirm the account exists.
         raise HTTPException(

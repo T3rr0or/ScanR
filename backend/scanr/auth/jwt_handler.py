@@ -24,9 +24,20 @@ def create_access_token(subject: str, role: str) -> str:
 
 
 def create_refresh_token(subject: str) -> str:
-    expire = _now() + timedelta(days=settings.refresh_token_expire_days)
+    issued = _now()
+    expire = issued + timedelta(days=settings.refresh_token_expire_days)
     return jwt.encode(
-        {"sub": subject, "exp": expire, "type": "refresh", "jti": str(uuid.uuid4())},
+        {
+            "sub": subject,
+            "exp": expire,
+            "type": "refresh",
+            "jti": str(uuid.uuid4()),
+            # Milliseconds, not the standard second-granularity `iat`: a password
+            # change bumps the revocation epoch and immediately mints a
+            # replacement token, so both land in the same second and whole
+            # seconds cannot tell the revoked token from its replacement.
+            "iat_ms": int(issued.timestamp() * 1000),
+        },
         settings.secret_key,
         algorithm=settings.algorithm,
     )
