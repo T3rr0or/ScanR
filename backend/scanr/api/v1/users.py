@@ -1,13 +1,19 @@
 from __future__ import annotations
 
 import logging
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
-from pydantic import BaseModel, Field
+from pydantic import AfterValidator, BaseModel, Field
 from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from scanr.auth.password import hash_password, verify_password
+from scanr.auth.password import (
+    MAX_PASSWORD_BYTES,
+    hash_password,
+    password_within_bcrypt_limit,
+    verify_password,
+)
 from scanr.db import get_db
 from scanr.deps import get_current_user, require_admin
 from scanr.models.base import new_uuid
@@ -23,14 +29,28 @@ class UserUpdate(BaseModel):
     email: str | None = Field(None, max_length=255)
 
 
+def _within_bcrypt_limit(v: str) -> str:
+    # Enforced here, not via Field(max_length=...), because bcrypt's ceiling is
+    # 72 *bytes* and max_length counts characters — a short multi-byte passphrase
+    # can pass the character check and still blow the byte limit.
+    if not password_within_bcrypt_limit(v):
+        raise ValueError(f"password must be at most {MAX_PASSWORD_BYTES} bytes when UTF-8 encoded")
+    return v
+
+
+#: A password bcrypt can actually hash. Without the upper bound a long
+#: passphrase reaches bcrypt, which raises, surfacing as a 500.
+BcryptPassword = Annotated[str, Field(min_length=10), AfterValidator(_within_bcrypt_limit)]
+
+
 class PasswordChange(BaseModel):
     current_password: str
-    new_password: str = Field(..., min_length=10)
+    new_password: BcryptPassword
 
 
 class AdminUserCreate(BaseModel):
     email: str = Field(..., max_length=255)
-    password: str = Field(..., min_length=10)
+    password: BcryptPassword
     full_name: str | None = Field(None, max_length=255)
     role: UserRole = UserRole.analyst
 
@@ -77,12 +97,18 @@ async def change_password(
     if not verify_password(body.current_password, current_user.hashed_password):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Current password is incorrect")
 
-    # Invalidate all existing refresh tokens BEFORE committing the new
-    # password. If Redis is unavailable, abort (fail closed) rather than
-    # leave tokens issued against the old password valid for days.
     from scanr.api.v1 import auth as auth_api
     from scanr.auth import create_refresh_token
 
+    # Hash first. Revoking sessions before the new hash exists means any failure
+    # here logs the user out of every device while leaving the OLD password
+    # valid — the worst of both outcomes. Hashing is pure, so on failure the
+    # account is left exactly as it was.
+    new_hash = hash_password(body.new_password)
+
+    # Invalidate all existing refresh tokens BEFORE committing the new
+    # password. If Redis is unavailable, abort (fail closed) rather than
+    # leave tokens issued against the old password valid for days.
     try:
         await auth_api._bump_pw_epoch(current_user.id)
     except Exception:
@@ -92,7 +118,7 @@ async def change_password(
             detail="Token service unavailable, please try again",
         )
 
-    current_user.hashed_password = hash_password(body.new_password)
+    current_user.hashed_password = new_hash
     await db.commit()
 
     # Keep the current session alive with a fresh refresh cookie; every other

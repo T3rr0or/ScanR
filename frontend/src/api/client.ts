@@ -43,6 +43,13 @@ api.interceptors.response.use(
       return new Promise((resolve, reject) => {
         refreshQueue.push((token) => {
           if (token) {
+            // Mark it retried before replaying, exactly as the refreshing path
+            // does below. Without this a queued request carries no _retry, so a
+            // second 401 sends it back through here to start a refresh round of
+            // its own — one per queued request, on a token that was just
+            // refreshed. A 401 on a fresh token is about that resource, not the
+            // session, so the right answer is to surface it.
+            originalRequest._retry = true
             originalRequest.headers.Authorization = `Bearer ${token}`
             resolve(api(originalRequest))
           } else {

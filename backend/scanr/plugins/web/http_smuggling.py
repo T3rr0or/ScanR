@@ -36,6 +36,7 @@ class HttpSmugglingPlugin(PluginBase):
     name = "HTTP Request Smuggling (CL.TE / TE.CL)"
     description = "Detect HTTP/1.1 request desync via raw socket CL.TE and TE.CL probes"
     category = PluginCategory.web
+    destructive = True
     severity = Severity.high
     ports = HTTP_PORTS
 

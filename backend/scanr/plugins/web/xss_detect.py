@@ -59,6 +59,7 @@ class XssDetectPlugin(PluginBase):
     name = "Reflected XSS"
     description = "Detect reflected cross-site scripting in URL parameters"
     category = PluginCategory.web
+    intrusive = True
     severity = Severity.high
     ports = HTTP_PORTS
     timeout = 180

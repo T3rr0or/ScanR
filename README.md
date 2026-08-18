@@ -103,6 +103,12 @@ indistinguishable from a clean report. `--fail-on never` gives report-only mode
 for teams adopting the gate before enforcing it. A SARIF write failure never
 changes the verdict — the scan already ran.
 
+The CLI verifies the API's TLS certificate. Every request carries your API key,
+and the `ci` verdict is something a pipeline acts on, so neither should travel
+over a connection an interceptor can read or forge. A ScanR behind a private CA
+or a self-signed certificate needs `--insecure` (or `SCANR_INSECURE=1`) — prefer
+trusting the CA on the runner where you can.
+
 **GitHub Action:**
 
 ```yaml
@@ -332,7 +338,10 @@ Capability groups:
 - **Ports** - top ports, full range, web ports, internal high web/NodePort preset, custom ranges, scanner type.
 - **Enumeration** - service detection, HTTP probing, TLS checks, security headers, screenshots, Nuclei, directory enumeration, subdomains, DNS recon.
 - **Depth** - light, balanced, or deep.
-- **Safety** - safe, balanced, or aggressive.
+- **Safety** - safe, balanced, or aggressive. `safe` excludes every check that
+  sends attack traffic — SQLi, XSS, SSTI, XXE, traversal, JNDI, deserialization,
+  request smuggling, and default-credential attempts — leaving observation and
+  fingerprinting. `balanced` and `aggressive` both permit them.
 - **Performance** - conservative, normal, fast, or custom concurrency/rate/timeout settings.
 
 ### 5. Review and Launch
@@ -393,7 +402,15 @@ ScanR separates credential concepts:
 - **Known credentials** are supplied to authenticated checks.
 - **Brute force wordlists** actively try username/password lists against detected services when enabled.
 
-Aggressive safety allows intrusive checks, but brute force still requires the brute-force capability to be enabled explicitly.
+Balanced and aggressive safety both allow intrusive checks; `safe` is what turns
+them off. Brute force is separate from all three — it always requires the
+brute-force capability to be enabled explicitly.
+
+A plugin declares its own risk, and two gates read it: `intrusive` (sends attack
+payloads) drops the check from a `safe` scan, and `destructive` (can modify the
+target — write a file, rebind a config, affect another user's request) also
+requires the AI agent's `allow_exploitation` capability before the agent may run
+it.
 
 ---
 

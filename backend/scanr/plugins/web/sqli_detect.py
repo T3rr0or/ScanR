@@ -75,6 +75,7 @@ class SqliDetectPlugin(PluginBase):
     name = "SQL Injection (Error-Based)"
     description = "Detect error-based SQL injection in URL parameters"
     category = PluginCategory.web
+    intrusive = True
     severity = Severity.critical
     ports = HTTP_PORTS
 

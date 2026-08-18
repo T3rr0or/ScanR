@@ -27,6 +27,7 @@ class Spring4ShellCheckPlugin(PluginBase):
     name = "Spring4Shell Detection"
     description = "Detect Spring4Shell (CVE-2022-22965) and exposed Spring Boot Actuator endpoints"
     category = PluginCategory.web
+    destructive = True
     severity = Severity.critical
     cve_ids = ["CVE-2022-22965"]
     cvss_vector = "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
@@ -94,38 +95,58 @@ class Spring4ShellCheckPlugin(PluginBase):
         for endpoint in endpoints:
             try:
                 resp = await client.post(f"{base_url}{endpoint}", data=payload)
-                if resp.status_code == 400:
-                    body = resp.text
-                    # Spring error response format distinguishes from generic 400
-                    if '"status":400' in body and '"error"' in body and "timestamp" in body:
-                        return FindingData(
-                            plugin_id=self.id,
-                            severity=Severity.critical,
-                            title="Spring4Shell CVE-2022-22965 — Vulnerable Spring Application Detected",
-                            description=(
-                                "A Spring Framework application was detected and responded to the Spring4Shell probe. "
-                                "CVE-2022-22965 allows RCE via data binding when running on JDK 9+ with a WAR deployment. "
-                                "An attacker can upload a JSP web shell by manipulating class.module.classLoader parameters."
-                            ),
-                            evidence=(
-                                f"POST {base_url}{endpoint} with classLoader binding returned Spring-format 400 error.\n"
-                                f"Response snippet: {body[:300]}"
-                            ),
-                            remediation=(
-                                "Upgrade Spring Framework to 5.3.18+, 5.2.20+, or Spring Boot to 2.6.6+, 2.5.12+. "
-                                "As a workaround, bind disallowedFields=class.* in WebDataBinder."
-                            ),
-                            references=[
-                                "https://nvd.nist.gov/vuln/detail/CVE-2022-22965",
-                                "https://spring.io/blog/2022/03/31/spring-framework-rce-early-announcement",
-                            ],
-                            cve_ids=self.cve_ids,
-                            cvss_vector=self.cvss_vector,
-                            port_number=port,
-                            protocol="tcp",
-                        )
             except Exception:
-                pass
+                continue
+
+            # A 400 was previously reported as a confirmed critical. It is closer
+            # to the opposite: Spring answering 400 means it parsed the request
+            # and *refused* the binding, which is what a patched app (or one with
+            # disallowedFields set) does. Every Spring Boot app that 400s a POST
+            # to / matched, so the check fired on patched targets and called it
+            # RCE. Rejections are not evidence of vulnerability — skip them.
+            if resp.status_code >= 400:
+                continue
+
+            # The binding was accepted. That is worth surfacing, but acceptance is
+            # still not proof: the app may have ignored the unknown fields rather
+            # than walked the classLoader path, and exploitability additionally
+            # depends on JDK 9+ and a WAR deployment, neither of which is visible
+            # from here. Report it as unconfirmed and say what would confirm it.
+            body = resp.text
+            return FindingData(
+                plugin_id=self.id,
+                severity=Severity.medium,
+                title="Spring4Shell (CVE-2022-22965) — possible, not confirmed",
+                description=(
+                    "A Spring application accepted a POST carrying "
+                    "class.module.classLoader data-binding parameters instead of rejecting "
+                    "them. On Spring Framework below 5.3.18/5.2.20 running on JDK 9+ from a "
+                    "WAR deployment, that binding path allows an attacker to write a JSP web "
+                    "shell. This probe cannot establish the JDK version or packaging, and an "
+                    "application that silently ignores unknown parameters responds "
+                    "identically, so this is a lead to verify rather than a confirmed finding."
+                ),
+                evidence=(
+                    f"POST {base_url}{endpoint} with class.module.classLoader.* parameters "
+                    f"returned HTTP {resp.status_code} (not a 4xx rejection).\n"
+                    f"Response snippet: {body[:300]}\n\n"
+                    "Not confirmed: no check was made that the binding took effect. To "
+                    "verify, confirm the Spring Framework version and whether the app runs "
+                    "on JDK 9+ as a WAR."
+                ),
+                remediation=(
+                    "Upgrade Spring Framework to 5.3.18+, 5.2.20+, or Spring Boot to 2.6.6+, 2.5.12+. "
+                    "As a workaround, bind disallowedFields=class.* in WebDataBinder."
+                ),
+                references=[
+                    "https://nvd.nist.gov/vuln/detail/CVE-2022-22965",
+                    "https://spring.io/blog/2022/03/31/spring-framework-rce-early-announcement",
+                ],
+                cve_ids=self.cve_ids,
+                cvss_vector=self.cvss_vector,
+                port_number=port,
+                protocol="tcp",
+            )
 
         return None
 

@@ -501,6 +501,16 @@ class DbAgentContext(AgentContext):
                 "denied": True,
                 "reason": f"{plugin_id} is destructive and requires the 'allow_exploitation' capability.",
             }
+        # Payload-sending checks that stop short of modifying the target are still
+        # attack traffic, so they ride the aggressive opt-in rather than running
+        # for any agent that happens to know the plugin id.
+        if getattr(plugin_cls, "intrusive", False) and not self.policy.aggressive:
+            return {
+                "denied": True,
+                "reason": (
+                    f"{plugin_id} sends attack payloads and requires the run to be aggressive."
+                ),
+            }
 
         host = (
             await self._db.execute(

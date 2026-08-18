@@ -58,6 +58,7 @@ class Log4ShellCheckPlugin(PluginBase):
     name = "Log4Shell Detection"
     description = "Detect Log4Shell (CVE-2021-44228) via error-based and version-interpolation probes"
     category = PluginCategory.web
+    intrusive = True
     severity = Severity.critical
     cve_ids = ["CVE-2021-44228", "CVE-2021-45046"]
     cvss_vector = "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:C/C:H/I:H/A:H"

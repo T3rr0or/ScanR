@@ -56,8 +56,32 @@ class PluginBase(ABC):
     cvss_vector: str | None = None
     cve_ids: list[str] = []
     requires_auth: bool = False
-    destructive: bool = False  # True = plugin can modify target state (write ops, exploitation)
+
+    # ── risk declaration ──────────────────────────────────────────────────────
+    # Two levels, because two different gates ask two different questions.
+    #
+    # intrusive: this check sends attack payloads — SQLi strings, template
+    #   expressions, traversal sequences, JNDI lookups. It does not change the
+    #   target, but it trips WAFs and IDS, fills logs with attack traffic, and is
+    #   not something an operator who picked safety_level="safe" is asking for.
+    #   Gates the engine's safe-mode filter.
+    #
+    # destructive: this check can change the target's state — write a file,
+    #   mutate configuration, execute code, or affect other users' traffic.
+    #   Gates the AI agent's allow_exploitation capability.
+    #
+    # destructive implies intrusive; `risk_intrusive` below is what gates read,
+    # so a plugin only has to declare the stronger of the two.
+    intrusive: bool = False
+    destructive: bool = False
+
     ports: list[int] | None = None  # None = applicable to all ports
+
+    @classmethod
+    def risk_intrusive(cls) -> bool:
+        """True when this check sends attack traffic, including anything that
+        writes. Nothing that can modify a target is merely 'noisy'."""
+        return bool(cls.intrusive or cls.destructive)
 
     @abstractmethod
     async def check(self, context: "ScanContext", host: "Host") -> list[FindingData]:

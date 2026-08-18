@@ -27,6 +27,7 @@ class OpenRedirectPlugin(PluginBase):
     name = "Open Redirect"
     description = "Test for open redirect vulnerabilities via common redirect parameters"
     category = PluginCategory.web
+    intrusive = True
     severity = Severity.medium
     ports = HTTP_PORTS
 

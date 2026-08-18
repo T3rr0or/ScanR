@@ -42,6 +42,7 @@ class PathTraversalPlugin(PluginBase):
     name = "Path Traversal / LFI"
     description = "Test for path traversal and local file inclusion vulnerabilities"
     category = PluginCategory.web
+    intrusive = True
     severity = Severity.high
     ports = HTTP_PORTS
     timeout = 180

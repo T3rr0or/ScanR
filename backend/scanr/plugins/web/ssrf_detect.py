@@ -73,6 +73,7 @@ class SsrfDetectPlugin(PluginBase):
     name = "SSRF Detection"
     description = "Detect server-side request forgery via URL/target parameters"
     category = PluginCategory.web
+    intrusive = True
     severity = Severity.high
     ports = HTTP_PORTS
     timeout = 180

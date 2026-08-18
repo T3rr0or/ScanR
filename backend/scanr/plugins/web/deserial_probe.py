@@ -74,6 +74,7 @@ class DeseriProbePlugin(PluginBase):
     name = "Insecure Deserialization Probe"
     description = "Detect deserialization endpoints via safe Java/PHP/Python probes (stack trace detection)"
     category = PluginCategory.web
+    destructive = True
     severity = Severity.critical
     ports = HTTP_PORTS
 

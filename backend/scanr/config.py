@@ -155,6 +155,17 @@ class Settings(BaseSettings):
             )
         if len(self.secret_key) < 32:
             raise ValueError("SECRET_KEY must be at least 32 characters")
+        # bcrypt refuses anything over 72 bytes. Caught here so a too-long
+        # ADMIN_PASSWORD fails at startup with an actionable message, rather
+        # than deep inside seed_admin() where it reads as a crash on boot.
+        from scanr.auth.password import MAX_PASSWORD_BYTES, password_within_bcrypt_limit
+
+        if not password_within_bcrypt_limit(self.admin_password):
+            raise ValueError(
+                f"ADMIN_PASSWORD must be at most {MAX_PASSWORD_BYTES} bytes when UTF-8 "
+                f"encoded (got {len(self.admin_password.encode('utf-8'))}) — bcrypt cannot "
+                "hash a longer value"
+            )
         if self.vault_key:
             try:
                 from cryptography.fernet import Fernet
