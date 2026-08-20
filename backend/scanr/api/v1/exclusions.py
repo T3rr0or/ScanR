@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from scanr.db import get_db
-from scanr.deps import get_current_user, require_scope
+from scanr.deps import require_scope
 from scanr.models.base import new_uuid
 from scanr.models.exclusion import Exclusion
 from scanr.models.scan import Scan
@@ -48,7 +48,7 @@ async def _own_scan(scan_id: str, user_id: str, db: AsyncSession) -> Scan:
 async def list_exclusions(
     scan_id: str,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_scope("scans:read")),
 ):
     await _own_scan(scan_id, current_user.id, db)
     result = await db.execute(select(Exclusion).where(Exclusion.scan_id == scan_id))

@@ -9,7 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from scanr.db import get_db
-from scanr.deps import get_current_user
+from scanr.deps import require_scope
 from scanr.models import Screenshot
 from scanr.models.scan import Scan
 from scanr.models.user import User
@@ -45,7 +45,7 @@ class ScreenshotRead(BaseModel):
 async def list_screenshots(
     scan_id: str,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_scope("findings:read")),
 ):
     result = await db.execute(
         select(Screenshot)
@@ -64,7 +64,7 @@ async def list_screenshots(
 async def get_screenshot_image(
     screenshot_id: str,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_scope("findings:read")),
 ):
     result = await db.execute(
         select(Screenshot)

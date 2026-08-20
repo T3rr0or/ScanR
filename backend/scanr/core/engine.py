@@ -134,6 +134,11 @@ def _filter_plugins_by_capabilities(plugins: list, profile: dict) -> list:
         is_intrusive = plugin.risk_intrusive() if hasattr(plugin, "risk_intrusive") else False
         if safety == "safe" and (is_intrusive or "default_creds" in pid):
             continue
+        # State-changing checks require the operator's explicit aggressive
+        # choice. Balanced permits noisy detection payloads, not checks that can
+        # write files, mutate configuration, or affect other users' traffic.
+        if safety != "aggressive" and getattr(plugin, "destructive", False):
+            continue
         allowed.append(plugin)
     return allowed
 

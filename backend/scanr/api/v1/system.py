@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from scanr.config import get_settings
 from scanr.db import get_db
-from scanr.deps import get_current_user, require_admin
+from scanr.deps import get_current_user, require_admin, require_scope
 from scanr.models import Scan, ScanStatus
 from scanr.models.user import User
 
@@ -185,7 +185,7 @@ async def health():
 @router.get("/stats")
 async def stats(
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_scope("scans:read")),
 ):
     uid = current_user.id
 

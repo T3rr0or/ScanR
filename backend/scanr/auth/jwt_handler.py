@@ -23,7 +23,7 @@ def create_access_token(subject: str, role: str) -> str:
     )
 
 
-def create_refresh_token(subject: str) -> str:
+def create_refresh_token(subject: str, password_generation: str | None = None) -> str:
     issued = _now()
     expire = issued + timedelta(days=settings.refresh_token_expire_days)
     return jwt.encode(
@@ -32,11 +32,10 @@ def create_refresh_token(subject: str) -> str:
             "exp": expire,
             "type": "refresh",
             "jti": str(uuid.uuid4()),
-            # Milliseconds, not the standard second-granularity `iat`: a password
-            # change bumps the revocation epoch and immediately mints a
-            # replacement token, so both land in the same second and whole
-            # seconds cannot tell the revoked token from its replacement.
-            "iat_ms": int(issued.timestamp() * 1000),
+            # An exact generation marker avoids timestamp-boundary races. It is
+            # omitted until a user has changed their password, preserving compact
+            # tokens for accounts with no revocation marker in Redis.
+            **({"pw_generation": password_generation} if password_generation else {}),
         },
         settings.secret_key,
         algorithm=settings.algorithm,

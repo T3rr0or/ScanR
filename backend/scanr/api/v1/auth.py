@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import uuid
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response, status
@@ -53,28 +54,33 @@ async def _claim_jti(jti: str, exp: int) -> bool:
     return bool(await r.set(f"{_REVOKE_PREFIX}{jti}", "1", ex=ttl, nx=True))
 
 
-async def _bump_pw_epoch(user_id: str) -> None:
-    """Invalidate every refresh token issued before now for a user.
+async def _bump_pw_epoch(user_id: str) -> str:
+    """Invalidate existing refresh tokens by assigning a new user generation.
     Called on password change. Raises on Redis failure so the caller can
     abort rather than leave stale tokens valid."""
-    now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+    # Opaque generations compare by exact equality, so neither clock precision
+    # nor a seconds-to-milliseconds deployment migration can revalidate a token.
+    generation = str(uuid.uuid4())
     r = _get_redis()
     # The key only needs to outlive the longest-lived outstanding refresh token.
     await r.set(
         f"{_PW_EPOCH_PREFIX}{user_id}",
-        str(now_ms),
+        generation,
         ex=settings.refresh_token_expire_days * 86400 + 60,
     )
+    return generation
 
 
-async def _get_pw_epoch(user_id: str) -> int:
+async def _get_pw_epoch(user_id: str) -> str | None:
     r = _get_redis()
     val = await r.get(f"{_PW_EPOCH_PREFIX}{user_id}")
-    return int(val) if val else 0
+    if not val:
+        return None
+    return val.decode() if isinstance(val, bytes) else str(val)
 
 
-async def _assert_not_pre_password_change(user_id: str, payload: dict) -> None:
-    """Reject refresh tokens issued before the user's last password change.
+async def _assert_not_pre_password_change(user_id: str, payload: dict) -> str | None:
+    """Reject refresh tokens from before the user's last password change.
     Fails closed when Redis is unavailable."""
     try:
         epoch = await _get_pw_epoch(user_id)
@@ -84,20 +90,15 @@ async def _assert_not_pre_password_change(user_id: str, payload: dict) -> None:
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Token service unavailable, please try again",
         )
-    # New tokens carry millisecond issuance time so a token minted immediately
-    # after a password change can be distinguished from one minted earlier in
-    # the same second. Keep accepting the old token format during rollout; an
-    # existing millisecond epoch will still reject those pre-change tokens.
-    issued_at_ms = payload.get("iat_ms")
-    if issued_at_ms is None:
-        issued_at_ms = (
-            int(payload["exp"]) - settings.refresh_token_expire_days * 86400
-        ) * 1000
-    if epoch and int(issued_at_ms) < epoch:
+    # Existing numeric timestamp values are intentionally treated as opaque
+    # generations. Tokens issued by older releases have no generation claim and
+    # are therefore still revoked after deploying this format.
+    if epoch and payload.get("pw_generation") != epoch:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Session expired — please log in again",
         )
+    return epoch
 
 
 def _set_refresh_cookie(response: Response, refresh_token: str) -> None:
@@ -181,7 +182,15 @@ async def login(
         await db.commit()
 
     logger.info("Successful login: user=%s ip=%s", user.email, ip)
-    refresh_token = create_refresh_token(user.id)
+    try:
+        generation = await _get_pw_epoch(user.id)
+    except Exception:
+        logger.error("Redis unavailable during login token issuance — failing closed")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Token service unavailable, please try again",
+        )
+    refresh_token = create_refresh_token(user.id, generation)
     _set_refresh_cookie(response, refresh_token)
     return TokenResponse(access_token=create_access_token(user.id, user.role))
 
@@ -230,9 +239,9 @@ async def refresh(
     if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
 
-    await _assert_not_pre_password_change(user.id, payload)
+    generation = await _assert_not_pre_password_change(user.id, payload)
 
-    new_refresh = create_refresh_token(user.id)
+    new_refresh = create_refresh_token(user.id, generation)
     _set_refresh_cookie(response, new_refresh)
     return TokenResponse(access_token=create_access_token(user.id, user.role))
 

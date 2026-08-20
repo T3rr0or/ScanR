@@ -110,7 +110,7 @@ async def change_password(
     # password. If Redis is unavailable, abort (fail closed) rather than
     # leave tokens issued against the old password valid for days.
     try:
-        await auth_api._bump_pw_epoch(current_user.id)
+        generation = await auth_api._bump_pw_epoch(current_user.id)
     except Exception:
         logger.error("Redis unavailable during password change for user=%s", current_user.email)
         raise HTTPException(
@@ -121,9 +121,11 @@ async def change_password(
     current_user.hashed_password = new_hash
     await db.commit()
 
-    # Keep the current session alive with a fresh refresh cookie; every other
-    # outstanding refresh token now predates the epoch and will be rejected.
-    auth_api._set_refresh_cookie(response, create_refresh_token(current_user.id))
+    # Keep the current session alive with a token carrying the new generation;
+    # every other outstanding refresh token now has a stale generation.
+    auth_api._set_refresh_cookie(
+        response, create_refresh_token(current_user.id, generation)
+    )
     logger.info("Password changed for user=%s — existing refresh tokens revoked", current_user.email)
 
 

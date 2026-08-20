@@ -6,7 +6,7 @@ from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from scanr.db import get_db
-from scanr.deps import get_current_user
+from scanr.deps import require_scope
 from scanr.models import Finding, Host, Scan
 from scanr.models.user import User
 
@@ -34,7 +34,7 @@ async def list_assets(
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_scope("findings:read")),
 ):
     """Cross-scan host inventory — aggregates all hosts by IP across all scans."""
     risk_expr = func.sum(case(
@@ -100,7 +100,7 @@ async def list_assets(
 async def asset_findings(
     ip: str,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_scope("findings:read")),
 ):
     """All findings for a given IP across all scans, newest first."""
     from scanr.schemas import FindingRead

@@ -8,7 +8,7 @@ from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from scanr.db import get_db
-from scanr.deps import get_current_user
+from scanr.deps import require_scope
 from scanr.models import Finding, Host, Scan
 from scanr.models.user import User
 
@@ -19,7 +19,7 @@ router = APIRouter(prefix="/analytics", tags=["analytics"])
 async def severity_distribution(
     scan_id: str | None = Query(None),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_scope("findings:read")),
 ):
     q = (
         select(Finding.severity, func.count(Finding.id).label("count"))
@@ -41,7 +41,7 @@ async def severity_distribution(
 async def findings_timeline(
     days: int = Query(30, ge=7, le=90),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_scope("findings:read")),
 ):
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
     result = await db.execute(
@@ -74,7 +74,7 @@ async def findings_timeline(
 async def top_vulnerable_hosts(
     limit: int = Query(10, ge=1, le=50),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_scope("findings:read")),
 ):
     # Severity-weighted risk score: critical=40, high=10, medium=3, low=1
     risk_expr = func.sum(case(
@@ -123,7 +123,7 @@ async def top_vulnerable_hosts(
 async def scan_activity(
     days: int = Query(30, ge=7, le=90),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_scope("findings:read")),
 ):
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
     result = await db.execute(
@@ -148,7 +148,7 @@ async def scan_activity(
 async def plugin_hit_rate(
     limit: int = Query(20, ge=1, le=50),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_scope("findings:read")),
 ):
     result = await db.execute(
         select(Finding.plugin_id, func.count(Finding.id).label("hit_count"))
@@ -164,7 +164,7 @@ async def plugin_hit_rate(
 @router.get("/remediation-rate")
 async def remediation_rate(
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_scope("findings:read")),
 ):
     """Ratio of resolved findings vs total non-FP findings, broken down by severity."""
     result = await db.execute(
@@ -195,7 +195,7 @@ async def remediation_rate(
 @router.get("/open-critical-age")
 async def open_critical_age(
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_scope("findings:read")),
 ):
     """Days since creation for open critical/high findings (mean + max)."""
     now = datetime.now(timezone.utc)
@@ -229,7 +229,7 @@ async def open_critical_age(
 async def remediation_groups(
     limit: int = Query(100, ge=1, le=500),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_scope("findings:read")),
 ):
     """Group open findings by remediation text — shows what to fix and how many findings each fix closes."""
     result = await db.execute(

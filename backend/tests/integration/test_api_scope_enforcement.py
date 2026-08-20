@@ -56,6 +56,26 @@ async def test_limited_key_forbidden_on_other_routers(client, auth_headers):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(("path", "required_scope"), [
+    ("/assets", "findings:read"),
+    ("/analytics/severity-distribution", "findings:read"),
+    ("/templates", "scans:read"),
+    ("/scans/missing/exclusions", "scans:read"),
+    ("/plugins/health", "plugins:read"),
+    ("/system/stats", "scans:read"),
+])
+async def test_narrow_key_cannot_read_result_views(
+    client, auth_headers, path, required_scope
+):
+    key = await _create_key(
+        client, auth_headers, ["webhooks:read"], name=f"deny-{required_scope}-{path}"
+    )
+    response = await client.get(f"{PREFIX}{path}", headers={"X-API-Key": key})
+    assert response.status_code == 403, response.text
+    assert required_scope in response.json()["detail"]
+
+
+@pytest.mark.asyncio
 async def test_key_cannot_mint_beyond_own_scopes(client, auth_headers):
     """Self-escalation guard: an api_keys:write key can mint within its own
     scope set only — otherwise it could create a '*' key and take over."""

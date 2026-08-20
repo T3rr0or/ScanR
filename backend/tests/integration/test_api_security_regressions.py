@@ -5,20 +5,22 @@ import pytest
 
 
 @pytest.mark.asyncio
-async def test_password_epoch_distinguishes_tokens_from_same_second(monkeypatch):
-    """Password revocation must not depend on a whole-second boundary."""
+async def test_password_generation_rejects_legacy_and_stale_tokens(monkeypatch):
+    """Revocation survives legacy Redis values and has no clock boundary."""
     from fastapi import HTTPException
     from scanr.api.v1 import auth as auth_api
 
     async def epoch(_user_id):
-        return 1_700_000_000_500
+        # Numeric values were written by older releases in seconds. They remain
+        # valid revocation markers rather than being compared in mixed units.
+        return "1700000000"
 
     monkeypatch.setattr(auth_api, "_get_pw_epoch", epoch)
-    old = {"exp": 1_700_604_800, "iat_ms": 1_700_000_000_499}
-    fresh = {"exp": 1_700_604_800, "iat_ms": 1_700_000_000_500}
+    legacy = {"exp": 1_700_604_800}
+    fresh = {"exp": 1_700_604_800, "pw_generation": "1700000000"}
 
     with pytest.raises(HTTPException) as exc:
-        await auth_api._assert_not_pre_password_change("user", old)
+        await auth_api._assert_not_pre_password_change("user", legacy)
     assert exc.value.status_code == 401
     await auth_api._assert_not_pre_password_change("user", fresh)
 

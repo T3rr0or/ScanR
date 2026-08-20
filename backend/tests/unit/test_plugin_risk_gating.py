@@ -101,19 +101,26 @@ def test_safe_mode_excludes_every_payload_plugin():
     )
 
 
-def test_balanced_still_runs_them():
-    """The gate must bite only in safe mode — 'safe' should be a real choice, not
-    a global disable."""
+def test_balanced_runs_intrusive_but_not_destructive_plugins():
+    """Balanced allows detection payloads but never state-changing checks."""
     plugins = get_enabled_plugins(set(get_all_plugin_ids()))
     profile = {
         "safety_level": "balanced",
         "enumeration": {"dns_recon": True, "subdomain_enum": True, "directory_enum": True},
     }
     kept = {p.id for p in _filter_plugins_by_capabilities(plugins, profile)}
-    assert _PAYLOAD_PLUGINS <= kept, (
-        f"balanced should still run payload plugins; missing "
-        f"{sorted(_PAYLOAD_PLUGINS - kept)}"
-    )
+    assert not (_STATE_CHANGING & kept)
+    assert (_PAYLOAD_PLUGINS - _STATE_CHANGING) <= kept
+
+
+def test_aggressive_runs_destructive_plugins():
+    plugins = get_enabled_plugins(set(get_all_plugin_ids()))
+    profile = {
+        "safety_level": "aggressive",
+        "enumeration": {"dns_recon": True, "subdomain_enum": True, "directory_enum": True},
+    }
+    kept = {p.id for p in _filter_plugins_by_capabilities(plugins, profile)}
+    assert _STATE_CHANGING <= kept
 
 
 def test_list_plugins_reports_risk_to_the_model():

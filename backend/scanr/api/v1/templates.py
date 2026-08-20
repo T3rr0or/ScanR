@@ -9,7 +9,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from scanr.db import get_db
-from scanr.deps import get_current_user, require_scope
+from scanr.deps import require_scope
 from scanr.models.base import new_uuid
 from scanr.models.scan_template import ScanTemplate
 from scanr.models.user import User
@@ -69,7 +69,7 @@ def _to_read(t: ScanTemplate) -> TemplateRead:
 @router.get("", response_model=list[TemplateRead])
 async def list_templates(
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_scope("scans:read")),
 ):
     result = await db.execute(
         select(ScanTemplate).where(
@@ -103,7 +103,7 @@ async def create_template(
 async def get_template(
     template_id: str,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_scope("scans:read")),
 ):
     result = await db.execute(
         select(ScanTemplate).where(

@@ -67,44 +67,11 @@ _UNGATED_READ_BY_DESIGN = {
     "users.py:get_profile",
 }
 
-# (2) Recorded gap, NOT an endorsement. These return the caller's own scan data
-#     but check no scope, so any valid API key reads them regardless of what it
-#     was granted. They are listed so the guard below can still fail on *new*
-#     ungated reads instead of this class of hole growing silently.
-#
-#     Closing it is a breaking change and needs a deliberate call: most of these
-#     resources have no read scope to require. ALL_SCOPES has no assets:*,
-#     analytics:*, templates:*, vulnerabilities:*, screenshots:* or exclusions:*,
-#     so gating them means either inventing scopes (existing keys lack them, so
-#     they start 403ing) or folding them under findings:read / scans:read (same
-#     breakage for keys without those). plugins.py's two are the exception —
-#     plugins:read already exists and would fit today.
-_UNGATED_READ_KNOWN_GAP = {
-    # Aggregates computed over the caller's findings.
-    "analytics.py:severity_distribution",
-    "analytics.py:findings_timeline",
-    "analytics.py:top_vulnerable_hosts",
-    "analytics.py:scan_activity",
-    "analytics.py:plugin_hit_rate",
-    "analytics.py:remediation_rate",
-    "analytics.py:open_critical_age",
-    "analytics.py:remediation_groups",
-    "system.py:stats",
-    # Hosts and findings, reshaped.
-    "assets.py:list_assets",
-    "assets.py:asset_findings",
-    "vulnerabilities.py:list_vulnerabilities",
-    "vulnerabilities.py:vulnerability_hosts",
-    # Scan configuration and artifacts.
-    "templates.py:list_templates",
-    "templates.py:get_template",
-    "exclusions.py:list_exclusions",
-    "screenshots.py:list_screenshots",
-    "screenshots.py:get_screenshot_image",
-    # Per-scan plugin execution history. plugins:read already exists for these.
-    "plugins.py:list_plugin_runs",
-    "plugins.py:plugin_health",
-}
+# (2) Recorded scope-enforcement debt. Keep this separate from deliberate
+# exceptions so a future gap cannot be disguised as design. It is empty: result
+# views reuse findings:read, scan configuration reuses scans:read, and plugin
+# execution history uses plugins:read.
+_UNGATED_READ_KNOWN_GAP: set[str] = set()
 
 _ALLOWED_UNGATED_READS = _UNGATED_READ_BY_DESIGN | _UNGATED_READ_KNOWN_GAP
 

@@ -6,7 +6,7 @@ from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from scanr.db import get_db
-from scanr.deps import get_current_user
+from scanr.deps import require_scope
 from scanr.models import Finding, Host, Scan
 from scanr.models.user import User
 
@@ -33,7 +33,7 @@ async def list_vulnerabilities(
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_scope("findings:read")),
 ):
     """Vulnerability-centric view — groups findings by plugin_id across all scans."""
     # Filter conditions applied consistently to BOTH the host-count subquery and
@@ -101,7 +101,7 @@ async def list_vulnerabilities(
 async def vulnerability_hosts(
     plugin_id: str,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_scope("findings:read")),
 ):
     """All hosts affected by a given plugin_id across all scans."""
     result = await db.execute(
