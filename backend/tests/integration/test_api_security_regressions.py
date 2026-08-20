@@ -8,6 +8,7 @@ import pytest
 async def test_password_generation_rejects_legacy_and_stale_tokens(monkeypatch):
     """Revocation survives legacy Redis values and has no clock boundary."""
     from fastapi import HTTPException
+    from types import SimpleNamespace
     from scanr.api.v1 import auth as auth_api
 
     async def epoch(_user_id):
@@ -18,11 +19,12 @@ async def test_password_generation_rejects_legacy_and_stale_tokens(monkeypatch):
     monkeypatch.setattr(auth_api, "_get_pw_epoch", epoch)
     legacy = {"exp": 1_700_604_800}
     fresh = {"exp": 1_700_604_800, "pw_generation": "1700000000"}
+    user = SimpleNamespace(id="user", password_generation=None)
 
     with pytest.raises(HTTPException) as exc:
-        await auth_api._assert_not_pre_password_change("user", legacy)
+        await auth_api._assert_not_pre_password_change(user, legacy)
     assert exc.value.status_code == 401
-    await auth_api._assert_not_pre_password_change("user", fresh)
+    await auth_api._assert_not_pre_password_change(user, fresh)
 
 
 @pytest.mark.asyncio
@@ -113,7 +115,7 @@ async def test_schedule_foreign_credential_rejected(client, auth_headers, db):
 
 
 @pytest.mark.asyncio
-async def test_password_change_revokes_refresh(client):
+async def test_password_change_revokes_refresh(client, db):
     login = await client.post("/api/v1/auth/login", json={
         "email": "admin@scanr.local", "password": "testadminpass123",
     })
@@ -135,6 +137,20 @@ async def test_password_change_revokes_refresh(client):
     # fresh cookie issued by change-password keeps working
     new_rt = r.cookies.get("scanr_rt")
     assert new_rt and new_rt != old_rt
+
+    # The token generation and password hash live on the same committed row.
+    # This prevents a concurrent old-password login from acquiring the new
+    # generation through an independently updated Redis key.
+    from scanr.auth import decode_token
+    from scanr.models.user import User
+    from sqlalchemy import select
+    await db.rollback()
+    user = (await db.execute(
+        select(User).where(User.email == "admin@scanr.local")
+    )).scalar_one()
+    assert user.password_generation
+    assert decode_token(new_rt)["pw_generation"] == user.password_generation
+
     r3 = await client.post("/api/v1/auth/refresh", cookies={"scanr_rt": new_rt})
     assert r3.status_code == 200, r3.text
 

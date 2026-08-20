@@ -36,6 +36,7 @@ _STATE_CHANGING = {
     "web.spring4shell_check",  # rebinds Tomcat's AccessLogValve pattern/suffix
     "web.http_smuggling",      # desync affects other users' requests; poisons caches
     "web.deserial_probe",      # serialized payloads execute code on a vulnerable target
+    "services.snmp_walk",      # writes sysContact to prove a community is read-write
 }
 
 

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import uuid
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response, status
@@ -54,23 +53,6 @@ async def _claim_jti(jti: str, exp: int) -> bool:
     return bool(await r.set(f"{_REVOKE_PREFIX}{jti}", "1", ex=ttl, nx=True))
 
 
-async def _bump_pw_epoch(user_id: str) -> str:
-    """Invalidate existing refresh tokens by assigning a new user generation.
-    Called on password change. Raises on Redis failure so the caller can
-    abort rather than leave stale tokens valid."""
-    # Opaque generations compare by exact equality, so neither clock precision
-    # nor a seconds-to-milliseconds deployment migration can revalidate a token.
-    generation = str(uuid.uuid4())
-    r = _get_redis()
-    # The key only needs to outlive the longest-lived outstanding refresh token.
-    await r.set(
-        f"{_PW_EPOCH_PREFIX}{user_id}",
-        generation,
-        ex=settings.refresh_token_expire_days * 86400 + 60,
-    )
-    return generation
-
-
 async def _get_pw_epoch(user_id: str) -> str | None:
     r = _get_redis()
     val = await r.get(f"{_PW_EPOCH_PREFIX}{user_id}")
@@ -79,26 +61,33 @@ async def _get_pw_epoch(user_id: str) -> str | None:
     return val.decode() if isinstance(val, bytes) else str(val)
 
 
-async def _assert_not_pre_password_change(user_id: str, payload: dict) -> str | None:
+async def _password_generation(user: User) -> str | None:
+    """Return the durable generation, falling back to pre-0025 Redis data."""
+    if user.password_generation:
+        return user.password_generation
+    return await _get_pw_epoch(user.id)
+
+
+async def _assert_not_pre_password_change(user: User, payload: dict) -> str | None:
     """Reject refresh tokens from before the user's last password change.
     Fails closed when Redis is unavailable."""
     try:
-        epoch = await _get_pw_epoch(user_id)
+        generation = await _password_generation(user)
     except Exception:
         logger.error("Redis unavailable during refresh epoch check — failing closed")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Token service unavailable, please try again",
         )
-    # Existing numeric timestamp values are intentionally treated as opaque
-    # generations. Tokens issued by older releases have no generation claim and
-    # are therefore still revoked after deploying this format.
-    if epoch and payload.get("pw_generation") != epoch:
+    # Existing numeric Redis timestamp values are intentionally treated as
+    # opaque generations. Older tokens have no claim and remain revoked during
+    # rollout; the next password change moves the marker into the user row.
+    if generation and payload.get("pw_generation") != generation:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Session expired — please log in again",
         )
-    return epoch
+    return generation
 
 
 def _set_refresh_cookie(response: Response, refresh_token: str) -> None:
@@ -183,7 +172,7 @@ async def login(
 
     logger.info("Successful login: user=%s ip=%s", user.email, ip)
     try:
-        generation = await _get_pw_epoch(user.id)
+        generation = await _password_generation(user)
     except Exception:
         logger.error("Redis unavailable during login token issuance — failing closed")
         raise HTTPException(
@@ -239,7 +228,7 @@ async def refresh(
     if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
 
-    generation = await _assert_not_pre_password_change(user.id, payload)
+    generation = await _assert_not_pre_password_change(user, payload)
 
     new_refresh = create_refresh_token(user.id, generation)
     _set_refresh_cookie(response, new_refresh)

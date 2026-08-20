@@ -70,6 +70,9 @@ class SnmpWalkPlugin(PluginBase):
         "network interfaces, routing tables, and running software"
     )
     category = PluginCategory.services
+    # RW detection temporarily overwrites sysContact and restoration can fail or
+    # be interrupted, so this check may mutate target configuration.
+    destructive = True
     severity = Severity.medium
     ports = SNMP_PORTS
 
