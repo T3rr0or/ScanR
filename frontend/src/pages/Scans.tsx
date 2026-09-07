@@ -968,12 +968,13 @@ function NewScanModal({
         display: 'flex', alignItems: 'center', justifyContent: 'center',
         zIndex: 100, padding: 20,
       }}
-      onClick={onClose}
+      // Deliberately not dismissed by a backdrop click: this is a five-step form,
+      // and a stray click outside it used to discard everything typed so far.
+      // Closing is explicit — the header's X or the Cancel button.
     >
       <div
         className="panel"
         style={{ width: 640, maxHeight: '92vh', overflow: 'auto', background: 'var(--bg-1)' }}
-        onClick={e => e.stopPropagation()}
       >
         {/* Modal header */}
         <div className="panel-head">

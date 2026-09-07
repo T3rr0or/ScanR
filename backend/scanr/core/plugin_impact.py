@@ -78,6 +78,7 @@ KNOWN_PLUGIN_IDS = frozenset({
     "services.postgres_unauth",
     "services.printnightmare",
     "services.prometheus_exposure",
+    "services.python_eol",
     "services.rabbitmq_kafka_zookeeper_exposure",
     "services.rdp_check",
     "services.rdp_info",
@@ -151,6 +152,8 @@ KNOWN_PLUGIN_IDS = frozenset({
 PASSIVE_PLUGIN_IDS = frozenset({
     "cve.cve_matcher",
     "network.open_ports_info",
+    # Reads banners the scan already collected; sends nothing itself.
+    "services.python_eol",
 })
 
 AUTH_ATTEMPT_PLUGIN_IDS = frozenset({
