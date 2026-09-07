@@ -79,7 +79,7 @@ class XssDetectPlugin(PluginBase):
     async def _test_xss(self, context, base_url: str, port: int) -> FindingData | None:
         try:
             async with httpx.AsyncClient(
-                verify=False, timeout=httpx.Timeout(4.0, connect=2.0), follow_redirects=True,
+                verify=False, timeout=httpx.Timeout(4.0, connect=2.0), follow_redirects=False,
                 headers={"User-Agent": "Mozilla/5.0 (compatible; ScanR/0.6)"},
                 **context.proxy_config()
             ) as client:

@@ -1,0 +1,6 @@
+# Runtime dependencies for the Docker-socket sandbox runner only.
+# Regenerate the hash lock from backend/ with:
+#   uv pip compile sandbox/requirements-runner.in --constraint requirements.txt --python-version 3.12 --generate-hashes -o sandbox/requirements-runner.txt
+fastapi>=0.115.0
+pydantic>=2.0.0
+uvicorn>=0.30.0

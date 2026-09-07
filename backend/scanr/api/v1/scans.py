@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from scanr.db import get_db
-from scanr.deps import require_scope
+from scanr.deps import ensure_admin, ensure_scopes, require_scope
 from scanr.models import Host, Scan, ScanStatus, Target, Finding
 from scanr.models.base import new_uuid
 from scanr.models.user import User
@@ -42,9 +42,20 @@ def _validate_profile_json(raw: str) -> str:
 async def _validate_targets(targets: list[str]) -> None:
     """Reject malformed targets and any that point at scanner infrastructure."""
     from scanr.config import get_settings
-    from scanr.utils.ip_utils import expand_targets as _expand, is_forbidden_target
+    from scanr.utils.ip_utils import (
+        expand_targets as _expand,
+        is_forbidden_target,
+        validate_target_batch,
+    )
 
     denylist = get_settings().scan_denylist
+    try:
+        # Check raw-count and aggregate expansion bounds before this route
+        # materialises any individual CIDR/range. Keep this in the shared helper
+        # used by schedules so invalid targets retain the API's established 400.
+        validate_target_batch(targets)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid target: {exc}")
     for raw in targets:
         value = raw.strip()
         if is_forbidden_target(value, denylist):
@@ -83,7 +94,12 @@ async def _verify_credential_owner(
         )
 
 
-async def _resolve_ai_agent_fields(ai_agent, current_user: User, db: AsyncSession) -> dict:
+async def _resolve_ai_agent_fields(
+    ai_agent,
+    request: Request,
+    current_user: User,
+    db: AsyncSession,
+) -> dict:
     """Validate the opt-in AI agent config and map it to Scan columns.
 
     Returns the ai_agent_* kwargs for the Scan model. Aggressive capabilities are
@@ -95,10 +111,13 @@ async def _resolve_ai_agent_fields(ai_agent, current_user: User, db: AsyncSessio
     if not isinstance(ai_agent, ScanAiAgentConfig) or not ai_agent.enabled:
         return {}
 
-    if ai_agent.aggressive_requested() and getattr(current_user, "role", None) != "admin":
-        raise HTTPException(
-            status_code=403, detail="Aggressive AI capabilities require an admin user."
-        )
+    # scans:write authorizes creation of the scan itself; starting an LLM-backed
+    # agent is a separate capability and cost boundary.
+    ensure_scopes(request, current_user, "ai:agent")
+
+    if ai_agent.aggressive_requested():
+        ensure_scopes(request, current_user, "ai:aggressive")
+        ensure_admin(current_user)
 
     from scanr.ai import settings_store as store
     from scanr.ai.llm.factory import SUPPORTED_PROVIDERS
@@ -164,6 +183,27 @@ async def _get_own_scan(scan_id: str, user_id: str, db: AsyncSession) -> Scan:
     return scan
 
 
+async def _copy_exclusions(
+    source_scan_id: str, destination_scan_id: str, db: AsyncSession
+) -> None:
+    """Copy the source scan's complete exclusion policy to a new scan."""
+    from scanr.models.exclusion import Exclusion
+
+    result = await db.execute(
+        select(Exclusion).where(Exclusion.scan_id == source_scan_id)
+    )
+    for exclusion in result.scalars().all():
+        db.add(
+            Exclusion(
+                id=new_uuid(),
+                scan_id=destination_scan_id,
+                type=exclusion.type,
+                value=exclusion.value,
+                reason=exclusion.reason,
+            )
+        )
+
+
 @router.get("", response_model=list[ScanSummary])
 async def list_scans(
     limit: int = Query(50, ge=1, le=200),
@@ -203,7 +243,7 @@ async def create_scan(
     # before binding it to the scan (prevents using another user's credential).
     await _verify_credential_owner(body.credential_id, current_user.id, db)
 
-    ai_fields = await _resolve_ai_agent_fields(body.ai_agent, current_user, db)
+    ai_fields = await _resolve_ai_agent_fields(body.ai_agent, request, current_user, db)
 
     scan = Scan(
         id=new_uuid(),
@@ -217,6 +257,9 @@ async def create_scan(
         **ai_fields,
     )
     db.add(scan)
+    # Exclusion and scan-credential models do not have ORM relationships back
+    # to Scan, so flush the parent explicitly before inserting FK children.
+    await db.flush()
 
     for raw in body.targets:
         target = Target(
@@ -554,9 +597,12 @@ async def rerun_scan(
         user_id=current_user.id,
     )
     db.add(clone)
+    await db.flush()
 
     for raw in target_values:
         db.add(Target(id=new_uuid(), scan_id=clone_id, value=raw, type=classify_target(raw)))
+
+    await _copy_exclusions(scan_id, clone_id, db)
 
     # Copy scan-scoped credentials
     from scanr.models.scan_credential import ScanCredential
@@ -605,6 +651,14 @@ async def clone_scan(
 ):
     """Clone a scan as pending so the user can modify and launch it later."""
     source = await _get_own_scan(scan_id, current_user.id, db)
+    # Exclusion mutations lock this same row. This makes cloning a pending
+    # draft linearizable with an add/delete: the clone receives the complete
+    # policy as it existed at one side of the concurrent mutation.
+    await db.execute(
+        select(Scan.id)
+        .where(Scan.id == scan_id, Scan.user_id == current_user.id)
+        .with_for_update()
+    )
 
     targets_result = await db.execute(
         select(Target.value).where(Target.scan_id == scan_id)
@@ -626,9 +680,12 @@ async def clone_scan(
         user_id=current_user.id,
     )
     db.add(clone)
+    await db.flush()
 
     for raw in target_values:
         db.add(Target(id=new_uuid(), scan_id=clone.id, value=raw, type=classify_target(raw)))
+
+    await _copy_exclusions(scan_id, clone.id, db)
 
     # Copy scan-scoped credentials
     from scanr.models.scan_credential import ScanCredential as _SC

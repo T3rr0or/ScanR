@@ -151,6 +151,25 @@ def _client(handler, **cfg):
 
 
 @pytest.mark.asyncio
+async def test_production_client_uses_connection_bound_dns(monkeypatch):
+    expected = object()
+    seen = {}
+
+    async def pinned(url, **kwargs):
+        seen["url"] = url
+        seen.update(kwargs)
+        return expected
+
+    monkeypatch.setattr("scanr.utils.safe_http.pinned_async_client", pinned)
+    client = TopdeskClient(config())
+    result = await client._client("https://example.topdesk.net/tas/api/incidents")
+    assert result is expected
+    assert seen["url"].startswith("https://example.topdesk.net/")
+    assert seen["verify"] is True
+    assert seen["extra_denylist"]
+
+
+@pytest.mark.asyncio
 async def test_create_sends_basic_auth_and_json():
     seen = {}
 

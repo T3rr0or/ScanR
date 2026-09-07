@@ -1,6 +1,8 @@
 """Regression tests: API-key scope enforcement (deps.require_scope) on routers
 that previously accepted any authenticated API key, plus key-creation guards
 (unknown scopes, self-escalation)."""
+import uuid
+
 import pytest
 
 PREFIX = "/api/v1"
@@ -101,6 +103,207 @@ async def test_session_auth_retains_full_scopes(client, auth_headers):
     assert r.status_code == 200, r.text
     r = await client.get(f"{PREFIX}/api-keys", headers=auth_headers)
     assert r.status_code == 200, r.text
+
+
+@pytest.mark.asyncio
+async def test_admin_owned_narrow_key_cannot_cross_privileged_boundaries(
+    client, auth_headers
+):
+    """The account is an admin, but authority comes from role *and* key scope.
+
+    This is the regression for the role-only require_admin dependency: before
+    the fix, this findings-only key could create another administrator and alter
+    global AI configuration.
+    """
+    key = await _create_key(
+        client, auth_headers, ["findings:read"], name="admin-narrow-boundary"
+    )
+    h = {"X-API-Key": key}
+
+    create_user = await client.post(
+        f"{PREFIX}/users",
+        headers=h,
+        json={
+            "email": "must-not-exist@scanr.local",
+            "password": "notcreated123",
+            "role": "admin",
+        },
+    )
+    assert create_user.status_code == 403, create_user.text
+    assert "users:manage" in create_user.json()["detail"]
+
+    # The alternate Authorization: Bearer sk_... transport must preserve the
+    # same principal type and scope restrictions as X-API-Key.
+    bearer_create = await client.post(
+        f"{PREFIX}/users",
+        headers={"Authorization": f"Bearer {key}"},
+        json={
+            "email": "must-not-exist-bearer@scanr.local",
+            "password": "notcreated123",
+            "role": "admin",
+        },
+    )
+    assert bearer_create.status_code == 403, bearer_create.text
+    assert "users:manage" in bearer_create.json()["detail"]
+
+    change_own_profile = await client.patch(
+        f"{PREFIX}/users/me", headers=h, json={"full_name": "scope bypass"}
+    )
+    assert change_own_profile.status_code == 403, change_own_profile.text
+    assert "Interactive user session" in change_own_profile.json()["detail"]
+
+    set_ai_config = await client.put(
+        f"{PREFIX}/ai/config", headers=h, json={"provider": "anthropic"}
+    )
+    assert set_ai_config.status_code == 403, set_ai_config.text
+    assert "ai:configure" in set_ai_config.json()["detail"]
+
+    set_integration = await client.put(
+        f"{PREFIX}/integrations/topdesk",
+        headers=h,
+        json={
+            "url": "https://example.topdesk.net",
+            "username": "blocked",
+            "password": "blocked",
+        },
+    )
+    assert set_integration.status_code == 403, set_integration.text
+    assert "integrations:manage" in set_integration.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_explicit_admin_scopes_allow_only_the_intended_admin_automation(
+    client, auth_headers
+):
+    key = await _create_key(
+        client,
+        auth_headers,
+        ["users:manage", "ai:configure"],
+        name="explicit-admin-automation",
+    )
+    h = {"X-API-Key": key}
+    email = f"scoped-{uuid.uuid4().hex}@scanr.local"
+
+    created = await client.post(
+        f"{PREFIX}/users",
+        headers=h,
+        json={"email": email, "password": "scopedpass123", "role": "analyst"},
+    )
+    assert created.status_code == 201, created.text
+
+    configured = await client.put(
+        f"{PREFIX}/ai/config", headers=h, json={"provider": "anthropic"}
+    )
+    assert configured.status_code == 204, configured.text
+
+    # It still cannot cross into another admin scope it was not granted.
+    integration = await client.get(f"{PREFIX}/integrations/topdesk", headers=h)
+    assert integration.status_code == 403, integration.text
+    assert "integrations:manage" in integration.json()["detail"]
+
+    deleted = await client.delete(
+        f"{PREFIX}/users/{created.json()['id']}", headers=h
+    )
+    assert deleted.status_code == 204, deleted.text
+
+
+@pytest.mark.asyncio
+async def test_admin_scan_key_cannot_launch_or_embed_ai_agent(client, auth_headers):
+    """scans:write does not implicitly grant LLM spend or autonomous tooling."""
+    key = await _create_key(
+        client, auth_headers, ["scans:write"], name="scan-without-ai-agent"
+    )
+    h = {"X-API-Key": key}
+
+    launch = await client.post(
+        f"{PREFIX}/ai/scans/{'0' * 36}/agent",
+        headers=h,
+        json={"mode": "guided"},
+    )
+    assert launch.status_code == 403, launch.text
+    assert "ai:agent" in launch.json()["detail"]
+
+    embedded = await client.post(
+        f"{PREFIX}/scans",
+        headers=h,
+        json={
+            "name": "scope-denied-auto-agent",
+            "targets": ["192.0.2.201"],
+            "ai_agent": {"enabled": True, "mode": "guided"},
+        },
+    )
+    assert embedded.status_code == 403, embedded.text
+    assert "ai:agent" in embedded.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_ai_agent_scope_does_not_imply_aggressive_capabilities(
+    client, auth_headers
+):
+    key = await _create_key(
+        client,
+        auth_headers,
+        ["scans:write", "ai:agent"],
+        name="agent-without-aggressive",
+    )
+    h = {"X-API-Key": key}
+    scan = await client.post(
+        f"{PREFIX}/scans",
+        headers=h,
+        json={"name": "aggressive-scope-boundary", "targets": ["192.0.2.202"]},
+    )
+    assert scan.status_code == 201, scan.text
+    scan_id = scan.json()["id"]
+
+    launch = await client.post(
+        f"{PREFIX}/ai/scans/{scan_id}/agent",
+        headers=h,
+        json={"mode": "autonomous", "aggressive": True, "allow_command_exec": True},
+    )
+    assert launch.status_code == 403, launch.text
+    assert "ai:aggressive" in launch.json()["detail"]
+
+    deleted = await client.delete(f"{PREFIX}/scans/{scan_id}", headers=h)
+    assert deleted.status_code == 204, deleted.text
+
+
+@pytest.mark.asyncio
+async def test_full_api_key_still_cannot_trigger_session_only_self_update(
+    client, auth_headers
+):
+    key = await _create_key(client, auth_headers, ["*"], name="full-but-not-session")
+    response = await client.post(
+        f"{PREFIX}/system/update", headers={"X-API-Key": key}
+    )
+    assert response.status_code == 403, response.text
+    assert "Interactive admin session" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_ai_generation_requires_findings_read_as_well_as_ai_scope(
+    client, auth_headers
+):
+    only_ai = await _create_key(
+        client, auth_headers, ["ai:generate"], name="ai-without-findings"
+    )
+    response = await client.post(
+        f"{PREFIX}/ai/scans/{'0' * 36}/summary",
+        headers={"X-API-Key": only_ai},
+        json={},
+    )
+    assert response.status_code == 403, response.text
+    assert "findings:read" in response.json()["detail"]
+
+    only_findings = await _create_key(
+        client, auth_headers, ["findings:read"], name="findings-without-ai"
+    )
+    response = await client.post(
+        f"{PREFIX}/ai/scans/{'0' * 36}/summary",
+        headers={"X-API-Key": only_findings},
+        json={},
+    )
+    assert response.status_code == 403, response.text
+    assert "ai:generate" in response.json()["detail"]
 
 
 @pytest.mark.asyncio

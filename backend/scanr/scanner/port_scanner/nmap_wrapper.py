@@ -29,10 +29,24 @@ class NmapWrapper:
         (number, protocol). OS fingerprint data comes from whichever scan
         produced it.
         """
-        if known_ports:
-            port_arg = "-p " + ",".join(str(p) for p in sorted(set(known_ports)))
+        if await context.target_is_excluded(ip):
+            await context.log.warn(
+                f"Skipping nmap for excluded target {ip}", phase="portscan", host=ip
+            )
+            return None
+
+        excluded_ports = context.excluded_ports()
+        if known_ports is not None:
+            allowed_known_ports = sorted({p for p in known_ports if p not in excluded_ports})
+            if not allowed_known_ports:
+                # The host was already observed during discovery, but there is no
+                # operator-approved port left for nmap to touch.
+                return {"address": ip, "target": ip, "hostname": None, "ports": []}
+            port_arg = "-p " + ",".join(str(p) for p in allowed_known_ports)
         else:
             port_arg = context.get_port_range()
+        if excluded_ports:
+            port_arg += " --exclude-ports " + ",".join(map(str, excluded_ports))
         port_cfg = context.port_scanning_config()
         perf_cfg = context.performance_config()
         service_detection = context.profile_json().get("enumeration", {}).get("service_detection", True)

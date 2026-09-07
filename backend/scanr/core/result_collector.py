@@ -139,13 +139,13 @@ class ResultCollector:
                     logger.debug("Webhook dispatch error: %s", exc)
 
     async def _find_prior_triage(self, host_id: str | None, data: "FindingData") -> "Finding | None":
-        """Look up the most recent triaged finding with the same canonical key.
+        """Look up prior triage with the same tenant-scoped finding key.
 
-        Triage only carries over for the SAME host (matched by IP) — a false
-        positive marked on one host must not bleed onto the same plugin+port
-        finding on a different host.
+        The key mirrors the stable SARIF identity fields: owner, host IP,
+        plugin, port and exact title. Analyst notes and false-positive decisions
+        must never cross users or distinct findings emitted by one plugin.
         """
-        if not host_id:
+        if not host_id or not self._user_id:
             return None
         host_ip = await self._host_ip(host_id)
         if not host_ip:
@@ -155,10 +155,13 @@ class ResultCollector:
             result = await self.db.execute(
                 select(Finding)
                 .join(Host, Finding.host_id == Host.id)
+                .join(Scan, Finding.scan_id == Scan.id)
                 .where(
+                    Scan.user_id == self._user_id,
                     Host.ip == host_ip,
                     Finding.plugin_id == data.plugin_id,
                     Finding.port_number == data.port_number,
+                    Finding.title == data.title,
                     Finding.scan_id != self.scan_id,
                     (Finding.false_positive == True)
                     | (Finding.remediation_status != "open")

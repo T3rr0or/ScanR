@@ -15,7 +15,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 HTTP_PORTS = [80, 443, 8080, 8443, 8000]
-DANGEROUS_METHODS = ["TRACE", "PUT", "DELETE", "CONNECT", "PATCH"]
+DANGEROUS_METHODS = ["TRACE", "CONNECT", "PUT", "PATCH", "DELETE"]
+STATE_CHANGING_METHODS = {"PUT", "PATCH", "DELETE"}
 
 
 class HttpMethodsPlugin(PluginBase):
@@ -63,7 +64,7 @@ class HttpMethodsPlugin(PluginBase):
 
     async def _probe_methods(self, context, url: str) -> list[str]:
         enabled = []
-        async with httpx.AsyncClient(verify=False, timeout=5.0, follow_redirects=True, **context.proxy_config()) as client:
+        async with httpx.AsyncClient(verify=False, timeout=5.0, follow_redirects=False, **context.proxy_config()) as client:
             # Prefer Allow header from OPTIONS — most reliable, no false positives from SPAs.
             allow_header: set[str] = set()
             try:
@@ -87,11 +88,25 @@ class HttpMethodsPlugin(PluginBase):
             except Exception:
                 is_spa = False
 
+            profile = context.profile_json()
+            allow_state_changing = profile.get("safety_level") == "aggressive"
             for method in DANGEROUS_METHODS:
+                # OPTIONS can reveal these methods without exercising them. When
+                # it does not, only an explicitly aggressive scan may send a
+                # state-changing request. This defense remains in the plugin even
+                # though registry impact gating normally keeps the whole plugin
+                # out of non-aggressive runs.
+                if method in STATE_CHANGING_METHODS and not allow_state_changing:
+                    continue
                 if method in ("PUT", "DELETE") and is_spa:
                     continue
                 try:
-                    resp = await client.request(method, url)
+                    probe_url = (
+                        url.rstrip("/") + random_path
+                        if method in STATE_CHANGING_METHODS
+                        else url
+                    )
+                    resp = await client.request(method, probe_url)
                     if 200 <= resp.status_code < 300:
                         enabled.append(method)
                 except Exception:

@@ -14,7 +14,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from scanr.config import get_settings
 from scanr.db import get_db
-from scanr.deps import get_current_user, require_admin, require_scope
+from scanr.deps import (
+    get_current_user,
+    require_admin_scope,
+    require_scope,
+    require_session_admin,
+)
 from scanr.models import Scan, ScanStatus
 from scanr.models.user import User
 
@@ -273,12 +278,16 @@ async def version_check(current_user: User = Depends(get_current_user)):
 
 
 @router.get("/update/status")
-async def update_status(current_user: User = Depends(require_admin)):
+async def update_status(
+    current_user: User = Depends(require_admin_scope("system:manage")),
+):
     return await _get_update_status()
 
 
 @router.delete("/update/status")
-async def reset_update_status(current_user: User = Depends(require_admin)):
+async def reset_update_status(
+    current_user: User = Depends(require_admin_scope("system:manage")),
+):
     """Clear stale update status back to idle."""
     await _set_update_status(_default_update_status())
     return {"state": "idle"}
@@ -287,7 +296,7 @@ async def reset_update_status(current_user: User = Depends(require_admin)):
 @router.post("/update")
 async def start_update(
     background_tasks: BackgroundTasks,
-    current_user: User = Depends(require_admin),
+    current_user: User = Depends(require_session_admin),
 ):
     if not settings.self_update_enabled:
         raise HTTPException(
@@ -326,7 +335,7 @@ async def cve_status(current_user: User = Depends(get_current_user)):
 @router.post("/cve-refresh")
 async def cve_refresh(
     background_tasks: BackgroundTasks,
-    current_user: User = Depends(require_admin),
+    current_user: User = Depends(require_admin_scope("system:manage")),
 ):
     """Trigger a background refresh of NVD feeds and CISA KEV catalog."""
     def _refresh():

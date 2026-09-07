@@ -16,7 +16,7 @@ from scanr.auth.password import (
     verify_password,
 )
 from scanr.db import get_db
-from scanr.deps import get_current_user, require_admin
+from scanr.deps import get_current_user, require_admin_scope, require_session_user
 from scanr.models.base import new_uuid
 from scanr.models.user import User, UserRole
 from scanr.schemas.user import UserRead
@@ -74,7 +74,7 @@ async def get_profile(current_user: User = Depends(get_current_user)):
 async def update_profile(
     body: UserUpdate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_session_user),
 ):
     if body.email and body.email != current_user.email:
         existing = await db.execute(select(User).where(User.email == body.email.lower().strip()))
@@ -93,7 +93,7 @@ async def change_password(
     body: PasswordChange,
     response: Response,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_session_user),
 ):
     if not verify_password(body.current_password, current_user.hashed_password):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Current password is incorrect")
@@ -128,7 +128,7 @@ async def change_password(
 @router.get("", response_model=list[UserRead])
 async def list_users(
     db: AsyncSession = Depends(get_db),
-    _admin: User = Depends(require_admin),
+    _admin: User = Depends(require_admin_scope("users:manage")),
 ):
     result = await db.execute(select(User).order_by(User.email))
     return result.scalars().all()
@@ -138,7 +138,7 @@ async def list_users(
 async def create_user(
     body: AdminUserCreate,
     db: AsyncSession = Depends(get_db),
-    _admin: User = Depends(require_admin),
+    _admin: User = Depends(require_admin_scope("users:manage")),
 ):
     email = body.email.lower().strip()
     existing = await db.execute(select(User).where(User.email == email))
@@ -164,7 +164,7 @@ async def update_user(
     user_id: str,
     body: AdminUserUpdate,
     db: AsyncSession = Depends(get_db),
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_admin_scope("users:manage")),
 ):
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
@@ -192,7 +192,7 @@ async def update_user(
 async def delete_user(
     user_id: str,
     db: AsyncSession = Depends(get_db),
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_admin_scope("users:manage")),
 ):
     from scanr.models.api_key import APIKey
     from scanr.models.credential import Credential

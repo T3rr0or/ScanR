@@ -132,7 +132,7 @@ class JwtMisconfigPlugin(PluginBase):
         """Try to get a JWT from common endpoints."""
         endpoints = ["", "api/", "api/v1/", "auth/", "login"]
         try:
-            async with httpx.AsyncClient(verify=False, timeout=5.0, follow_redirects=True) as client:
+            async with httpx.AsyncClient(verify=False, timeout=5.0, follow_redirects=False) as client:
                 for ep in endpoints:
                     try:
                         resp = await client.get(base_url + ep)

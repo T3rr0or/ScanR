@@ -11,7 +11,7 @@ from scanr.db import get_db
 from scanr.deps import require_scope
 from scanr.models.base import new_uuid
 from scanr.models.exclusion import Exclusion
-from scanr.models.scan import Scan
+from scanr.models.scan import Scan, ScanStatus
 from scanr.models.user import User
 
 router = APIRouter(prefix="/scans/{scan_id}/exclusions", tags=["exclusions"])
@@ -44,6 +44,32 @@ async def _own_scan(scan_id: str, user_id: str, db: AsyncSession) -> Scan:
     return scan
 
 
+async def _own_pending_scan_for_update(
+    scan_id: str, user_id: str, db: AsyncSession
+) -> Scan:
+    """Lock and return an owned draft scan whose exclusions may be changed.
+
+    The scan engine takes an immutable exclusion snapshot when work starts.
+    Locking the scan row serializes this check with the launch endpoint's
+    status update: either this transaction commits the exclusion first, or it
+    observes the launched status and rejects the change.
+    """
+    result = await db.execute(
+        select(Scan)
+        .where(Scan.id == scan_id, Scan.user_id == user_id)
+        .with_for_update()
+    )
+    scan = result.scalar_one_or_none()
+    if not scan:
+        raise HTTPException(status_code=404, detail="Scan not found")
+    if scan.status != ScanStatus.pending:
+        raise HTTPException(
+            status_code=409,
+            detail="Exclusions can only be modified while a scan is pending",
+        )
+    return scan
+
+
 @router.get("", response_model=list[ExclusionRead])
 async def list_exclusions(
     scan_id: str,
@@ -62,7 +88,7 @@ async def create_exclusion(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_scope("scans:write")),
 ):
-    await _own_scan(scan_id, current_user.id, db)
+    await _own_pending_scan_for_update(scan_id, current_user.id, db)
 
     if body.type not in VALID_TYPES:  # type: ignore[operator]
         raise HTTPException(status_code=422, detail=f"type must be one of: {', '.join(VALID_TYPES)}")
@@ -90,7 +116,7 @@ async def delete_exclusion(
     # Ownership must be checked against the scan, not just the exclusion's
     # scan_id: an exclusion is a scope guardrail ("never touch this host"), so
     # deleting someone else's would widen their scan's blast radius.
-    await _own_scan(scan_id, current_user.id, db)
+    await _own_pending_scan_for_update(scan_id, current_user.id, db)
     result = await db.execute(select(Exclusion).where(Exclusion.id == excl_id, Exclusion.scan_id == scan_id))
     excl = result.scalar_one_or_none()
     if not excl:

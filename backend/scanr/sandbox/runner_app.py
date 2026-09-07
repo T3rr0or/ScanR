@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import ipaddress
+import json
 import logging
 import os
 import re
@@ -33,8 +35,9 @@ logger = logging.getLogger("scanr.sandbox.runner")
 
 _TOKEN = os.environ.get("SANDBOX_TOKEN", "")
 _IMAGE = os.environ.get("SANDBOX_IMAGE", "scanr-sandbox:latest")
-_NETWORK = os.environ.get("SANDBOX_NETWORK", "scanr_sandbox")
-_PROXY = os.environ.get("SANDBOX_PROXY_URL", "")  # e.g. http://sandbox-proxy:8888
+_NETWORK_PREFIX = os.environ.get("SANDBOX_NETWORK_PREFIX", "scanr-sbx-net")
+_PROXY_IMAGE = os.environ.get("SANDBOX_PROXY_IMAGE", "scanr-sandbox-proxy:latest")
+_PROXY_PORT = int(os.environ.get("SANDBOX_PROXY_PORT", "8888"))
 _MEM = os.environ.get("SANDBOX_MEM", "1g")
 _CPUS = os.environ.get("SANDBOX_CPUS", "1.0")
 _PIDS = os.environ.get("SANDBOX_PIDS", "256")
@@ -50,6 +53,14 @@ _MAX_LIFETIME = int(os.environ.get("SANDBOX_MAX_LIFETIME", "3600"))
 _REAP_INTERVAL = 60
 _MAX_STDOUT = 200_000
 _MAX_STDERR = 20_000
+# Every resource created for a sandbox session carries this label.  The runner
+# deliberately does not try to recover live sessions after a restart: their
+# authorization state lived in this process, so adopting them would be unsafe.
+# Instead startup removes every labeled resource before accepting requests.
+_SESSION_LABEL = "scanr.sandbox.session=true"
+_RESOURCE_LABEL_KEY = "scanr.sandbox.resource"
+_EGRESS_LABEL_KEY = "scanr.sandbox.egress"
+_EGRESS_LABEL = f"{_EGRESS_LABEL_KEY}=true"
 # Ceiling on live session containers. Each one holds memory, CPU and PID budget
 # on the host, and sessions are only released by an explicit /session/stop or the
 # max-lifetime reaper — so without a cap a caller could spawn them until the host
@@ -70,10 +81,20 @@ _PATH = f"{_HOME}/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/
 @dataclass
 class Session:
     name: str
+    #: Dedicated Docker-internal network. A sandbox never shares an L2 segment
+    #: with another run, so it cannot discover or borrow that run's relay.
+    network: str
     created: float = field(default_factory=time.monotonic)
+    #: Per-run filtered package-mirror proxy. Sharing the old proxy network also
+    #: shared every target relay, which defeated per-run scope isolation.
+    proxy: str | None = None
     #: per-run SOCKS5 egress relay container, when target egress was requested.
     #: None means the sandbox has no path to any target (mirrors only).
     relay: str | None = None
+    #: Authorization is immutable for the lifetime of a run_id.  In particular,
+    #: a later request cannot silently reuse a relay created with a broader scope.
+    scope: tuple[str, ...] = ()
+    target_egress: bool = False
 
 
 # run_id -> Session. The agent loop is sequential per run, so no per-session lock
@@ -84,6 +105,10 @@ _LOCK = asyncio.Lock()
 
 @asynccontextmanager
 async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    # A process restart loses _SESSIONS, but the Docker daemon keeps containers
+    # and networks alive.  Never serve while those unaudited bridges still exist.
+    await _reconcile_orphaned_resources()
+    await _ensure_egress_network()
     task = asyncio.create_task(_reaper())
     try:
         yield
@@ -142,7 +167,32 @@ async def status(x_sandbox_token: str | None = Header(default=None)) -> dict:
     }
 
 
-def _relay_args(name: str, scope: list[str]) -> list[str]:
+def _network_args(name: str) -> list[str]:
+    """Create the isolated, internal-only L2 segment for one agent run."""
+    return [
+        "docker", "network", "create", "--internal",
+        "--label", _SESSION_LABEL,
+        "--label", f"{_RESOURCE_LABEL_KEY}=network",
+        name,
+    ]
+
+
+def _proxy_args(name: str, network: str) -> list[str]:
+    """Args for the run-local, allowlist-only package proxy."""
+    return [
+        "docker", "run", "-d", "--name", name,
+        "--label", _SESSION_LABEL,
+        "--label", f"{_RESOURCE_LABEL_KEY}=proxy",
+        "--network", network,
+        "--read-only",
+        "--cap-drop", "ALL",
+        "--security-opt", "no-new-privileges",
+        "--memory", "128m", "--pids-limit", "64",
+        _PROXY_IMAGE,
+    ]
+
+
+def _relay_args(name: str, scope: list[str], network: str) -> list[str]:
     """Args for the per-run SOCKS5 egress relay.
 
     Dual-homed on purpose: one leg on the internal sandbox network so the sandbox
@@ -155,7 +205,9 @@ def _relay_args(name: str, scope: list[str]) -> list[str]:
     """
     return [
         "docker", "run", "-d", "--name", name,
-        "--network", _NETWORK,
+        "--label", _SESSION_LABEL,
+        "--label", f"{_RESOURCE_LABEL_KEY}=relay",
+        "--network", network,
         "--user", "1000:1000",
         "--read-only",
         "--cap-drop", "ALL",
@@ -172,11 +224,19 @@ def _connect_relay_args(name: str) -> list[str]:
     return ["docker", "network", "connect", _EGRESS_NETWORK, name]
 
 
-def _create_args(name: str, scope: list[str], relay: str | None = None) -> list[str]:
+def _create_args(
+    name: str,
+    scope: list[str],
+    network: str,
+    relay: str | None = None,
+    proxy: str | None = None,
+) -> list[str]:
     """Args for the detached, hardened, keep-alive session container."""
     args = [
         "docker", "run", "-d", "--name", name,
-        "--network", _NETWORK,
+        "--label", _SESSION_LABEL,
+        "--label", f"{_RESOURCE_LABEL_KEY}=sandbox",
+        "--network", network,
         "--user", "1000:1000",
         "--read-only",
         "--tmpfs", "/tmp:rw,size=512m,mode=1777",
@@ -189,9 +249,10 @@ def _create_args(name: str, scope: list[str], relay: str | None = None) -> list[
         "--env", f"HOME={_HOME}",
         "--env", f"PATH={_PATH}",
     ]
-    if _PROXY:
+    if proxy:
+        proxy_url = f"http://{proxy}:{_PROXY_PORT}"
         for var in ("HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy"):
-            args += ["--env", f"{var}={_PROXY}"]
+            args += ["--env", f"{var}={proxy_url}"]
     if relay:
         # Point SOCKS-aware tooling at the per-run relay. Setting these is a
         # convenience, not a control: the container has no route to a target
@@ -202,10 +263,10 @@ def _create_args(name: str, scope: list[str], relay: str | None = None) -> list[
         args += ["--env", f"SCANR_SOCKS_PROXY={socks}"]
         args += ["--env", "SCANR_TARGET_EGRESS=1"]
     # Scope is informational inside the container only — it does not gate egress.
-    # Egress is enforced by the network: _NETWORK is a Docker `internal` network,
-    # so the container's only paths out are the mirror-allowlist proxy and (when
-    # requested) the scope-enforcing relay. Never gate on the command text or on
-    # this variable.
+    # Egress is enforced by a dedicated Docker `internal` network, so the
+    # container's only paths out are its own mirror-allowlist proxy and (when
+    # requested) its own scope-enforcing relay. Never gate on command text or on
+    # this informational variable.
     args += ["--env", f"SCANR_SCOPE={','.join(scope)}"]
     # Keep the container alive so we can exec into it repeatedly.
     args += [_IMAGE, "sleep", "infinity"]
@@ -224,6 +285,46 @@ def _exec_args(name: str, command: str, timeout: int) -> list[str]:
     ]
 
 
+async def _read_bounded(
+    stream: asyncio.StreamReader | None,
+    limit: int,
+) -> bytes:
+    """Drain a child pipe while retaining at most ``limit + 1`` bytes.
+
+    The extra byte is a truncation sentinel.  Continuing to drain after the cap
+    is essential: stopping reads would fill the pipe and deadlock the child.
+    """
+    if stream is None:
+        return b""
+    retained = bytearray()
+    ceiling = max(0, limit) + 1
+    while True:
+        chunk = await stream.read(65_536)
+        if not chunk:
+            break
+        remaining = ceiling - len(retained)
+        if remaining > 0:
+            retained.extend(chunk[:remaining])
+    return bytes(retained)
+
+
+async def _collect_process_output(
+    proc: asyncio.subprocess.Process,
+) -> tuple[bytes, bytes]:
+    """Wait for a process while concurrently draining both bounded pipes."""
+    stdout_task = asyncio.create_task(_read_bounded(proc.stdout, _MAX_STDOUT))
+    stderr_task = asyncio.create_task(_read_bounded(proc.stderr, _MAX_STDERR))
+    try:
+        await proc.wait()
+        streams = await asyncio.gather(stdout_task, stderr_task)
+        return streams[0], streams[1]
+    finally:
+        for task in (stdout_task, stderr_task):
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(stdout_task, stderr_task, return_exceptions=True)
+
+
 async def _run_docker(args: list[str], timeout: float) -> tuple[int, str, str, bool]:
     try:
         proc = await asyncio.create_subprocess_exec(
@@ -236,7 +337,7 @@ async def _run_docker(args: list[str], timeout: float) -> tuple[int, str, str, b
         logger.error("failed to spawn docker (%s): %s", args[:2], exc)
         return -1, "", f"failed to run docker: {exc}", False
     try:
-        out, err = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        out, err = await asyncio.wait_for(_collect_process_output(proc), timeout=timeout)
     except asyncio.TimeoutError:
         with contextlib.suppress(ProcessLookupError):
             proc.kill()
@@ -245,6 +346,150 @@ async def _run_docker(args: list[str], timeout: float) -> tuple[int, str, str, b
         return -1, "", "command timed out", True
     code = proc.returncode if proc.returncode is not None else -1
     return code, out.decode(errors="replace"), err.decode(errors="replace"), False
+
+
+async def _listed_resource_ids(kind: str) -> list[str]:
+    """List Docker object ids carrying ScanR's per-session ownership label."""
+    if kind == "container":
+        args = [
+            "docker", "container", "ls", "-aq", "--filter", f"label={_SESSION_LABEL}"
+        ]
+    elif kind == "network":
+        args = [
+            "docker", "network", "ls", "-q", "--filter", f"label={_SESSION_LABEL}"
+        ]
+    else:  # pragma: no cover - internal programming error
+        raise ValueError(f"unsupported Docker resource kind: {kind}")
+    code, out, err, timed_out = await _run_docker(args, timeout=30)
+    if timed_out or code != 0:
+        reason = "timed out" if timed_out else (err.strip() or f"exit {code}")
+        raise RuntimeError(f"could not list labeled sandbox {kind}s: {reason[:300]}")
+    return [line.strip() for line in out.splitlines() if line.strip()]
+
+
+async def _network_container_ids(network_id: str) -> list[str]:
+    """Return every container attached to a labeled per-session network.
+
+    This also handles upgrades from the previous implementation, which labeled
+    its networks but not the containers connected to them.
+    """
+    args = [
+        "docker", "network", "inspect", "--format", "{{json .Containers}}", network_id,
+    ]
+    code, out, err, timed_out = await _run_docker(args, timeout=30)
+    if timed_out or code != 0:
+        reason = "timed out" if timed_out else (err.strip() or f"exit {code}")
+        raise RuntimeError(
+            f"could not inspect orphaned sandbox network {network_id}: {reason[:300]}"
+        )
+    try:
+        containers = json.loads(out.strip() or "{}")
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(
+            f"Docker returned invalid membership data for sandbox network {network_id}"
+        ) from exc
+    if containers is None:
+        return []
+    if not isinstance(containers, dict):
+        raise RuntimeError(
+            f"Docker returned invalid membership data for sandbox network {network_id}"
+        )
+    return [str(container_id) for container_id in containers]
+
+
+async def _remove_orphan(kind: str, resource_id: str) -> None:
+    noun = "container" if kind == "container" else "network"
+    args = ["docker", noun, "rm"]
+    if noun == "container":
+        args.append("-f")
+    args.append(resource_id)
+    code, _out, err, timed_out = await _run_docker(args, timeout=30)
+    if timed_out or code != 0:
+        reason = "timed out" if timed_out else (err.strip() or f"exit {code}")
+        raise RuntimeError(
+            f"could not remove orphaned sandbox {noun} {resource_id}: {reason[:300]}"
+        )
+
+
+async def _reconcile_orphaned_resources() -> None:
+    """Delete resources whose in-process authorization state was lost.
+
+    Failure is fatal to application startup.  Continuing would leave old target
+    relays reachable while the session cap and lifetime reaper knew nothing about
+    them, which is a security failure rather than a degraded operating mode.
+    """
+    container_ids = set(await _listed_resource_ids("container"))
+    network_ids = await _listed_resource_ids("network")
+    for network_id in network_ids:
+        container_ids.update(await _network_container_ids(network_id))
+    for container_id in sorted(container_ids):
+        await _remove_orphan("container", container_id)
+    for network_id in network_ids:
+        await _remove_orphan("network", network_id)
+    _SESSIONS.clear()
+    if container_ids or network_ids:
+        logger.warning(
+            "removed %d orphaned sandbox container(s) and %d network(s) at startup",
+            len(container_ids), len(network_ids),
+        )
+
+
+async def _inspect_egress_network() -> dict | None:
+    args = [
+        "docker", "network", "inspect", "--format", "{{json .}}", _EGRESS_NETWORK,
+    ]
+    code, out, _err, timed_out = await _run_docker(args, timeout=30)
+    if timed_out or code != 0:
+        return None
+    try:
+        details = json.loads(out)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("Docker returned invalid egress-network metadata") from exc
+    if not isinstance(details, dict):
+        raise RuntimeError("Docker returned invalid egress-network metadata")
+    return details
+
+
+def _validate_egress_network(details: dict) -> None:
+    labels = details.get("Labels") or {}
+    valid = (
+        details.get("Driver") == "bridge"
+        and details.get("Internal") is False
+        and isinstance(labels, dict)
+        and labels.get(_EGRESS_LABEL_KEY) == "true"
+    )
+    if not valid:
+        raise RuntimeError(
+            f"Docker network {_EGRESS_NETWORK!r} exists but is not ScanR's labeled, "
+            "non-internal bridge"
+        )
+
+
+async def _ensure_egress_network() -> None:
+    """Ensure the shared outer leg exists before any per-run bridge uses it.
+
+    Compose does not materialize a named network when every service referring to
+    it is build-only.  Inspecting again after creation makes concurrent runner
+    startups safe: losing the create race is fine if the winner made the exact
+    labeled bridge we require.
+    """
+    details = await _inspect_egress_network()
+    if details is None:
+        await _run_docker(
+            [
+                "docker", "network", "create",
+                "--driver", "bridge",
+                "--label", _EGRESS_LABEL,
+                _EGRESS_NETWORK,
+            ],
+            timeout=30,
+        )
+        details = await _inspect_egress_network()
+        if details is None:
+            raise RuntimeError(
+                f"could not create or inspect sandbox egress network {_EGRESS_NETWORK!r}"
+            )
+    _validate_egress_network(details)
 
 
 async def _remove_container(name: str) -> None:
@@ -256,7 +501,34 @@ async def _remove_container(name: str) -> None:
         await asyncio.wait_for(proc.wait(), timeout=15)
 
 
-async def _start_relay(suffix: str, scope: list[str]) -> str:
+async def _remove_network(name: str) -> None:
+    with contextlib.suppress(Exception):
+        proc = await asyncio.create_subprocess_exec(
+            "docker", "network", "rm", name,
+            stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
+        )
+        await asyncio.wait_for(proc.wait(), timeout=15)
+
+
+async def _start_proxy(suffix: str, network: str) -> str | None:
+    """Start a package proxy private to this run and attach its egress leg."""
+    if not _PROXY_IMAGE:
+        return None
+    name = f"scanr-pxy-{suffix}"
+    code, _out, err, _to = await _run_docker(_proxy_args(name, network), timeout=120)
+    if code != 0:
+        await _remove_container(name)
+        raise HTTPException(status_code=502, detail=f"failed to start package proxy: {err[:300]}")
+    code, _out, err, _to = await _run_docker(_connect_relay_args(name), timeout=60)
+    if code != 0:
+        await _remove_container(name)
+        raise HTTPException(
+            status_code=502, detail=f"failed to attach package proxy to network: {err[:300]}"
+        )
+    return name
+
+
+async def _start_relay(suffix: str, scope: list[str], network: str) -> str:
     """Start the per-run egress relay and attach its egress leg.
 
     Fail-closed: any failure here raises, so _ensure_session tears down and the
@@ -264,7 +536,7 @@ async def _start_relay(suffix: str, scope: list[str]) -> str:
     egress when the relay that enforces the scope is not running.
     """
     name = f"scanr-rly-{suffix}"
-    code, _out, err, _to = await _run_docker(_relay_args(name, scope), timeout=120)
+    code, _out, err, _to = await _run_docker(_relay_args(name, scope, network), timeout=120)
     if code != 0:
         await _remove_container(name)
         raise HTTPException(status_code=502, detail=f"failed to start egress relay: {err[:300]}")
@@ -277,11 +549,44 @@ async def _start_relay(suffix: str, scope: list[str]) -> str:
     return name
 
 
+def _normalize_scope(scope: list[str]) -> tuple[str, ...]:
+    """Canonicalize the relay's address-only authorization set.
+
+    Rejecting malformed entries here also prevents a comma embedded in one list
+    item from becoming two allowlist entries when exported to the relay env var.
+    """
+    normalized: set[str] = set()
+    for entry in scope:
+        value = entry.strip()
+        if not value:
+            continue
+        try:
+            if "/" in value:
+                normalized.add(str(ipaddress.ip_network(value, strict=False)))
+            else:
+                normalized.add(str(ipaddress.ip_address(value)))
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=400,
+                detail="sandbox scope contains an invalid address or CIDR",
+            ) from exc
+    return tuple(sorted(normalized))
+
+
 async def _ensure_session(run_id: str, scope: list[str], target_egress: bool = False) -> str:
     """Return the container name for ``run_id``, creating it if needed."""
+    normalized_scope = _normalize_scope(scope)
     async with _LOCK:
         sess = _SESSIONS.get(run_id)
         if sess is not None:
+            if (
+                sess.scope != normalized_scope
+                or sess.target_egress != bool(target_egress)
+            ):
+                raise HTTPException(
+                    status_code=409,
+                    detail="run_id is already bound to a different sandbox scope or egress policy",
+                )
             return sess.name
         if len(_SESSIONS) >= _MAX_SESSIONS:
             raise HTTPException(
@@ -293,25 +598,44 @@ async def _ensure_session(run_id: str, scope: list[str], target_egress: bool = F
             )
         suffix = f"{run_id[:8]}-{uuid.uuid4().hex[:6]}"
         name = f"scanr-sbx-{suffix}"
-
+        network = f"{_NETWORK_PREFIX}-{suffix}"
+        proxy: str | None = None
         relay: str | None = None
-        if target_egress:
-            # No scope means nothing is authorized; starting a relay that would
-            # refuse every destination only invites confusion.
-            if not scope:
-                raise HTTPException(
-                    status_code=400,
-                    detail="target egress requested but the scan has no authorized scope",
-                )
-            relay = await _start_relay(suffix, scope)
-
-        code, _out, err, _to = await _run_docker(_create_args(name, scope, relay), timeout=120)
+        if target_egress and not normalized_scope:
+            raise HTTPException(
+                status_code=400,
+                detail="target egress requested but the scan has no authorized scope",
+            )
+        code, _out, err, _to = await _run_docker(_network_args(network), timeout=60)
         if code != 0:
+            await _remove_network(network)
+            raise HTTPException(status_code=502, detail=f"failed to create sandbox network: {err[:300]}")
+        try:
+            proxy = await _start_proxy(suffix, network)
+            if target_egress:
+                relay = await _start_relay(suffix, list(normalized_scope), network)
+
+            code, _out, err, _to = await _run_docker(
+                _create_args(name, list(normalized_scope), network, relay, proxy), timeout=120
+            )
+            if code != 0:
+                raise HTTPException(status_code=502, detail=f"failed to start sandbox: {err[:300]}")
+        except Exception:
             await _remove_container(name)
             if relay:
                 await _remove_container(relay)
-            raise HTTPException(status_code=502, detail=f"failed to start sandbox: {err[:300]}")
-        _SESSIONS[run_id] = Session(name=name, relay=relay)
+            if proxy:
+                await _remove_container(proxy)
+            await _remove_network(network)
+            raise
+        _SESSIONS[run_id] = Session(
+            name=name,
+            network=network,
+            proxy=proxy,
+            relay=relay,
+            scope=normalized_scope,
+            target_egress=bool(target_egress),
+        )
         return name
 
 
@@ -322,6 +646,9 @@ async def _destroy_session(sess: Session) -> None:
     await _remove_container(sess.name)
     if sess.relay:
         await _remove_container(sess.relay)
+    if sess.proxy:
+        await _remove_container(sess.proxy)
+    await _remove_network(sess.network)
 
 
 async def _reaper() -> None:
@@ -366,7 +693,7 @@ async def exec_command(body: ExecRequest, x_sandbox_token: str | None = Header(d
         "exit_code": code,
         "stdout": out[:_MAX_STDOUT],
         "stderr": err[:_MAX_STDERR],
-        "truncated": len(out) > _MAX_STDOUT,
+        "truncated": len(out) > _MAX_STDOUT or len(err) > _MAX_STDERR,
         "timed_out": timed_out,
     }
 

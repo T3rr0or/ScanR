@@ -179,28 +179,13 @@ async def _http_request(
     content_type: str,
     denylist: set[str] | None = None,
 ) -> str:
-    import httpx
-    from urllib.parse import urlparse
-
-    from scanr.utils.ip_utils import resolve_and_check_target
-
-    # DNS-rebinding guard: the dispatch scope check is string-based, so a
-    # hostname that passes the string check could still resolve to loopback /
-    # link-local (cloud metadata) / reserved infrastructure. Resolve before
-    # connecting and refuse if any resolved address is forbidden. The configured
-    # denylist is passed through so a name resolving to ScanR's own
-    # postgres/redis is caught here too, not just the built-in ranges.
-    # Residual TOCTOU: a hostile DNS server could rebind between this
-    # resolution and httpx's own connect-time resolution; closing that fully
-    # would require connecting to the pre-resolved IP.
-    host = urlparse(url).hostname or ""
-    if host and await resolve_and_check_target(host, denylist):
-        raise ToolError(
-            f"request target {host!r} resolves to a forbidden address (loopback / metadata / reserved)"
-        )
+    from scanr.utils.safe_http import pinned_async_client
 
     try:
-        async with httpx.AsyncClient(timeout=10.0, follow_redirects=False, verify=False) as client:
+        client = await pinned_async_client(
+            url, extra_denylist=denylist, timeout=10.0, verify=False
+        )
+        async with client:
             if method == "POST":
                 resp = await client.post(url, content=body_raw, headers={"content-type": content_type})
             else:

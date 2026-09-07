@@ -13,6 +13,7 @@ from scanr.deps import require_scope
 from scanr.models import Finding, FindingRetest, Host, Scan
 from scanr.models.base import new_uuid
 from scanr.models.user import User
+from scanr.reporting.csv_safety import spreadsheet_safe_cell
 from scanr.schemas import FindingBulkUpdate, FindingRead, FindingUpdate
 
 router = APIRouter(prefix="/findings", tags=["findings"])
@@ -175,7 +176,7 @@ async def export_findings(
                      "description", "remediation"])
     for row in rows:
         f, ip = row[0], row[1]
-        writer.writerow([
+        writer.writerow([spreadsheet_safe_cell(value) for value in [
             f.severity, f.title, ip or "", f.plugin_id, f.cvss_score or "",
             f"{f.port_number}/{f.protocol}" if f.port_number else "",
             "yes" if f.false_positive else "",
@@ -184,7 +185,7 @@ async def export_findings(
             (f.analyst_notes or "").replace("\n", " "),
             (f.description or "").replace("\n", " ")[:300],
             (f.remediation or "").replace("\n", " ")[:200],
-        ])
+        ]])
 
     return StreamingResponse(
         iter([buf.getvalue()]),

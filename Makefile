@@ -8,7 +8,7 @@ help:
 	@echo "  make dev-worker         Start Celery worker"
 	@echo "  make dev-frontend       Start Vite dev server"
 	@echo "  make test               Run pytest"
-	@echo "  make docker-build       Build all images (including the sandbox relay)"
+	@echo "  make docker-build       Build all images (including per-run sandbox guards)"
 	@echo "  make docker-up          Start all services via Docker Compose"
 	@echo "  make docker-down        Stop Docker Compose services"
 	@echo "  make nvd-update         Download/update NVD CVE feeds"
@@ -38,9 +38,9 @@ test:
 lint:
 	cd backend && ruff check scanr/ && mypy scanr/
 
-# The build-only profile carries sandbox-relay: the runner spawns it per agent
-# run via the Docker API, so compose never starts it — but the image still has to
-# exist locally, and a plain `docker compose build` skips profiled services.
+# The build-only profile carries the sandbox proxy and relay: the runner spawns
+# one of each per agent run via the Docker API, so compose never starts shared
+# instances — but both images still have to exist locally.
 docker-build:
 	docker compose --profile build-only build
 

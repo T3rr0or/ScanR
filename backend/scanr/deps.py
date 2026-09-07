@@ -23,10 +23,16 @@ ALL_SCOPES = frozenset({
     "reports:create",   # generate a new report (spawns a background job)
     "reports:export",   # legacy: implies reports:read + reports:create
     "ai:generate",      # spend LLM budget: summaries, narratives, FP testing
+    "ai:agent",         # launch/control guided or autonomous AI agent runs
+    "ai:aggressive",    # opt into exploitation, command execution and target egress
+    "ai:configure",     # administer provider keys, defaults and model selection
     "credentials:read",
     "credentials:write",
     "plugins:read",
     "plugins:write",
+    "users:manage",
+    "integrations:manage",
+    "system:manage",
     "agents:read",
     "agents:write",
     "api_keys:read",
@@ -39,6 +45,9 @@ ALL_SCOPES = frozenset({
     "host_tags:write",
     "*",
 })
+
+AUTH_METHOD_API_KEY = "api_key"
+AUTH_METHOD_SESSION = "session"
 
 # Scopes retained only so existing API keys keep working, mapped to the scopes
 # that replaced them. 'reports:export' used to gate report creation *and*
@@ -85,6 +94,46 @@ def _viewer_may_use(scope: str) -> bool:
     return scope.endswith(":read")
 
 
+def ensure_scopes(request: Request, user: User, *required_scopes: str) -> User:
+    """Enforce one or more API-key scopes and the caller's role.
+
+    This is the imperative counterpart to :func:`require_scopes`, used when a
+    permission is conditional on the validated request body (for example an AI
+    run that requests aggressive capabilities). Keeping both paths on this one
+    implementation prevents conditional checks from drifting away from the
+    normal FastAPI dependency semantics.
+    """
+    if not required_scopes:
+        raise ValueError("At least one required scope must be supplied")
+
+    scopes: list[str] = getattr(request.state, "scopes", [])
+    for required in required_scopes:
+        if not _has_scope(scopes, required):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"API key is missing required scope: '{required}'",
+            )
+
+    if user.role == "viewer" and any(
+        not _viewer_may_use(required) for required in required_scopes
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Your account is read-only (viewer role).",
+        )
+    return user
+
+
+def ensure_admin(user: User) -> User:
+    """Enforce the account-level administrator role."""
+    if user.role != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin required",
+        )
+    return user
+
+
 async def get_current_user(
     request: Request,
     credentials: HTTPAuthorizationCredentials | None = Depends(bearer),
@@ -102,6 +151,7 @@ async def get_current_user(
         user, scopes = await get_user_from_api_key(api_key_header, db)
         if user:
             request.state.scopes = scopes
+            request.state.auth_method = AUTH_METHOD_API_KEY
             return user
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API key")
 
@@ -110,6 +160,7 @@ async def get_current_user(
         user, scopes = await get_user_from_api_key(token, db)
         if user:
             request.state.scopes = scopes
+            request.state.auth_method = AUTH_METHOD_API_KEY
             return user
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API key")
 
@@ -132,14 +183,16 @@ async def get_current_user(
 
     # Interactive (JWT) sessions are granted the full scope set: scopes are an
     # API-key concept used to restrict automation tokens, not a per-role limit
-    # on the web UI. Role-based authorization (e.g. require_admin) is still
-    # enforced separately on top of this for privileged endpoints.
+    # on the web UI. Role-based authorization (require_admin_scope or the
+    # session-only require_session_admin) is still enforced separately for
+    # privileged endpoints.
     request.state.scopes = ["*"]
+    request.state.auth_method = AUTH_METHOD_SESSION
     return user
 
 
-def require_scope(scope: str):
-    """Return a FastAPI dependency that enforces a scope AND the caller's role.
+def require_scopes(*scopes: str):
+    """Return a dependency enforcing every scope and the caller's role.
 
     Two independent checks, because they constrain different things:
       * scope — restricts what an automation (API key) token may do. Interactive
@@ -148,23 +201,59 @@ def require_scope(scope: str):
         'viewer' is read-only, so a mutating scope is refused even though the
         JWT session nominally holds every scope.
     """
+    if not scopes:
+        raise ValueError("At least one required scope must be supplied")
+
     async def _check(request: Request, user: User = Depends(get_current_user)) -> User:
-        scopes: list[str] = getattr(request.state, "scopes", [])
-        if not _has_scope(scopes, scope):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"API key is missing required scope: '{scope}'",
-            )
-        if user.role == "viewer" and not _viewer_may_use(scope):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Your account is read-only (viewer role).",
-            )
-        return user
+        return ensure_scopes(request, user, *scopes)
+
     return _check
 
 
-async def require_admin(current_user: User = Depends(get_current_user)) -> User:
-    if current_user.role != "admin":
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin required")
+def require_scope(scope: str):
+    """Backward-compatible single-scope form of :func:`require_scopes`."""
+    return require_scopes(scope)
+
+
+def require_admin_scope(scope: str):
+    """Require both an explicit API-key scope and the administrator role.
+
+    JWT sessions hold ``*`` and therefore only need the role check. API keys,
+    including keys owned by an administrator, must have the named permission.
+    """
+    async def _check(request: Request, user: User = Depends(get_current_user)) -> User:
+        ensure_scopes(request, user, scope)
+        return ensure_admin(user)
+
+    return _check
+
+
+async def require_session_user(
+    request: Request,
+    current_user: User = Depends(get_current_user),
+) -> User:
+    """Require an interactive user session, never an API key."""
+    if getattr(request.state, "auth_method", None) != AUTH_METHOD_SESSION:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Interactive user session required",
+        )
+    return current_user
+
+
+async def require_session_admin(
+    request: Request,
+    current_user: User = Depends(get_current_user),
+) -> User:
+    """Require an interactive administrator session, never an API key.
+
+    Reserved for operations such as in-process self-update where even a broadly
+    scoped, long-lived automation credential is an inappropriate authority.
+    """
+    ensure_admin(current_user)
+    if getattr(request.state, "auth_method", None) != AUTH_METHOD_SESSION:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Interactive admin session required",
+        )
     return current_user

@@ -1,4 +1,4 @@
-"""Regression: triage carryforward must be per-host.
+"""Regression: triage carryforward must use a tenant-scoped stable key.
 
 ResultCollector._find_prior_triage previously matched prior findings by
 plugin_id+port only (via user scans), so a false-positive marked on host A
@@ -59,3 +59,62 @@ async def test_triage_does_not_cross_hosts(db):
 
     # No host at all → no carryforward.
     assert await collector._find_prior_triage(None, data) is None
+
+
+@pytest.mark.asyncio
+async def test_triage_does_not_cross_users_or_finding_titles(db):
+    user_a = User(id=new_uuid(), email="triage-a@example.com",
+                  hashed_password=hash_password("somepassword1"),
+                  role=UserRole.analyst, is_active=True)
+    user_b = User(id=new_uuid(), email="triage-b@example.com",
+                  hashed_password=hash_password("somepassword1"),
+                  role=UserRole.analyst, is_active=True)
+    db.add_all([user_a, user_b])
+    await db.flush()
+
+    scan_a = Scan(id=new_uuid(), name="tenant-a", user_id=user_a.id)
+    scan_b_old = Scan(id=new_uuid(), name="tenant-b-old", user_id=user_b.id)
+    scan_b_new = Scan(id=new_uuid(), name="tenant-b-new", user_id=user_b.id)
+    db.add_all([scan_a, scan_b_old, scan_b_new])
+    await db.flush()
+
+    host_a = Host(id=new_uuid(), scan_id=scan_a.id, ip="203.0.113.10")
+    host_b_old = Host(id=new_uuid(), scan_id=scan_b_old.id, ip="203.0.113.10")
+    host_b_new = Host(id=new_uuid(), scan_id=scan_b_new.id, ip="203.0.113.10")
+    db.add_all([host_a, host_b_old, host_b_new])
+    await db.flush()
+    db.add_all([
+        Finding(
+            id=new_uuid(), scan_id=scan_a.id, host_id=host_a.id,
+            plugin_id="web.headers", severity="low", title="Exact finding",
+            port_number=443, false_positive=True, analyst_notes="tenant A secret",
+        ),
+        Finding(
+            id=new_uuid(), scan_id=scan_b_old.id, host_id=host_b_old.id,
+            plugin_id="web.headers", severity="low", title="Different finding",
+            port_number=443, false_positive=True,
+        ),
+    ])
+    await db.commit()
+
+    collector = ResultCollector(scan_b_new.id, db, None, user_id=user_b.id)
+    exact = FindingData(
+        plugin_id="web.headers", severity=Severity.low,
+        title="Exact finding", port_number=443,
+    )
+    assert await collector._find_prior_triage(host_b_new.id, exact) is None
+
+    different = FindingData(
+        plugin_id="web.headers", severity=Severity.low,
+        title="Different finding", port_number=443,
+    )
+    prior = await collector._find_prior_triage(host_b_new.id, different)
+    assert prior is not None
+    assert prior.scan_id == scan_b_old.id
+
+
+@pytest.mark.asyncio
+async def test_triage_fails_closed_without_owner(db):
+    collector = ResultCollector("scan", db, None, user_id=None)
+    data = FindingData(plugin_id="p", severity=Severity.low, title="t")
+    assert await collector._find_prior_triage("host", data) is None

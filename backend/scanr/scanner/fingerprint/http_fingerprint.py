@@ -16,7 +16,7 @@ async def http_fingerprint(ip: str, port: int, use_ssl: bool = False) -> dict[st
     result: dict[str, Any] = {"url": url, "headers": {}, "server": None, "technologies": []}
 
     try:
-        async with httpx.AsyncClient(verify=False, timeout=TIMEOUT, follow_redirects=True) as client:
+        async with httpx.AsyncClient(verify=False, timeout=TIMEOUT, follow_redirects=False) as client:
             resp = await client.get(url)
             result["status_code"] = resp.status_code
             result["headers"] = dict(resp.headers)

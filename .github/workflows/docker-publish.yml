@@ -38,6 +38,9 @@ jobs:
           - name: scanr-worker
             context: ./backend
             file: Dockerfile
+          - name: scanr-browser
+            context: ./backend
+            file: sandbox/Dockerfile.browser
           - name: scanr-frontend
             context: ./frontend
             file: Dockerfile

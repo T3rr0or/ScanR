@@ -14,7 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from scanr.db import get_db
-from scanr.deps import require_admin, require_scope
+from scanr.deps import require_admin_scope, require_scope
 from scanr.integrations import topdesk
 from scanr.models import Finding, Host, Scan, TicketLink
 from scanr.models.user import User
@@ -36,7 +36,7 @@ class TopdeskConfigBody(BaseModel):
 @router.get("/topdesk")
 async def get_topdesk_config(
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_admin),
+    current_user: User = Depends(require_admin_scope("integrations:manage")),
 ):
     return await topdesk.config_status(db)
 
@@ -45,7 +45,7 @@ async def get_topdesk_config(
 async def set_topdesk_config(
     body: TopdeskConfigBody,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_admin),
+    current_user: User = Depends(require_admin_scope("integrations:manage")),
 ):
     status = await topdesk.config_status(db)
     if not body.password and not status["has_password"]:
@@ -71,7 +71,7 @@ async def set_topdesk_config(
 @router.delete("/topdesk", status_code=204)
 async def delete_topdesk_config(
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_admin),
+    current_user: User = Depends(require_admin_scope("integrations:manage")),
 ):
     await topdesk.clear_config(db)
     logger.info("TOPdesk integration cleared by %s", current_user.email)
@@ -80,7 +80,7 @@ async def delete_topdesk_config(
 @router.post("/topdesk/test")
 async def test_topdesk_config(
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_admin),
+    current_user: User = Depends(require_admin_scope("integrations:manage")),
 ):
     """Make one authenticated call, so setup is confirmed here rather than
     discovered the first time someone tries to file a ticket."""

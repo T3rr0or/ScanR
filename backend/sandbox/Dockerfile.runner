@@ -19,7 +19,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm /tmp/docker.tgz \
     && rm -rf /var/lib/apt/lists/*
 
-RUN pip install --no-cache-dir "fastapi>=0.115.0" "uvicorn[standard]>=0.30.0" "pydantic>=2.0.0"
+# Keep the Docker-socket trust boundary reproducible and minimal: install only
+# the runner's hash-locked runtime graph (not the full ScanR dependency set).
+COPY sandbox/requirements-runner.txt ./requirements-runner.txt
+RUN pip install --no-cache-dir --require-hashes -r requirements-runner.txt
 
 WORKDIR /app
 COPY scanr/sandbox/runner_app.py ./scanr/sandbox/runner_app.py

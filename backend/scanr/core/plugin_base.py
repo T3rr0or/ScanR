@@ -28,6 +28,22 @@ class Severity(str, Enum):
     info = "info"
 
 
+class PluginImpact(str, Enum):
+    """Network/target impact used by the engine and AI approval gates.
+
+    ``unknown`` is deliberately fail-closed: the registry refuses to expose a
+    plugin until its id appears in the reviewed central impact manifest.
+    """
+
+    unknown = "unknown"
+    passive = "passive"
+    active = "active"
+    intrusive = "intrusive"
+    auth_attempt = "auth_attempt"
+    exploit = "exploit"
+    state_changing = "state_changing"
+
+
 @dataclass
 class FindingData:
     """Data returned by a plugin check — converted to DB Finding by result_collector."""
@@ -56,6 +72,7 @@ class PluginBase(ABC):
     cvss_vector: str | None = None
     cve_ids: list[str] = []
     requires_auth: bool = False
+    impact: PluginImpact = PluginImpact.unknown
 
     # ── risk declaration ──────────────────────────────────────────────────────
     # Two levels, because two different gates ask two different questions.
@@ -81,7 +98,16 @@ class PluginBase(ABC):
     def risk_intrusive(cls) -> bool:
         """True when this check sends attack traffic, including anything that
         writes. Nothing that can modify a target is merely 'noisy'."""
-        return bool(cls.intrusive or cls.destructive)
+        return bool(
+            cls.intrusive
+            or cls.destructive
+            or cls.impact in {
+                PluginImpact.intrusive,
+                PluginImpact.auth_attempt,
+                PluginImpact.exploit,
+                PluginImpact.state_changing,
+            }
+        )
 
     @abstractmethod
     async def check(self, context: "ScanContext", host: "Host") -> list[FindingData]:

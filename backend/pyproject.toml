@@ -35,7 +35,7 @@ dependencies = [
   "dnspython>=2.6.0",
   # TLS analysis
   "pyOpenSSL>=24.0.0",
-  "cryptography>=42.0.0",
+  "cryptography>=50.0.0", # >=50.0.0: PYSEC-2026-3552
   # Scheduling
   "apscheduler>=3.10.0",
   # Reporting

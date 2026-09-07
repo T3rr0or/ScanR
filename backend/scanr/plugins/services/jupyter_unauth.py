@@ -36,7 +36,7 @@ class JupyterUnauthPlugin(PluginBase):
 
     async def _probe(self, context, ip: str, port: int) -> FindingData | None:
         try:
-            async with httpx.AsyncClient(verify=False, timeout=5.0, follow_redirects=True,
+            async with httpx.AsyncClient(verify=False, timeout=5.0, follow_redirects=False,
                 **context.proxy_config()
             ) as client:
                 # Check /api endpoint (Jupyter REST API)

@@ -114,9 +114,14 @@ async def _validate_schedule_inputs(
     """Apply the same profile schema, target denylist, and credential-ownership
     checks as scan creation."""
     from scanr.api.v1.scans import _validate_targets, _verify_credential_owner
+    from scanr.utils.ip_utils import validate_target_batch
 
     if not targets:
         raise HTTPException(status_code=400, detail="At least one target required")
+    try:
+        validate_target_batch(targets)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     await _validate_targets(targets)
     profile_data = _parse_schedule_profile(scan_profile_json)
     await _verify_credential_owner(profile_data.get("credential_id"), user_id, db)

@@ -1,22 +1,25 @@
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import json
 import socket
 import logging
 import time
+from dataclasses import dataclass, field
 
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from scanr.core.context import ScanContext
-from scanr.core.plugin_base import PluginCategory
+from scanr.core.plugin_base import PluginCategory, PluginImpact
 from scanr.core.plugin_manager import get_enabled_plugins
 from scanr.core.rate_limiter import RateLimiter
 from scanr.core.result_collector import ResultCollector
 from scanr.core.scan_logger import ScanLogger
-from scanr.models import Credential, Host, Plugin, Scan, ScanCredential, ScanStatus, Target
+from scanr.core.scope_policy import ExclusionPolicy
+from scanr.models import Credential, Exclusion, Host, Plugin, Scan, ScanCredential, ScanStatus, Target
 from scanr.models.base import new_uuid
 from scanr.plugins.ssl_tls._ports import is_tls_port_data
 from scanr.plugins.web._ports import is_web_port_data
@@ -126,18 +129,20 @@ def _filter_plugins_by_capabilities(plugins: list, profile: dict) -> list:
             continue
         if not enum["subdomain_enum"] and pid == "network.subdomain_enum":
             continue
-        # risk_intrusive() covers both declarations — a plugin that can modify the
-        # target is intrusive too. Previously this read a bare `intrusive`
-        # attribute that no plugin defined and PluginBase did not declare, so the
-        # whole clause collapsed to the "default_creds" substring and a "safe"
-        # scan still sent SQLi, XXE, SSTI and JNDI payloads at the target.
-        is_intrusive = plugin.risk_intrusive() if hasattr(plugin, "risk_intrusive") else False
-        if safety == "safe" and (is_intrusive or "default_creds" in pid):
+        impact = getattr(plugin, "impact", PluginImpact.unknown)
+        if not isinstance(impact, PluginImpact) or impact is PluginImpact.unknown:
+            logger.error("Refusing plugin %s with missing/invalid impact metadata", pid)
             continue
-        # State-changing checks require the operator's explicit aggressive
-        # choice. Balanced permits noisy detection payloads, not checks that can
-        # write files, mutate configuration, or affect other users' traffic.
-        if safety != "aggressive" and getattr(plugin, "destructive", False):
+        if safety == "safe" and impact not in {PluginImpact.passive, PluginImpact.active}:
+            continue
+        # Credential guesses, exploit probes and state-changing checks require
+        # an explicit aggressive scan. Balanced may send reviewed diagnostic
+        # payloads, but it cannot authenticate, exploit, or mutate a target.
+        if safety != "aggressive" and impact in {
+            PluginImpact.auth_attempt,
+            PluginImpact.exploit,
+            PluginImpact.state_changing,
+        }:
             continue
         allowed.append(plugin)
     return allowed
@@ -198,38 +203,95 @@ async def _resolve_common_subdomains(domains: list[str], limit: int) -> list[str
     return found
 
 
-async def _find_forbidden_resolved_targets(targets: list[str]) -> list[str]:
-    """Return targets whose direct or DNS-resolved IP hits the denylist.
+@dataclass
+class _ResolvedTargets:
+    targets: list[str] = field(default_factory=list)
+    hostname_by_ip: dict[str, str] = field(default_factory=dict)
+    forbidden: list[str] = field(default_factory=list)
+    excluded: list[str] = field(default_factory=list)
+    unresolved: list[str] = field(default_factory=list)
 
-    IP targets are checked as-is; hostname targets are resolved and every
-    returned address is checked. Unresolvable hostnames are skipped — host
-    discovery reports those later.
+
+async def _resolve_authorized_targets(
+    targets: list[str],
+    *,
+    denylist: set[str],
+    exclusions: ExclusionPolicy,
+) -> _ResolvedTargets:
+    """Resolve hostnames once, validate every answer, and return pinned IPs.
+
+    If one hostname has a mixture of allowed and forbidden answers the whole
+    scan is rejected; silently choosing only the allowed answer would make DNS
+    rebinding/load-balancing a scope bypass. Excluded answers omit that hostname
+    entirely, while unresolvable names are reported and never passed onward to a
+    scanner that could resolve them later.
     """
     loop = asyncio.get_running_loop()
     sem = asyncio.Semaphore(50)
-    forbidden: list[str] = []
+    result = _ResolvedTargets()
+    answers: dict[int, list[str] | None] = {}
 
-    async def check(target: str) -> None:
-        if is_valid_ip(target):
-            if is_forbidden_target(target):
-                forbidden.append(target)
-            return
+    async def resolve(index: int, target: str) -> None:
         async with sem:
             try:
-                infos = await asyncio.wait_for(loop.getaddrinfo(target, None), timeout=5.0)
+                infos = await asyncio.wait_for(
+                    loop.getaddrinfo(target, None, type=socket.SOCK_STREAM),
+                    timeout=5.0,
+                )
             except Exception:
+                answers[index] = None
                 return
+        resolved: list[str] = []
         for info in infos:
-            resolved_ip = info[4][0]
-            if is_forbidden_target(resolved_ip):
-                forbidden.append(f"{target} -> {resolved_ip}")
-                return
+            value = str(info[4][0])
+            try:
+                resolved_ip = str(ipaddress.ip_address(value))
+            except ValueError:
+                continue
+            if resolved_ip not in resolved:
+                resolved.append(resolved_ip)
+        answers[index] = resolved or None
 
-    await asyncio.gather(*(check(t) for t in targets))
-    return forbidden
+    hostname_items: list[tuple[int, str]] = []
+    for index, target in enumerate(targets):
+        if is_valid_ip(target):
+            answers[index] = [target]
+        else:
+            hostname_items.append((index, target))
+    await asyncio.gather(*(resolve(index, target) for index, target in hostname_items))
+
+    seen: set[str] = set()
+    for index, target in enumerate(targets):
+        resolved = answers.get(index)
+        if not resolved:
+            result.unresolved.append(target)
+            continue
+        forbidden_ips = [ip for ip in resolved if is_forbidden_target(ip, denylist)]
+        if is_forbidden_target(target, denylist) or forbidden_ips:
+            if forbidden_ips:
+                result.forbidden.extend(f"{target} -> {ip}" for ip in forbidden_ips)
+            else:
+                result.forbidden.append(target)
+            continue
+        if exclusions.excludes_hostname(target) or any(exclusions.excludes_ip(ip) for ip in resolved):
+            result.excluded.append(target)
+            continue
+        for ip in resolved:
+            if ip not in seen:
+                seen.add(ip)
+                result.targets.append(ip)
+            if not is_valid_ip(target):
+                result.hostname_by_ip.setdefault(ip, target.rstrip(".").lower())
+    return result
 
 
-def _hostname_for_host(input_target: str, host_data: dict) -> str | None:
+def _hostname_for_host(
+    input_target: str,
+    host_data: dict,
+    original_hostname: str | None = None,
+) -> str | None:
+    if original_hostname:
+        return original_hostname
     if not is_valid_ip(input_target):
         return input_target
     return host_data.get("hostname")
@@ -286,6 +348,20 @@ class ScanEngine:
         )
         targets = targets_result.scalars().all()
 
+        exclusions_result = await self.db.execute(
+            select(Exclusion).where(Exclusion.scan_id == self.scan_id)
+        )
+        try:
+            exclusion_policy = ExclusionPolicy.from_records(exclusions_result.scalars().all())
+        except ValueError as exc:
+            # An invalid persisted guardrail must fail closed. Silently ignoring a
+            # typo would widen scope beyond what the operator approved.
+            await scan_log.error(f"Invalid scan exclusion — refusing to scan: {exc}", phase="engine")
+            scan.status = ScanStatus.failed
+            scan.error_message = f"Invalid exclusion: {exc}"
+            await self.db.commit()
+            return
+
         perf = (_pj.get("performance") or {}) if isinstance(_pj, dict) else {}
         max_hosts = int(perf.get("max_concurrent_hosts") or _pj.get("max_concurrent") or 20)
         max_plugins = int(perf.get("max_concurrent_plugins") or 20)
@@ -300,6 +376,7 @@ class ScanEngine:
             log=scan_log,
             stealth_mode=_pj.get("stealth", False),
             rate_limiter=rate_limiter,
+            exclusion_policy=exclusion_policy,
         )
 
         # Decrypt credentials if provided. Scans can have either one legacy
@@ -370,12 +447,30 @@ class ScanEngine:
         plugins = get_enabled_plugins(enabled_ids)
 
         # Expand all targets to individual IPs/hostnames
-        from scanr.utils.ip_utils import expand_targets
+        from scanr.utils.ip_utils import expand_target_batch
 
-        all_targets: list[str] = []
         raw_targets = [target.value for target in targets]
-        for target in targets:
-            all_targets.extend(expand_targets(target.value))
+        try:
+            all_targets = expand_target_batch(raw_targets)
+        except ValueError as exc:
+            # Defense in depth for scheduled/legacy/directly-created rows that did
+            # not pass the current request schema.
+            await scan_log.error(f"Invalid or oversized target set: {exc}", phase="engine")
+            scan.status = ScanStatus.failed
+            scan.error_message = f"Invalid target set: {exc}"
+            await self.db.commit()
+            return
+
+        # Literal pass only. Hostnames are resolved exactly once after optional
+        # domain expansion, then replaced with the authorized numeric answers.
+        all_targets, excluded_targets = await exclusion_policy.filter_targets(
+            all_targets, resolve=False
+        )
+        if excluded_targets:
+            await scan_log.info(
+                f"Excluded {len(excluded_targets)} target(s) before discovery",
+                phase="engine",
+            )
 
         _pj["target_type"] = _target_type(_pj, raw_targets, all_targets)
         if _pj.get("target_type") == "domain":
@@ -402,14 +497,6 @@ class ScanEngine:
 
         await scan_log.info(f"Loaded {len(plugins)} plugins (profile filter: {profile_filter or '*'})", phase="engine")
 
-        perf_max_hosts = perf.get("max_hosts")
-        if perf_max_hosts and len(all_targets) > int(perf_max_hosts):
-            all_targets = all_targets[: int(perf_max_hosts)]
-            await scan_log.warn(
-                f"Target list capped at {perf_max_hosts} host(s) by performance settings",
-                phase="engine",
-            )
-
         domain_mode = _is_domain_mode(_pj, all_targets)
         if domain_mode:
             if _pj.get("port_range") in {"1-65535", "-p-", "-p -"} and not _pj.get("allow_full_port_scan", False):
@@ -421,14 +508,19 @@ class ScanEngine:
                 )
             all_targets = await _expand_domain_targets(all_targets, scan_log, _pj)
 
-        # Defense-in-depth: re-validate targets at execution time. The API checks
-        # the denylist when a scan is created, but DNS answers can change (or be
-        # attacker-controlled) after validation, and non-creation paths (target
-        # edits, schedules) may not re-validate. Resolve every hostname target and
-        # refuse to run if any resolved IP is forbidden.
-        forbidden = await _find_forbidden_resolved_targets(all_targets)
-        if forbidden:
-            sample = ", ".join(forbidden[:10])
+        # Resolve exactly once at the final scope boundary, validate every answer
+        # against scanner infrastructure and exclusions, and pass only numeric
+        # targets to discovery/scanner sinks. That closes the validation/use DNS
+        # rebinding window.
+        from scanr.config import get_settings
+
+        resolved = await _resolve_authorized_targets(
+            all_targets,
+            denylist=get_settings().scan_denylist,
+            exclusions=exclusion_policy,
+        )
+        if resolved.forbidden:
+            sample = ", ".join(resolved.forbidden[:10])
             await scan_log.error(
                 f"Target(s) resolve to forbidden address(es): {sample} — aborting scan",
                 phase="engine",
@@ -437,9 +529,38 @@ class ScanEngine:
             scan.error_message = f"Forbidden target resolved: {sample}"
             await self.db.commit()
             return
+        if resolved.excluded:
+            await scan_log.info(
+                f"Excluded {len(resolved.excluded)} target(s) after DNS resolution",
+                phase="recon",
+            )
+        if resolved.unresolved:
+            await scan_log.warn(
+                f"Skipped {len(resolved.unresolved)} unresolvable target(s); "
+                "they were not passed to scanners",
+                phase="recon",
+            )
+        all_targets = resolved.targets
+        context.target_hostnames = resolved.hostname_by_ip
+
+        perf_max_hosts = perf.get("max_hosts")
+        if perf_max_hosts and len(all_targets) > int(perf_max_hosts):
+            all_targets = all_targets[: int(perf_max_hosts)]
+            context.target_hostnames = {
+                ip: hostname for ip, hostname in context.target_hostnames.items()
+                if ip in set(all_targets)
+            }
+            await scan_log.warn(
+                f"Target list capped at {perf_max_hosts} host(s) by performance settings",
+                phase="engine",
+            )
 
         scan.hosts_total = len(all_targets)
         await self.db.commit()
+
+        if not all_targets:
+            await scan_log.info("All targets were excluded; no network traffic was sent", phase="engine")
+            return
 
         await scan_log.phase_start(
             "discovery",
@@ -456,6 +577,7 @@ class ScanEngine:
         # Discovery port data is NOT reused for the port-scan phase: discovery only
         # probed common ports, so the port-scan phase runs a full-range masscan
         # below — but only on the (much smaller) set of live hosts.
+        from scanr.scanner.discovery.ping_sweep import PingSweep
         from scanr.scanner.port_scanner.masscan_wrapper import MasscanWrapper
         port_scan_cfg = context.port_scanning_config()
         scanners = port_scan_cfg.get("scanners", ["tcp_connect"])
@@ -465,9 +587,14 @@ class ScanEngine:
         # all_are_ips encodes domain_mode=False already so no need to repeat below.
         all_are_ips = not domain_mode and all(is_valid_ip(t) for t in all_targets)
 
+        discovery_probe_ports = [
+            p for p in getattr(PingSweep, "PROBE_PORTS_FAST", [])
+            if not context.port_is_excluded(p)
+        ]
         use_masscan_discovery = (
             len(all_targets) > 1024
             and all_are_ips
+            and bool(discovery_probe_ports)
             and MasscanWrapper.is_available()
             and not _pj.get("disable_masscan", False)
             and ("tcp_connect" in scanners or "syn" in scanners)
@@ -481,7 +608,7 @@ class ScanEngine:
             )
             ms = MasscanWrapper()
             # Discovery: scan only common probe ports to find live hosts quickly
-            discovery_ports = ",".join(str(p) for p in PingSweep.PROBE_PORTS_FAST) if hasattr(PingSweep, 'PROBE_PORTS_FAST') else "80,443,22,445,3389,8080,8443,25,53,21,23,3306,5432,6379,8888"
+            discovery_ports = ",".join(str(p) for p in discovery_probe_ports)
             discovery_results = await ms.scan(all_targets, discovery_ports, context)
             masscan_ran = True
             live_targets = list(discovery_results.keys())
@@ -495,6 +622,17 @@ class ScanEngine:
             from scanr.scanner.discovery.ping_sweep import PingSweep
             sweeper = PingSweep()
             live_targets = await sweeper.discover(all_targets, context)
+
+        # Re-check the immutable persisted policy before the bulk/per-host
+        # port-scan connection boundary. Targets are numeric by this point.
+        live_targets, runtime_excluded = await exclusion_policy.filter_targets(
+            live_targets, resolve=False
+        )
+        if runtime_excluded:
+            await scan_log.warn(
+                f"Skipped {len(runtime_excluded)} target(s) excluded at port-scan boundary",
+                phase="portscan",
+            )
 
         scan.hosts_up = len(live_targets)
         await self.db.commit()
@@ -516,6 +654,17 @@ class ScanEngine:
                 _pj.setdefault("port_scanning", {})["firewall_strategy"] = "skip_ping"
                 context.scan.profile_json = json.dumps(_pj)
                 live_targets = all_targets[:]
+                # Aggressive fallback must not re-introduce anything removed by
+                # discovery-boundary exclusions.
+                live_targets, fallback_excluded = await exclusion_policy.filter_targets(
+                    live_targets, resolve=False
+                )
+                if fallback_excluded:
+                    await scan_log.warn(
+                        f"Aggressive fallback retained scope exclusions for "
+                        f"{len(fallback_excluded)} target(s)",
+                        phase="engine",
+                    )
             else:
                 await scan_log.warn("No live hosts found — scan complete", phase="engine")
                 return
@@ -573,9 +722,9 @@ class ScanEngine:
             for ip in live_targets
         ]
         results = await asyncio.gather(*tasks, return_exceptions=True)
-        for exc in results:
-            if isinstance(exc, Exception) and not isinstance(exc, asyncio.CancelledError):
-                logger.error("Unhandled host scan error: %s", exc, exc_info=exc)
+        for host_result in results:
+            if isinstance(host_result, Exception) and not isinstance(host_result, asyncio.CancelledError):
+                logger.error("Unhandled host scan error: %s", host_result, exc_info=host_result)
 
         await self.db.commit()
 
@@ -617,7 +766,7 @@ class ScanEngine:
                     select(Host)
                     .where(Host.scan_id == self.scan_id)
                 )
-                all_hosts = all_hosts_result.scalars().all()
+                all_hosts = list(all_hosts_result.scalars().all())
                 await run_credential_chain(context, all_hosts, collector)
                 await self.db.commit()
             except Exception as exc:
@@ -664,12 +813,12 @@ class ScanEngine:
             )
 
     async def _run_ai_phase(self, scan, scan_log: ScanLogger) -> None:
-        """Let the opted-in AI agent steer the scan once enumeration is done.
+        """Queue opted-in AI steering on the isolated AI worker.
 
-        Runs the agent inline (its own DB session) with the discovered hosts,
-        services, and findings already in place, so it can perform high-value
-        follow-up checks (targeted plugins / port scans) that become part of the
-        scan. Best-effort: a failure here never fails the scan.
+        The scan worker waits on database state, never imports or executes the
+        model/tool loop. This preserves the existing lifecycle (agent findings
+        land before scan completion/webhooks) without giving the network scanner
+        process provider/sandbox/browser execution responsibilities.
         """
         if not getattr(scan, "ai_agent_enabled", False):
             return
@@ -685,15 +834,58 @@ class ScanEngine:
                 "concrete next steps."
             )
             objective = (scan.ai_agent_objective or "").strip() or default_obj
-            run = await build_scan_agent_run(self.db, scan, objective=objective)
+            # Provider credentials belong exclusively to the AI worker. The scan
+            # worker persists and enqueues intent without resolving secrets that
+            # may only exist in the AI worker's environment.
+            run = await build_scan_agent_run(
+                self.db,
+                scan,
+                objective=objective,
+                validate_api_key=False,
+            )
             if run is None:
                 return
 
             await scan_log.phase_start("ai_agent", f"AI agent steering the scan ({run.mode})")
-            from scanr.tasks.agent_tasks import _run_agent_async
+            from scanr.config import get_settings
+            from scanr.models import AiAgentRun
+            from scanr.tasks.agent_tasks import run_ai_agent_task
 
-            await _run_agent_async(run.id)
-            await scan_log.phase_done("ai_agent", "AI agent phase complete")
+            run_ai_agent_task.apply_async(args=[run.id], queue="ai")
+
+            deadline = time.monotonic() + max(get_settings().ai_agent_heartbeat_timeout, 60)
+            terminal = {"completed", "failed", "cancelled"}
+            status = "queued"
+            error: str | None = None
+            while time.monotonic() < deadline:
+                await asyncio.sleep(2.0)
+                row = (
+                    await self.db.execute(
+                        select(AiAgentRun.status, AiAgentRun.error).where(AiAgentRun.id == run.id)
+                    )
+                ).first()
+                if row is None:
+                    status, error = "failed", "agent run disappeared"
+                    break
+                status, error = row
+                if status in terminal:
+                    break
+
+            if status == "completed":
+                await scan_log.phase_done("ai_agent", "AI agent phase complete")
+            elif status in {"failed", "cancelled"}:
+                await scan_log.warn(
+                    f"AI agent phase ended as {status}" + (f": {error}" if error else ""),
+                    phase="ai_agent",
+                )
+            else:
+                # The task remains owned by the AI queue and its watchdog. Do not
+                # hold a scan-worker slot indefinitely if that queue is absent.
+                await scan_log.warn(
+                    "AI agent phase is still running after the wait deadline; "
+                    "scan completion will continue independently",
+                    phase="ai_agent",
+                )
         except Exception as exc:  # noqa: BLE001 - never let AI break the scan
             logger.error("AI steering phase failed: %s", exc, exc_info=True)
             await scan_log.warn(f"AI agent phase failed: {exc}", phase="ai_agent")
@@ -711,6 +903,18 @@ class ScanEngine:
             context.check_cancelled()
             await context.wait_if_paused()  # blocks until resumed or cancelled
             context.check_cancelled()
+
+            original_hostname = context.original_hostname(ip)
+            if await context.target_is_excluded(ip) or context.host_is_excluded(ip, original_hostname):
+                await context.log.warn(
+                    f"Skipping {ip}: target is excluded at connection boundary",
+                    phase="portscan",
+                    host=ip,
+                )
+                return
+
+            if known_ports is not None:
+                known_ports = [p for p in known_ports if not context.port_is_excluded(p)]
 
             await context.log.info(f"Scanning {ip} ...", phase="portscan", host=ip)
 
@@ -735,6 +939,25 @@ class ScanEngine:
                 else:
                     await context.log.warn(f"{ip} — no response from nmap", phase="portscan", host=ip)
                     return
+
+            actual_address = host_data.get("address") or ip
+            if context.host_is_excluded(
+                actual_address, original_hostname or host_data.get("hostname")
+            ):
+                await context.log.warn(
+                    f"Skipping {ip}: scanner resolved an excluded host ({actual_address})",
+                    phase="portscan",
+                    host=ip,
+                )
+                return
+
+            # A scanner/parser regression must not re-introduce ports that the
+            # operator excluded. Filtering here also prevents plugin dispatch on
+            # those ports even if an external scanner reports them anyway.
+            host_data["ports"] = [
+                p for p in host_data.get("ports", [])
+                if not context.port_is_excluded(int(p["number"]))
+            ]
 
             open_ports = [p for p in host_data.get("ports", []) if p["state"] == "open"]
             # nmap returned 0 open ports but masscan confirmed some — merge masscan ports
@@ -769,7 +992,7 @@ class ScanEngine:
                             id=new_uuid(),
                             scan_id=self.scan_id,
                             ip=host_data.get("address") or ip,
-                            hostname=_hostname_for_host(ip, host_data),
+                            hostname=_hostname_for_host(ip, host_data, original_hostname),
                             mac_address=host_data.get("mac"),
                             os_name=host_data.get("os_name"),
                             os_accuracy=host_data.get("os_accuracy"),
@@ -863,6 +1086,16 @@ class ScanEngine:
     async def _run_plugin(self, plugin, context, host, host_data, collector, sem):
         async with sem:
             context.check_cancelled()
+            if context.host_is_excluded(host.ip, host.hostname):
+                await context.log.warn(
+                    f"Skipping plugin {plugin.id}: {host.ip} is excluded",
+                    phase="plugin",
+                    host=host.ip,
+                    plugin=plugin.id,
+                )
+                return
+            if plugin.ports and all(context.port_is_excluded(port) for port in plugin.ports):
+                return
             started = time.perf_counter()
             await context.log.debug(
                 f"{host.ip} — plugin: {plugin.name}",

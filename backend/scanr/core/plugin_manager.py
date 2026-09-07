@@ -7,7 +7,8 @@ import pkgutil
 from typing import TYPE_CHECKING
 
 import scanr.plugins as plugins_pkg
-from scanr.core.plugin_base import PluginBase
+from scanr.core.plugin_base import PluginBase, PluginImpact
+from scanr.core.plugin_impact import impact_for_plugin
 
 if TYPE_CHECKING:
     pass
@@ -15,6 +16,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _registry: dict[str, type[PluginBase]] = {}
+_registration_errors: dict[str, str] = {}
 
 
 def _discover_plugins() -> None:
@@ -41,6 +43,22 @@ def _discover_plugins() -> None:
                 and hasattr(cls, "id")
                 and cls.id
             ):
+                impact = impact_for_plugin(cls.id)
+                if impact is None or impact is PluginImpact.unknown:
+                    message = "missing reviewed impact metadata"
+                    _registration_errors[cls.id] = message
+                    logger.error("Refusing to register plugin %s: %s", cls.id, message)
+                    continue
+                # Keep the legacy booleans synchronized for AI callers while all
+                # gates migrate to the richer mandatory impact enum.
+                cls.impact = impact
+                cls.intrusive = impact in {
+                    PluginImpact.intrusive,
+                    PluginImpact.auth_attempt,
+                    PluginImpact.exploit,
+                    PluginImpact.state_changing,
+                }
+                cls.destructive = impact is PluginImpact.state_changing
                 _registry[cls.id] = cls
                 logger.debug("Registered plugin: %s", cls.id)
 
@@ -67,3 +85,9 @@ def get_all_plugin_classes() -> dict[str, type[PluginBase]]:
     """Return discovered plugin classes keyed by plugin id."""
     _discover_plugins()
     return dict(_registry)
+
+
+def get_plugin_registration_errors() -> dict[str, str]:
+    """Expose fail-closed registration failures for health checks/tests."""
+    _discover_plugins()
+    return dict(_registration_errors)

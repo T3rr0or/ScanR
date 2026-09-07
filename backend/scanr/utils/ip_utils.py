@@ -12,6 +12,13 @@ logger = logging.getLogger(__name__)
 
 _HOSTNAME_LABEL_RE = re.compile(r"^[a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?$")
 
+# These are authorization/availability boundaries, not performance hints.  Keep
+# them in the parser used by every scan path so a future API or scheduled scan
+# cannot bypass them by forgetting a route-level check.
+MAX_RAW_TARGETS = 64
+MAX_EXPANDED_TARGETS = 65_536
+MAX_EXPLICIT_RANGE_SIZE = 65_536
+
 
 def canonical_ip(value: str) -> str | None:
     """Return ``value`` as a canonical IP string, or None if it is not an IP.
@@ -49,6 +56,97 @@ def is_valid_hostname(value: str) -> bool:
     return all(_HOSTNAME_LABEL_RE.match(label) for label in v.split("."))
 
 
+def _parse_explicit_range(value: str) -> tuple[ipaddress.IPv4Address, ipaddress.IPv4Address] | None:
+    """Parse ScanR's two supported IPv4 range forms without expanding them."""
+    range_match = re.fullmatch(r"([\d.]+)-([\d.]+)", value)
+    if not range_match:
+        return None
+    start_str, end_str = range_match.groups()
+    try:
+        start = ipaddress.IPv4Address(start_str)
+        if "." not in end_str:
+            base = ".".join(start_str.split(".")[:3])
+            end_str = f"{base}.{end_str}"
+        end = ipaddress.IPv4Address(end_str)
+    except ipaddress.AddressValueError as exc:
+        raise ValueError(f"Invalid target range: {value}") from exc
+    if int(end) < int(start):
+        raise ValueError(f"Target range ends before it starts: {value}")
+    return start, end
+
+
+def target_expansion_size(value: str) -> int:
+    """Return a safe upper bound for a target's expanded address count.
+
+    This deliberately does no iteration, so it is safe to call on hostile
+    input before ``list(expand_targets(...))``.
+    """
+    value = value.strip()
+    if "/" in value:
+        net = ipaddress.ip_network(value, strict=False)
+        if net.num_addresses > MAX_EXPANDED_TARGETS:
+            raise ValueError(
+                f"CIDR block too large: {value} "
+                f"({net.num_addresses} addresses, max {MAX_EXPANDED_TARGETS})"
+            )
+        return net.num_addresses
+
+    parsed_range = _parse_explicit_range(value)
+    if parsed_range is not None:
+        start, end = parsed_range
+        size = int(end) - int(start) + 1
+        if size > MAX_EXPLICIT_RANGE_SIZE:
+            raise ValueError(
+                f"Target range too large: {value} "
+                f"({size} addresses, max {MAX_EXPLICIT_RANGE_SIZE})"
+            )
+        return size
+
+    canon = canonical_ip(value)
+    if canon is not None:
+        return 1
+    if not is_valid_hostname(value):
+        raise ValueError(f"Invalid target: {value!r}")
+    return 1
+
+
+def validate_target_batch(
+    values: list[str],
+    *,
+    max_raw_targets: int = MAX_RAW_TARGETS,
+    max_expanded_targets: int = MAX_EXPANDED_TARGETS,
+) -> int:
+    """Validate raw and aggregate expansion limits without materialising them."""
+    if not values:
+        raise ValueError("At least one target is required")
+    if len(values) > max_raw_targets:
+        raise ValueError(f"Too many targets ({len(values)} supplied, max {max_raw_targets})")
+
+    total = 0
+    for value in values:
+        total += target_expansion_size(value)
+        if total > max_expanded_targets:
+            raise ValueError(
+                f"Targets expand to more than {max_expanded_targets} addresses"
+            )
+    return total
+
+
+def expand_target_batch(
+    values: list[str],
+    *,
+    max_raw_targets: int = MAX_RAW_TARGETS,
+    max_expanded_targets: int = MAX_EXPANDED_TARGETS,
+) -> list[str]:
+    """Validate a complete target set, then expand it within the hard bound."""
+    validate_target_batch(
+        values,
+        max_raw_targets=max_raw_targets,
+        max_expanded_targets=max_expanded_targets,
+    )
+    return [target for value in values for target in expand_targets(value)]
+
+
 def expand_targets(value: str) -> Iterator[str]:
     """Yield individual IP addresses from a target specification."""
     value = value.strip()
@@ -56,31 +154,28 @@ def expand_targets(value: str) -> Iterator[str]:
     # CIDR notation
     if "/" in value:
         net = ipaddress.ip_network(value, strict=False)
-        if net.num_addresses > 65536:  # reject anything larger than /16
-            raise ValueError(f"CIDR block too large: {value} ({net.num_addresses} addresses, max /16)")
+        if net.num_addresses > MAX_EXPANDED_TARGETS:  # reject anything larger than /16
+            raise ValueError(
+                f"CIDR block too large: {value} "
+                f"({net.num_addresses} addresses, max {MAX_EXPANDED_TARGETS})"
+            )
         for host in net.hosts():
             yield str(host)
         return
 
     # Range notation: 10.0.0.1-10.0.0.50 or 10.0.0.1-50
-    range_match = re.match(r"^([\d.]+)-([\d.]+)$", value)
-    if range_match:
-        start_str, end_str = range_match.groups()
-        try:
-            start = ipaddress.IPv4Address(start_str)
-            # Support short form: 10.0.0.1-50
-            if "." not in end_str:
-                base = ".".join(start_str.split(".")[:3])
-                end_str = f"{base}.{end_str}"
-            end = ipaddress.IPv4Address(end_str)
-            current = int(start)
-            stop = int(end)
-            while current <= stop:
-                yield str(ipaddress.IPv4Address(current))
-                current += 1
-            return
-        except ValueError:
-            pass
+    parsed_range = _parse_explicit_range(value)
+    if parsed_range is not None:
+        start, end = parsed_range
+        size = int(end) - int(start) + 1
+        if size > MAX_EXPLICIT_RANGE_SIZE:
+            raise ValueError(
+                f"Target range too large: {value} "
+                f"({size} addresses, max {MAX_EXPLICIT_RANGE_SIZE})"
+            )
+        for current in range(int(start), int(end) + 1):
+            yield str(ipaddress.IPv4Address(current))
+        return
 
     # Single IP — validate and yield. Legacy numeric forms ('127.1',
     # '0x7f000001') are normalized to dotted-quad so downstream denylist checks

@@ -50,7 +50,8 @@ class PingSweep:
         # Use fast/reduced probe set for large ranges to keep discovery time reasonable.
         # /16 = 65534 hosts: fast (13 ports x 0.5s) → ~17 min; thorough (15 ports x 1s) → ~33 min.
         large_range = total > 1024
-        probe_ports = self.PROBE_PORTS_FAST if large_range else self.PROBE_PORTS
+        configured_probe_ports = self.PROBE_PORTS_FAST if large_range else self.PROBE_PORTS
+        probe_ports = [p for p in configured_probe_ports if not context.port_is_excluded(p)]
         timeout = self.TIMEOUT if large_range else self.TIMEOUT_THOROUGH
 
         if large_range:
@@ -67,6 +68,13 @@ class PingSweep:
 
         async def _bounded_probe(target: str) -> tuple[str, bool]:
             async with sem:
+                if await context.target_is_excluded(target):
+                    await context.log.debug(
+                        f"{target} -- skipped by scan exclusion",
+                        phase="discovery",
+                        host=target,
+                    )
+                    return target, False
                 result = await self._probe_host(
                     target, context, cfg=cfg,
                     probe_ports=probe_ports, timeout=timeout, nmap_sem=nmap_sem,
@@ -155,7 +163,11 @@ class PingSweep:
         sem = nmap_sem or asyncio.Semaphore(self.NMAP_CONCURRENCY)
         try:
             async with sem:
-                coro = self._nmap_aggressive_ping(target) if aggressive else self._nmap_ping(target)
+                coro = (
+                    self._nmap_aggressive_ping(target, context)
+                    if aggressive
+                    else self._nmap_ping(target, context)
+                )
                 result = await asyncio.wait_for(coro, timeout=8.0 if aggressive else 5.0)
             if result:
                 label = "aggressive nmap ping" if aggressive else "nmap ping"
@@ -171,6 +183,8 @@ class PingSweep:
     async def _tcp_probe(self, target: str, port: int, timeout: float, context: "ScanContext") -> bool:
         """Attempt TCP connect to target:port. Returns True if host is up. Retries on EMFILE."""
         import errno as _errno
+        if context.port_is_excluded(port) or await context.target_is_excluded(target):
+            return False
         for _attempt in range(3):
             try:
                 _, writer = await asyncio.wait_for(
@@ -198,20 +212,35 @@ class PingSweep:
                 return False  # host silent on this port — skip to next port
         return False
 
-    async def _nmap_ping(self, target: str) -> bool:
+    async def _nmap_ping(self, target: str, context: "ScanContext") -> bool:
+        if await context.target_is_excluded(target):
+            return False
+        # Explicit ICMP probes prevent nmap's default host discovery from also
+        # touching TCP/80 and TCP/443, which may be persisted port exclusions.
         proc = await asyncio.create_subprocess_exec(
-            "nmap", "-sn", "-T4", "--host-timeout", "5s", target,
+            "nmap", "-sn", "-PE", "-PP", "-T4", "--host-timeout", "5s", target,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL,
         )
         stdout, _ = await proc.communicate()
         return b"Host is up" in stdout
 
-    async def _nmap_aggressive_ping(self, target: str) -> bool:
+    async def _nmap_aggressive_ping(self, target: str, context: "ScanContext") -> bool:
         """Aggressive nmap ping using TCP SYN, TCP ACK, and UDP probes."""
+        if await context.target_is_excluded(target):
+            return False
+        syn_ports = [p for p in (80, 443, 22, 445, 3389, 8080) if not context.port_is_excluded(p)]
+        ack_ports = [p for p in (80, 443, 22, 445) if not context.port_is_excluded(p)]
+        udp_ports = [p for p in (53, 161, 123, 137) if not context.port_is_excluded(p)]
+        probes = ["-PE", "-PP"]
+        if syn_ports:
+            probes.append("-PS" + ",".join(map(str, syn_ports)))
+        if ack_ports:
+            probes.append("-PA" + ",".join(map(str, ack_ports)))
+        if udp_ports:
+            probes.append("-PU" + ",".join(map(str, udp_ports)))
         proc = await asyncio.create_subprocess_exec(
-            "nmap", "-sn", "-PS80,443,22,445,3389,8080", "-PA80,443,22,445",
-            "-PU53,161,123,137", "-T4", "--host-timeout", "8s", target,
+            "nmap", "-sn", *probes, "-T4", "--host-timeout", "8s", target,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL,
         )

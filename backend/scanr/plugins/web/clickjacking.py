@@ -73,7 +73,7 @@ class ClickjackingPlugin(PluginBase):
 
     async def _fetch_headers(self, context, ip: str, port: int, scheme: str) -> dict | None:
         try:
-            async with httpx.AsyncClient(verify=False, timeout=5.0, follow_redirects=True,
+            async with httpx.AsyncClient(verify=False, timeout=5.0, follow_redirects=False,
                 **context.proxy_config()
             ) as client:
                 resp = await client.get(f"{scheme}://{ip}:{port}/")

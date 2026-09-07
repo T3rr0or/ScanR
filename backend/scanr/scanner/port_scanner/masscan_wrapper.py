@@ -58,6 +58,62 @@ class MasscanWrapper:
         # bare spec like "80,443" or "1-1024"
         return ["-p", port_range]
 
+    @staticmethod
+    def _without_excluded_ports(port_args: list[str], excluded: list[int]) -> list[str]:
+        """Remove excluded ports from masscan's explicit ``-p`` value.
+
+        Unlike nmap, masscan has no ``--exclude-ports`` option. Its supported
+        exclusion switch is target-only, so passing the nmap flag would abort
+        the scan rather than enforce the guardrail. Port sets are bounded at
+        65,536 values, making expansion and recompression safe here.
+        """
+        if not excluded:
+            return port_args
+        if len(port_args) != 2 or port_args[0] != "-p":
+            raise ValueError("unsupported masscan port arguments")
+
+        blocked = set(excluded)
+        by_protocol: dict[str, set[int]] = {}
+        for raw_token in port_args[1].split(","):
+            token = raw_token.strip()
+            protocol = ""
+            if len(token) > 2 and token[1] == ":" and token[0].upper() in {"T", "U"}:
+                protocol, token = token[:2].upper(), token[2:]
+            if "-" in token:
+                start_text, end_text = token.split("-", 1)
+            else:
+                start_text = end_text = token
+            if not start_text.isdigit() or not end_text.isdigit():
+                raise ValueError(f"invalid masscan port token: {raw_token!r}")
+            start, end = int(start_text), int(end_text)
+            if start > end or start < 0 or end > 65_535:
+                raise ValueError(f"invalid masscan port range: {raw_token!r}")
+            by_protocol.setdefault(protocol, set()).update(
+                port for port in range(start, end + 1) if port not in blocked
+            )
+
+        def compress(ports: set[int]) -> list[str]:
+            if not ports:
+                return []
+            ordered = sorted(ports)
+            ranges: list[str] = []
+            start = previous = ordered[0]
+            for port in ordered[1:]:
+                if port == previous + 1:
+                    previous = port
+                    continue
+                ranges.append(str(start) if start == previous else f"{start}-{previous}")
+                start = previous = port
+            ranges.append(str(start) if start == previous else f"{start}-{previous}")
+            return ranges
+
+        allowed = [
+            f"{protocol}{value}"
+            for protocol, ports in by_protocol.items()
+            for value in compress(ports)
+        ]
+        return ["-p", ",".join(allowed)] if allowed else []
+
     async def scan(
         self,
         targets: list[str],
@@ -69,13 +125,30 @@ class MasscanWrapper:
         if not targets:
             return {}
 
+        if context.exclusion_policy:
+            targets, excluded = await context.exclusion_policy.filter_targets(targets)
+            if excluded:
+                await context.log.warn(
+                    f"masscan skipped {len(excluded)} excluded target(s)",
+                    phase="portscan",
+                )
+        if not targets:
+            return {}
+
         effective_rate = rate or self._rate_from_profile(context)
         open_ports: dict[str, list[int]] = {}
 
         with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as tmp:
             out_path = tmp.name
 
-        port_args = self._port_args(port_range)
+        excluded_ports = context.excluded_ports()
+        port_args = self._without_excluded_ports(self._port_args(port_range), excluded_ports)
+        if not port_args:
+            await context.log.info(
+                "masscan skipped because every requested port is excluded",
+                phase="portscan",
+            )
+            return {}
         cmd = [
             "masscan",
             *targets,

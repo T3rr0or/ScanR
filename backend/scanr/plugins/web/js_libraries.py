@@ -243,7 +243,7 @@ class JsLibrariesPlugin(PluginBase):
         """Fetch the page, extract scripts, and return (lib, version, source_url)."""
         results: list[tuple[str, str, str]] = []
         async with create_web_client(context, with_limits=True) as client:
-            resp = await client.get(base, follow_redirects=True, timeout=10.0)
+            resp = await client.get(base, follow_redirects=False, timeout=10.0)
             html = resp.text
             page_url = str(resp.url)
 
@@ -280,7 +280,7 @@ class JsLibrariesPlugin(PluginBase):
         async def one(u: str) -> None:
             async with sem:
                 try:
-                    r = await client.get(u, follow_redirects=True, timeout=6.0)
+                    r = await client.get(u, follow_redirects=False, timeout=6.0)
                     if r.status_code != 200:
                         return
                     hit = _detect(u, r.text)

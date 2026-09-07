@@ -50,6 +50,21 @@ class DbAgentContext(AgentContext):
         self._collector: "ResultCollector | None" = None  # lazily built; persists agent findings
         self._web_urls: list[str] = []  # renderable URLs the agent fetched, screenshotted at run end
 
+    async def _exclusion_policy(self):
+        """Load the current persisted scan guardrails at the action boundary."""
+        from scanr.core.scope_policy import ExclusionPolicy
+        from scanr.models import Exclusion
+
+        rows = await self._db.execute(
+            select(Exclusion).where(Exclusion.scan_id == self.scan_id)
+        )
+        try:
+            return ExclusionPolicy.from_records(rows.scalars().all())
+        except ValueError as exc:
+            # Fail closed: an invalid guardrail must never be interpreted as a
+            # reason to widen what an autonomous agent may touch.
+            raise ValueError(f"invalid persisted scan exclusion: {exc}") from exc
+
     async def list_hosts(self) -> list[dict]:
         rows = await self._db.execute(
             select(Host)
@@ -206,6 +221,9 @@ class DbAgentContext(AgentContext):
 
         host = (host or "").strip().lower()
         if not host:
+            return False
+        exclusions = await self._exclusion_policy()
+        if await exclusions.excludes_target(host):
             return False
 
         # Discovered hosts (by IP or hostname).
@@ -488,6 +506,7 @@ class DbAgentContext(AgentContext):
     async def run_plugin(self, plugin_id: str, host_ip: str) -> dict:
         from scanr.core import plugin_manager
         from scanr.core.context import ScanContext
+        from scanr.core.plugin_base import PluginImpact
         from scanr.models import Scan
 
         classes = plugin_manager.get_all_plugin_classes()
@@ -495,11 +514,11 @@ class DbAgentContext(AgentContext):
         if plugin_cls is None:
             raise ValueError(f"unknown plugin {plugin_id!r}")
 
-        # Destructive plugins (write/exploit) need the exploitation capability.
-        if getattr(plugin_cls, "destructive", False) and not self.policy.allows_capability("allow_exploitation"):
+        impact = getattr(plugin_cls, "impact", PluginImpact.unknown)
+        if impact in {PluginImpact.exploit, PluginImpact.state_changing} and not self.policy.allows_capability("allow_exploitation"):
             return {
                 "denied": True,
-                "reason": f"{plugin_id} is destructive and requires the 'allow_exploitation' capability.",
+                "reason": f"{plugin_id} is an exploit/state-changing check and requires the 'allow_exploitation' capability.",
             }
         # Payload-sending checks that stop short of modifying the target are still
         # attack traffic, so they ride the aggressive opt-in rather than running
@@ -522,10 +541,20 @@ class DbAgentContext(AgentContext):
         if host is None:
             raise ValueError(f"host {host_ip!r} not found in this scan")
 
+        exclusions = await self._exclusion_policy()
+        if exclusions.excludes_host(host.ip, host.hostname):
+            return {"denied": True, "reason": f"{host_ip} is excluded from this scan."}
+        if plugin_cls.ports and all(exclusions.excludes_port(port) for port in plugin_cls.ports):
+            return {"denied": True, "reason": "Every port used by this plugin is excluded."}
+
         scan = await self._db.get(Scan, self.scan_id)
         if scan is None:
             raise ValueError("scan not found")
-        ctx = ScanContext(scan_id=self.scan_id, scan=scan, db=self._db, profile=scan.profile, log=self._log)
+        ctx = ScanContext(
+            scan_id=self.scan_id, scan=scan, db=self._db, profile=scan.profile,
+            log=self._log, exclusion_policy=exclusions,
+            target_hostnames={host.ip: host.hostname} if host.hostname else {},
+        )
 
         plugin = plugin_cls()
         await self._log.info(f"agent running plugin {plugin_id} on {host_ip}", phase="ai_agent")
@@ -566,10 +595,18 @@ class DbAgentContext(AgentContext):
         if host is None:
             raise ValueError(f"host {host_ip!r} not found in this scan")
 
+        exclusions = await self._exclusion_policy()
+        if exclusions.excludes_host(host.ip, host.hostname):
+            return {"denied": True, "reason": f"{host_ip} is excluded from this scan."}
+
         scan = await self._db.get(Scan, self.scan_id)
         if scan is None:
             raise ValueError("scan not found")
-        ctx = ScanContext(scan_id=self.scan_id, scan=scan, db=self._db, profile=scan.profile, log=self._log)
+        ctx = ScanContext(
+            scan_id=self.scan_id, scan=scan, db=self._db, profile=scan.profile,
+            log=self._log, exclusion_policy=exclusions,
+            target_hostnames={host.ip: host.hostname} if host.hostname else {},
+        )
 
         await self._log.info(
             f"agent port-scanning {host_ip}" + (f" ({ports})" if ports else ""), phase="ai_agent"
@@ -667,6 +704,13 @@ class DbAgentContext(AgentContext):
         from scanr.models import Target
         from scanr.utils.ip_utils import canonical_ip, is_forbidden_target
 
+        exclusions = await self._exclusion_policy()
+        # The current relay scope format authorizes destinations, not ports. If
+        # this scan excludes any port, granting generic shell egress would bypass
+        # that boundary, so deny command egress until the relay can express it.
+        if exclusions.ports:
+            return []
+
         scope: list[str] = []
 
         rows = await self._db.execute(select(Target.value).where(Target.scan_id == self.scan_id))
@@ -674,14 +718,23 @@ class DbAgentContext(AgentContext):
             value = str(raw).strip()
             # Keep CIDRs as-is; normalize bare/legacy-encoded IPs; drop hostnames.
             if "/" in value:
-                scope.append(value)
+                if not exclusions.intersects_network(value):
+                    scope.append(value)
             elif canonical_ip(value):
-                scope.append(canonical_ip(value) or value)
+                canonical = canonical_ip(value) or value
+                if not exclusions.excludes_ip(canonical):
+                    scope.append(canonical)
 
-        hrows = await self._db.execute(select(Host.ip).where(Host.scan_id == self.scan_id))
-        for ip in hrows.scalars().all():
+        hrows = await self._db.execute(
+            select(Host.ip, Host.hostname).where(Host.scan_id == self.scan_id)
+        )
+        for ip, hostname in hrows.all():
             value = str(ip).strip()
-            if value and value not in scope:
+            if (
+                value
+                and value not in scope
+                and not exclusions.excludes_host(value, hostname)
+            ):
                 scope.append(value)
 
         return [t for t in scope if t and not is_forbidden_target(t, self.denylist)]

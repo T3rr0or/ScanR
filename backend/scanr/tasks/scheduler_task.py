@@ -78,11 +78,23 @@ async def _fire_schedule(sched, session, now: datetime) -> None:
     from scanr.models import Scan, ScanStatus, Target
     from scanr.models.base import new_uuid
     from scanr.models.credential import Credential
-    from scanr.utils.ip_utils import classify_target, expand_targets, is_forbidden_target
+    from scanr.utils.ip_utils import (
+        classify_target,
+        expand_targets,
+        is_forbidden_target,
+        validate_target_batch,
+    )
 
     targets_raw: list[str] = json.loads(sched.targets) if sched.targets else []
     if not targets_raw:
         logger.warning("Schedule %s has no targets — skipping", sched.id)
+        return
+    try:
+        validate_target_batch(targets_raw)
+    except ValueError as exc:
+        logger.warning("Schedule %s has an invalid/oversized target set: %s", sched.id, exc)
+        sched.next_run = _calc_next_run(sched.cron_expr)
+        await session.commit()
         return
 
     # Defense in depth: re-validate at fire time. Targets are checked against

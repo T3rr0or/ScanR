@@ -5,7 +5,7 @@ from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from scanr.db import get_db
-from scanr.deps import get_current_user, require_admin, require_scope
+from scanr.deps import get_current_user, require_admin_scope, require_scope
 from scanr.models import Plugin, PluginRun, Scan
 from scanr.models.user import User
 from scanr.schemas import PluginHealthRead, PluginRead, PluginRunRead, PluginUpdate
@@ -103,7 +103,7 @@ async def update_plugin(
     plugin_id: str,
     body: PluginUpdate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_admin),
+    current_user: User = Depends(require_admin_scope("plugins:write")),
 ):
     result = await db.execute(select(Plugin).where(Plugin.id == plugin_id))
     plugin = result.scalar_one_or_none()

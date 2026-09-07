@@ -63,7 +63,24 @@ runs:
   steps:
     - name: Install ScanR CLI
       shell: bash
-      run: pip install --quiet "scanr @ git+https://github.com/T3rr0or/ScanR.git#subdirectory=backend"
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+      run: |
+        set -euo pipefail
+        # github.action_path is the exact action revision GitHub checked out.
+        # Installing from it keeps the CLI and action wrapper on the same commit
+        # instead of silently pulling a mutable master branch.
+        backend_path="$ACTION_PATH/../../../backend"
+        if [ ! -f "$backend_path/pyproject.toml" ] \
+          || [ ! -f "$backend_path/requirements.txt" ]; then
+          echo "::error::ScanR backend package or dependency lock is missing from the action checkout."
+          exit 2
+        fi
+        # Resolve nothing from the ranged pyproject dependencies: install the
+        # revision's hash-locked graph first, then the local package without
+        # allowing pip to revisit dependencies.
+        python -m pip install --quiet --require-hashes -r "$backend_path/requirements.txt"
+        python -m pip install --quiet --no-deps "$backend_path"
 
     - name: Run scan
       id: scan
@@ -72,15 +89,110 @@ runs:
         SCANR_URL: ${{ inputs.url }}
         SCANR_TOKEN: ${{ inputs.token }}
         SCANR_INSECURE: ${{ inputs.insecure }}
+        SCANR_TARGETS: ${{ inputs.targets }}
+        SCANR_PROFILE: ${{ inputs.profile }}
+        SCANR_PROFILE_JSON: ${{ inputs.profile-json }}
+        SCANR_FAIL_ON: ${{ inputs.fail-on }}
+        SCANR_SARIF_FILE: ${{ inputs.sarif-file }}
+        SCANR_TIMEOUT: ${{ inputs.timeout }}
+        SCANR_UPLOAD_SARIF: ${{ inputs.upload-sarif }}
       run: |
-        set -o pipefail
+        set -euo pipefail
+
+        case "$SCANR_PROFILE" in
+          quick|standard|full|custom) ;;
+          *) echo "::error::profile must be quick, standard, full, or custom"; exit 2 ;;
+        esac
+        case "$SCANR_FAIL_ON" in
+          critical|high|medium|low|info|never) ;;
+          *) echo "::error::fail-on must be critical, high, medium, low, info, or never"; exit 2 ;;
+        esac
+        case "$SCANR_INSECURE" in
+          true|false) ;;
+          *) echo "::error::insecure must be true or false"; exit 2 ;;
+        esac
+        case "$SCANR_UPLOAD_SARIF" in
+          true|false) ;;
+          *) echo "::error::upload-sarif must be true or false"; exit 2 ;;
+        esac
+        if [[ ! "$SCANR_TIMEOUT" =~ ^[0-9]+$ ]] \
+          || [ "$SCANR_TIMEOUT" -lt 1 ] \
+          || [ "$SCANR_TIMEOUT" -gt 86400 ]; then
+          echo "::error::timeout must be an integer from 1 through 86400 seconds"
+          exit 2
+        fi
+        if [ -z "$SCANR_TOKEN" ]; then
+          echo "::error::token must not be empty"
+          exit 2
+        fi
+        if [ -z "$SCANR_SARIF_FILE" ] \
+          || [[ "$SCANR_SARIF_FILE" = /* ]] \
+          || [[ "$SCANR_SARIF_FILE" =~ ^[A-Za-z]: ]] \
+          || [[ "$SCANR_SARIF_FILE" == *\\* ]] \
+          || [[ "$SCANR_SARIF_FILE" =~ (^|/)\.\.(/|$) ]] \
+          || [[ "$SCANR_SARIF_FILE" == *$'\n'* ]] \
+          || [[ "$SCANR_SARIF_FILE" == *$'\r'* ]] \
+          || [[ "$SCANR_SARIF_FILE" == *$'\t'* ]]; then
+          echo "::error::sarif-file must be a non-empty relative path without parent traversal or control characters"
+          exit 2
+        fi
+
+        python - <<'PY'
+        import json
+        import os
+        import ipaddress
+        from urllib.parse import urlsplit
+
+        url = os.environ["SCANR_URL"]
+        if any(ord(character) < 32 or ord(character) == 127 for character in url):
+            raise SystemExit("::error::url must not contain control characters")
+        parsed = urlsplit(url)
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+            raise SystemExit("::error::url must be an absolute http(s) URL with a hostname")
+        if parsed.username or parsed.password or parsed.query or parsed.fragment:
+            raise SystemExit("::error::url must not contain credentials, a query, or a fragment")
+        try:
+            parsed.port
+        except ValueError:
+            raise SystemExit("::error::url contains an invalid port") from None
+        if parsed.scheme == "http":
+            try:
+                loopback = ipaddress.ip_address(parsed.hostname).is_loopback
+            except ValueError:
+                loopback = parsed.hostname.lower() == "localhost"
+            if not loopback:
+                raise SystemExit(
+                    "::error::url must use HTTPS unless it targets loopback; "
+                    "the action sends an API credential on every request"
+                )
+
+        profile_json = os.environ["SCANR_PROFILE_JSON"]
+        if profile_json:
+            try:
+                value = json.loads(profile_json)
+            except json.JSONDecodeError as exc:
+                raise SystemExit(f"::error::profile-json is invalid JSON: {exc.msg}") from None
+            if not isinstance(value, dict):
+                raise SystemExit("::error::profile-json must be a JSON object")
+        PY
+
         args=()
         while IFS= read -r line; do
+          # Accept files pasted from Windows while rejecting embedded controls.
+          line="${line%$'\r'}"
+          if [[ "$line" == *$'\r'* ]] || [[ "$line" == *$'\t'* ]]; then
+            echo "::error::targets must not contain tab or carriage-return control characters"
+            exit 2
+          fi
           [ -n "$line" ] && args+=(--target "$line")
-        done <<< "${{ inputs.targets }}"
+        done <<< "$SCANR_TARGETS"
+        if [ "${#args[@]}" -eq 0 ]; then
+          echo "::error::targets must contain at least one non-empty line"
+          exit 2
+        fi
 
-        if [ -n "${{ inputs.profile-json }}" ]; then
-          args+=(--profile-json "${{ inputs.profile-json }}")
+        if [ -n "$SCANR_PROFILE_JSON" ]; then
+          args+=(--profile-json "$SCANR_PROFILE_JSON")
         fi
 
         # Capture the exit code rather than letting `set -e` abort: a findings
@@ -88,10 +200,10 @@ runs:
         # code scanning even on a failing build. Only re-raise it at the end.
         set +e
         scanr ci \
-          --profile "${{ inputs.profile }}" \
-          --fail-on "${{ inputs.fail-on }}" \
-          --sarif "${{ inputs.sarif-file }}" \
-          --timeout "${{ inputs.timeout }}" \
+          --profile "$SCANR_PROFILE" \
+          --fail-on "$SCANR_FAIL_ON" \
+          --sarif "$SCANR_SARIF_FILE" \
+          --timeout "$SCANR_TIMEOUT" \
           "${args[@]}"
         code=$?
         set -e
@@ -108,9 +220,16 @@ runs:
 
     - name: Apply the scan verdict
       shell: bash
+      env:
+        SCANR_EXIT_CODE: ${{ steps.scan.outputs.exit-code }}
+        SCANR_FAIL_ON: ${{ inputs.fail-on }}
       run: |
-        code="${{ steps.scan.outputs.exit-code }}"
-        if [ "$code" -ne 0 ]; then
-          echo "::error::ScanR found findings at or above '${{ inputs.fail-on }}'."
-          exit "$code"
-        fi
+        set -euo pipefail
+        case "$SCANR_EXIT_CODE" in
+          0) ;;
+          ''|*[!0-9]*) echo "::error::ScanR returned an invalid exit code."; exit 2 ;;
+          *)
+            printf '::error::ScanR found findings at or above %s.\n' "$SCANR_FAIL_ON"
+            exit "$SCANR_EXIT_CODE"
+            ;;
+        esac

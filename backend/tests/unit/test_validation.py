@@ -175,6 +175,9 @@ async def test_a_hanging_page_cannot_hold_a_worker(monkeypatch):
         def on(self, *_a):
             pass
 
+        async def route(self, *_a):
+            pass
+
         async def goto(self, *_a, **_kw):
             return None
 
@@ -193,6 +196,12 @@ async def test_a_hanging_page_cannot_hold_a_worker(monkeypatch):
 
         async def new_page(self):
             return self._page
+
+        async def route(self, *_a):
+            pass
+
+        async def route_web_socket(self, *_a):
+            pass
 
         async def close(self):
             return None
@@ -258,6 +267,9 @@ async def test_concurrent_validations_are_bounded(monkeypatch):
         def on(self, *_a):
             pass
 
+        async def route(self, *_a):
+            pass
+
         async def goto(self, *_a, **_kw):
             nonlocal live, peak
             live += 1
@@ -272,6 +284,12 @@ async def test_concurrent_validations_are_bounded(monkeypatch):
             return ""
 
     class Ctx:
+        async def route(self, *_a):
+            pass
+
+        async def route_web_socket(self, *_a):
+            pass
+
         async def new_page(self):
             return Page()
 
@@ -324,6 +342,8 @@ def test_the_concurrency_cap_is_configurable():
 def test_a_broken_setting_does_not_remove_the_cap(monkeypatch):
     """Falling open here would restore the unbounded amplifier."""
     from scanr.core import browser
+
+    monkeypatch.delenv("BROWSER_VALIDATION_CONCURRENCY", raising=False)
 
     def boom():
         raise RuntimeError("no settings")

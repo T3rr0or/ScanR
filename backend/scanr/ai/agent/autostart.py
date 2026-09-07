@@ -26,12 +26,20 @@ _DEFAULT_LIVE_OBJECTIVE = (
 )
 
 
-async def build_scan_agent_run(db: AsyncSession, scan, *, objective: str | None = None):
+async def build_scan_agent_run(
+    db: AsyncSession,
+    scan,
+    *,
+    objective: str | None = None,
+    validate_api_key: bool = True,
+):
     """Create and persist the AiAgentRun for a scan that opted into AI.
 
-    Returns the committed run, or ``None`` if AI is disabled or not runnable
-    (e.g. no API key configured). Does NOT start execution — callers decide
-    whether to enqueue it (concurrent) or drive it inline (engine steering).
+    Returns the committed run, or ``None`` if AI is disabled or not runnable.
+    Manual/API callers validate provider credentials by default. Isolated scan
+    workers pass ``validate_api_key=False`` so they never resolve provider
+    secrets; the AI worker owns credential resolution and failure reporting.
+    Does NOT start execution — callers decide whether to enqueue it.
     """
     if not getattr(scan, "ai_agent_enabled", False):
         return None
@@ -41,7 +49,7 @@ async def build_scan_agent_run(db: AsyncSession, scan, *, objective: str | None 
     from scanr.models.base import new_uuid
 
     provider_name = scan.ai_agent_provider or await store.get_default_provider(db)
-    if not await store.resolve_api_key(db, provider_name):
+    if validate_api_key and not await store.resolve_api_key(db, provider_name):
         logger.warning(
             "Scan %s requested AI but no API key is configured for provider %r; skipping",
             scan.id, provider_name,

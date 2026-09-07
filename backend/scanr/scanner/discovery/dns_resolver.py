@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import logging
 import socket
 
@@ -30,24 +31,28 @@ async def reverse_lookup(ip: str) -> str | None:
         return None
 
 
-async def attempt_zone_transfer(domain: str) -> list[str]:
-    """Attempt AXFR zone transfer. Returns list of record strings."""
+async def attempt_zone_transfer(domain: str, server_ip: str) -> list[str]:
+    """Attempt AXFR against one already-authorized scanned DNS server.
+
+    The caller must pass the numeric address from the current ``Host``. Never
+    discover or follow the zone's NS records here: those nameservers can be
+    unrelated third parties outside the approved scan scope.
+    """
     import dns.query
     import dns.zone
 
     try:
-        ns_answers = dns.resolver.resolve(domain, "NS")
-        records: list[str] = []
-        for ns in ns_answers:
-            ns_ip = str(dns.resolver.resolve(str(ns), "A")[0])
-            try:
-                zone = dns.zone.from_xfr(dns.query.xfr(ns_ip, domain, timeout=5))
-                for name in zone.nodes:
-                    records.append(f"{name}.{domain}")
-                if records:
-                    return records
-            except Exception:
-                continue
+        authorized_server = str(ipaddress.ip_address(server_ip))
+    except ValueError:
         return []
-    except Exception:
-        return []
+
+    def _transfer() -> list[str]:
+        try:
+            zone = dns.zone.from_xfr(
+                dns.query.xfr(authorized_server, domain, timeout=5)
+            )
+            return [f"{name}.{domain}" for name in zone.nodes]
+        except Exception:
+            return []
+
+    return await asyncio.to_thread(_transfer)

@@ -9,6 +9,8 @@ services:
       retries: 5
     volumes:
       - redis_data:/data
+    networks:
+      - data
 
   postgres:
     image: postgres:16-alpine@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777
@@ -29,6 +31,8 @@ services:
       retries: 10
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    networks:
+      - data
 
   api:
     image: ghcr.io/t3rr0or/scanr-api:${SCANR_VERSION:-latest}
@@ -54,16 +58,19 @@ services:
       redis:
         condition: service_healthy
     environment:
+      PROCESS_ROLE: api
       DATABASE_URL: postgresql+asyncpg://scanr:${POSTGRES_PASSWORD}@postgres/scanr
       REDIS_URL: redis://redis:6379/0
       CELERY_BROKER_URL: redis://redis:6379/0
       CELERY_RESULT_BACKEND: redis://redis:6379/1
       SECRET_KEY: ${SECRET_KEY:?SECRET_KEY must be set in .env}
-      VAULT_KEY: ${VAULT_KEY:-}
+      VAULT_KEY: ${VAULT_KEY:?VAULT_KEY must be set in .env}
       ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@scanr.local}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:?ADMIN_PASSWORD must be set in .env}
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost}
       SECURE_COOKIES: ${SECURE_COOKIES:-true}
+      DEVELOPMENT_MODE: ${DEVELOPMENT_MODE:-false}
+      SCAN_TARGET_DENYLIST: ${SCAN_TARGET_DENYLIST:-localhost,postgres,redis,db,api,frontend,scan-worker,ai-worker,control-worker,browser,sandbox-runner,scanr-api,scanr-worker}
       # The frontend nginx proxies /api and /ws, so the API's direct peer is
       # always a container on the Docker network. Without trusting it, every
       # client is rate-limited under nginx's IP as a single shared bucket.
@@ -82,11 +89,8 @@ services:
       # the Docker socket into the API container.
       SELF_UPDATE_ENABLED: ${SELF_UPDATE_ENABLED:-false}
       WORDLIST_DIR: /app/wordlists
-      # AI sandbox — on by default, requires SANDBOX_TOKEN in .env
-      SANDBOX_RUNNER_URL: ${SANDBOX_RUNNER_URL:-http://sandbox-runner:8090}
-      SANDBOX_TOKEN: ${SANDBOX_TOKEN:?SANDBOX_TOKEN must be set in .env}
-      SANDBOX_IMAGE: ${SANDBOX_IMAGE:-ghcr.io/t3rr0or/scanr-sandbox:${SCANR_VERSION:-latest}}
-      SANDBOX_CMD_TIMEOUT: ${SANDBOX_CMD_TIMEOUT:-120}
+      # Assist-mode AI requests execute in the API; autonomous agent work is
+      # queued to ai-worker, so the API receives no sandbox/browser tokens.
       AI_PROVIDER: ${AI_PROVIDER:-anthropic}
       AI_MODEL: ${AI_MODEL:-}
       AI_MAX_TOKENS: ${AI_MAX_TOKENS:-2048}
@@ -94,9 +98,6 @@ services:
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
-    dns:
-      - 8.8.8.8
-      - 8.8.4.4
     volumes:
       - reports_data:/app/reports
       - nvd_data:/app/nvd_cache
@@ -105,9 +106,15 @@ services:
     # Set SCANR_API_BIND=0.0.0.0 in .env only if you need direct API access.
     ports:
       - "${SCANR_API_BIND:-127.0.0.1}:8000:8000"
+    networks:
+      - frontend
+      - data
+      - api_egress
     command: uvicorn scanr.main:app --host 0.0.0.0 --port 8000
 
-  worker:
+  # Scanner/retest consumer. It can reach scan targets and the isolated browser,
+  # but receives no JWT/admin/provider/sandbox-control credentials.
+  scan-worker:
     image: ghcr.io/t3rr0or/scanr-worker:${SCANR_VERSION:-latest}
     build:
       context: ./backend
@@ -122,17 +129,76 @@ services:
       # lifespan), so the worker must not start against an unmigrated schema.
       api:
         condition: service_healthy
+      browser:
+        condition: service_healthy
     environment:
+      PROCESS_ROLE: scan-worker
       DATABASE_URL: postgresql+asyncpg://scanr:${POSTGRES_PASSWORD}@postgres/scanr
       REDIS_URL: redis://redis:6379/0
       CELERY_BROKER_URL: redis://redis:6379/0
       CELERY_RESULT_BACKEND: redis://redis:6379/1
-      VAULT_KEY: ${VAULT_KEY:-}
-      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY must be set in .env}
-      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@scanr.local}
-      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?ADMIN_PASSWORD must be set in .env}
+      VAULT_KEY: ${VAULT_KEY:?VAULT_KEY must be set in .env}
       WORDLIST_DIR: /app/wordlists
       PROXY_URL: ${PROXY_URL:-}
+      SCAN_TARGET_DENYLIST: ${SCAN_TARGET_DENYLIST:-localhost,postgres,redis,db,api,frontend,scan-worker,ai-worker,control-worker,browser,sandbox-runner,scanr-api,scanr-worker}
+      MAX_CONCURRENT_HOSTS: ${MAX_CONCURRENT_HOSTS:-50}
+      MAX_CONCURRENT_PLUGINS: ${MAX_CONCURRENT_PLUGINS:-20}
+      DEFAULT_SCAN_TIMEOUT: ${DEFAULT_SCAN_TIMEOUT:-3600}
+      SCAN_HEARTBEAT_TIMEOUT: ${SCAN_HEARTBEAT_TIMEOUT:-300}
+      BROWSER_SERVICE_URL: http://browser:8091
+      BROWSER_SERVICE_TOKEN: ${BROWSER_SERVICE_TOKEN:?BROWSER_SERVICE_TOKEN must be set in .env}
+      SCANR_REQUIRE_BROWSER_SERVICE: "true"
+    cap_add:
+      - NET_RAW
+    volumes:
+      - reports_data:/app/reports
+      - nvd_data:/app/nvd_cache
+      - wordlists_data:/app/wordlists
+    networks:
+      - data
+      - browser_control
+      - scan_egress
+    command:
+      [
+        "celery",
+        "-A",
+        "scanr.tasks.celery_app",
+        "worker",
+        "--loglevel=info",
+        "--concurrency=${SCAN_WORKER_CONCURRENCY:-4}",
+        "-Q",
+        "scan",
+      ]
+
+  # Autonomous/guided agent consumer. Provider, vault, browser and sandbox
+  # credentials exist only here (and provider/vault settings needed by the API).
+  ai-worker:
+    image: ghcr.io/t3rr0or/scanr-worker:${SCANR_VERSION:-latest}
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+      browser:
+        condition: service_healthy
+      sandbox-runner:
+        condition: service_healthy
+    environment:
+      PROCESS_ROLE: ai-worker
+      DATABASE_URL: postgresql+asyncpg://scanr:${POSTGRES_PASSWORD}@postgres/scanr
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      VAULT_KEY: ${VAULT_KEY:?VAULT_KEY must be set in .env}
+      WORDLIST_DIR: /app/wordlists
+      PROXY_URL: ${PROXY_URL:-}
+      SCAN_TARGET_DENYLIST: ${SCAN_TARGET_DENYLIST:-localhost,postgres,redis,db,api,frontend,scan-worker,ai-worker,control-worker,browser,sandbox-runner,scanr-api,scanr-worker}
       AI_PROVIDER: ${AI_PROVIDER:-anthropic}
       AI_MODEL: ${AI_MODEL:-}
       AI_MAX_TOKENS: ${AI_MAX_TOKENS:-2048}
@@ -140,21 +206,129 @@ services:
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
-      # AI sandbox — on by default, requires SANDBOX_TOKEN in .env
       SANDBOX_RUNNER_URL: ${SANDBOX_RUNNER_URL:-http://sandbox-runner:8090}
       SANDBOX_TOKEN: ${SANDBOX_TOKEN:?SANDBOX_TOKEN must be set in .env}
-      SANDBOX_IMAGE: ${SANDBOX_IMAGE:-ghcr.io/t3rr0or/scanr-sandbox:${SCANR_VERSION:-latest}}
       SANDBOX_CMD_TIMEOUT: ${SANDBOX_CMD_TIMEOUT:-120}
+      BROWSER_SERVICE_URL: http://browser:8091
+      BROWSER_SERVICE_TOKEN: ${BROWSER_SERVICE_TOKEN:?BROWSER_SERVICE_TOKEN must be set in .env}
+      SCANR_REQUIRE_BROWSER_SERVICE: "true"
     cap_add:
       - NET_RAW
-    dns:
-      - 8.8.8.8
-      - 8.8.4.4
     volumes:
       - reports_data:/app/reports
       - nvd_data:/app/nvd_cache
       - wordlists_data:/app/wordlists
-    command: celery -A scanr.tasks.celery_app worker --beat --loglevel=info --concurrency=4
+    networks:
+      - data
+      - browser_control
+      - sandbox_control
+      - scan_egress
+    command:
+      [
+        "celery",
+        "-A",
+        "scanr.tasks.celery_app",
+        "worker",
+        "--loglevel=info",
+        "--concurrency=${AI_WORKER_CONCURRENCY:-2}",
+        "-Q",
+        "ai",
+      ]
+
+  # Reports, schedules and watchdogs need the database and broker only. Beat is
+  # colocated with this control consumer and publishes every periodic task to
+  # the explicit control queue.
+  control-worker:
+    image: ghcr.io/t3rr0or/scanr-worker:${SCANR_VERSION:-latest}
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    environment:
+      PROCESS_ROLE: control-worker
+      DATABASE_URL: postgresql+asyncpg://scanr:${POSTGRES_PASSWORD}@postgres/scanr
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      SCAN_TARGET_DENYLIST: ${SCAN_TARGET_DENYLIST:-localhost,postgres,redis,db,api,frontend,scan-worker,ai-worker,control-worker,browser,sandbox-runner,scanr-api,scanr-worker}
+      SCAN_HEARTBEAT_TIMEOUT: ${SCAN_HEARTBEAT_TIMEOUT:-300}
+      AI_AGENT_HEARTBEAT_TIMEOUT: ${AI_AGENT_HEARTBEAT_TIMEOUT:-900}
+    volumes:
+      - reports_data:/app/reports
+    networks:
+      - data
+    command:
+      [
+        "celery",
+        "-A",
+        "scanr.tasks.celery_app",
+        "worker",
+        "--beat",
+        "--schedule=/tmp/celerybeat-schedule",
+        "--loglevel=info",
+        "--concurrency=${CONTROL_WORKER_CONCURRENCY:-2}",
+        "-Q",
+        "control",
+      ]
+
+  # Chromium is isolated from every application/data secret. Secret-bearing
+  # workers reach its authenticated API over the internal control network; only
+  # this sidecar renders hostile target content on scan_egress.
+  browser:
+    image: ghcr.io/t3rr0or/scanr-browser:${SCANR_VERSION:-latest}
+    build:
+      context: ./backend
+      dockerfile: sandbox/Dockerfile.browser
+    restart: unless-stopped
+    init: true
+    environment:
+      BROWSER_SERVICE_TOKEN: ${BROWSER_SERVICE_TOKEN:?BROWSER_SERVICE_TOKEN must be set in .env}
+      BROWSER_VALIDATION_CONCURRENCY: ${BROWSER_VALIDATION_CONCURRENCY:-2}
+      SCAN_TARGET_DENYLIST: ${SCAN_TARGET_DENYLIST:-localhost,postgres,redis,db,api,frontend,scan-worker,ai-worker,control-worker,browser,sandbox-runner,scanr-api,scanr-worker}
+    read_only: true
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,size=256m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    mem_limit: ${BROWSER_MEMORY_LIMIT:-1g}
+    cpus: ${BROWSER_CPU_LIMIT:-2.0}
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8091/health')",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    networks:
+      - browser_control
+      - scan_egress
+    command:
+      [
+        "uvicorn",
+        "scanr.browser_service:app",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8091",
+        "--no-access-log",
+        "--limit-concurrency",
+        "${BROWSER_REQUEST_LIMIT:-8}",
+      ]
 
   frontend:
     image: ghcr.io/t3rr0or/scanr-frontend:${SCANR_VERSION:-latest}
@@ -166,7 +340,11 @@ services:
       api:
         condition: service_healthy
     ports:
-      - "80:80"
+      # Plain HTTP is loopback-only by default. Terminate public/LAN TLS in a
+      # reverse proxy and forward to 127.0.0.1:80 (see README).
+      - "${SCANR_UI_BIND:-127.0.0.1}:80:80"
+    networks:
+      - frontend
 
   # ── AI command-execution sandbox ──────────────────────────────────────────
   # Only the sandbox-runner gets the Docker socket; it holds NO ScanR secrets.
@@ -180,11 +358,21 @@ services:
       context: ./backend
       dockerfile: sandbox/Dockerfile.runner
     restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,size=64m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
     environment:
       SANDBOX_TOKEN: ${SANDBOX_TOKEN:?SANDBOX_TOKEN must be set in .env}
       SANDBOX_IMAGE: ${SANDBOX_IMAGE:-ghcr.io/t3rr0or/scanr-sandbox:${SCANR_VERSION:-latest}}
-      SANDBOX_NETWORK: scanr_sandbox
-      SANDBOX_PROXY_URL: ${SANDBOX_PROXY_URL:-http://sandbox-proxy:8888}
+      # The runner creates one internal network and one mirror proxy per run.
+      # No sandbox shares an L2 segment or target relay with another run.
+      SANDBOX_NETWORK_PREFIX: ${SANDBOX_NETWORK_PREFIX:-scanr-sbx-net}
+      SANDBOX_PROXY_IMAGE: ${SANDBOX_PROXY_IMAGE:-ghcr.io/t3rr0or/scanr-sandbox-proxy:${SCANR_VERSION:-latest}}
+      SANDBOX_PROXY_PORT: ${SANDBOX_PROXY_PORT:-8888}
       SANDBOX_MAX_LIFETIME: ${SANDBOX_MAX_LIFETIME:-3600}
       SANDBOX_MAX_SESSIONS: ${SANDBOX_MAX_SESSIONS:-8}
       # Per-run SOCKS5 egress relay, started only when a scan opts into target
@@ -195,31 +383,32 @@ services:
       SANDBOX_RELAY_PORT: ${SANDBOX_RELAY_PORT:-1080}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-    # Deliberately NOT attached to sandbox_net. The runner holds the Docker
-    # socket, which is root-equivalent on the host — it must not be reachable
-    # from the very containers it sandboxes. It creates them via the Docker API
-    # over the socket, so it never needs to be on their network. (sandbox_net
-    # still gets created: sandbox-proxy is attached to it.)
+    # The runner holds a root-equivalent Docker socket, so only ai-worker may
+    # reach it. It is never attached to a sandbox or egress network.
     networks:
-      - default
+      - sandbox_control
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8090/health')",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
 
-  # Filtering forward-proxy: package installs reach allowlisted mirrors only.
-  # Self-built minimal image (replaces third-party vimagick/tinyproxy:latest).
-  # Dual-homed: it is the ONLY component bridging the internal sandbox_net and
-  # the egress network, so sandboxed containers can only reach the internet
-  # through this allowlist filter.
+  # Image-only service. The runner starts one allowlist proxy on each run's
+  # private internal network, then attaches its egress leg. A shared long-lived
+  # proxy/network would let separate agent runs discover each other.
   sandbox-proxy:
     image: ghcr.io/t3rr0or/scanr-sandbox-proxy:${SCANR_VERSION:-latest}
     build:
       context: ./backend
       dockerfile: sandbox/Dockerfile.proxy
-    restart: unless-stopped
-    volumes:
-      - ./backend/sandbox/proxy/tinyproxy.conf:/etc/tinyproxy/tinyproxy.conf:ro
-      - ./backend/sandbox/proxy/filter:/etc/tinyproxy/filter:ro
-    networks:
-      - sandbox_net
-      - sandbox_egress
+    profiles: ["build-only"]
 
   # Per-run SOCKS5 egress relay image. Built here so `docker compose build`
   # produces it, but never *run* by compose: the runner starts one container per
@@ -241,14 +430,33 @@ volumes:
   wordlists_data:
 
 networks:
-  # Internal: containers on this network have NO direct internet/LAN route.
-  # Sandboxed agent containers are attached here by the runner and can only
-  # reach the outside through sandbox-proxy's allowlist.
-  sandbox_net:
-    name: scanr_sandbox
+  # Browser-facing nginx can reach only the API, never databases or workers.
+  frontend:
     internal: true
-  # Egress leg for sandbox-proxy and the per-run SOCKS5 relays only. Never attach
-  # sandboxed containers here — the whole containment argument is that their only
-  # network is the internal one above.
+
+  # Database/broker plane. Internal prevents data services and the control
+  # consumer from acquiring an internet route.
+  data:
+    internal: true
+
+  # Browser RPC plane. Only scan/AI consumers can call the secret-free renderer.
+  browser_control:
+    internal: true
+
+  # Docker-runner RPC plane. Only ai-worker can reach this root-equivalent
+  # service, and only with its dedicated token.
+  sandbox_control:
+    internal: true
+
+  # General outbound network for the API's explicitly authorized integrations.
+  api_egress:
+
+  # Target/provider egress for scan, AI, and the secret-free browser sidecar.
+  scan_egress:
+
+  # Egress leg for per-run sandbox proxies/relays created via the Docker socket.
+  # Sandboxed containers themselves are never attached here.
   sandbox_egress:
     name: scanr_sandbox_egress
+    labels:
+      scanr.sandbox.egress: "true"

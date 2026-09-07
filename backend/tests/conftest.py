@@ -13,6 +13,7 @@ os.environ.setdefault("ADMIN_EMAIL", "admin@scanr.local")
 os.environ.setdefault("DATABASE_URL", "sqlite+aiosqlite:///./test_scanr.db")
 os.environ.setdefault("REDIS_URL", "redis://localhost:6379/0")
 os.environ.setdefault("SECURE_COOKIES", "false")
+os.environ.setdefault("DEVELOPMENT_MODE", "true")
 if not os.environ.get("VAULT_KEY"):
     from cryptography.fernet import Fernet
 

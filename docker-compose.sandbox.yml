@@ -2,5 +2,6 @@
 # This file is kept so docker compose doesn't error if you still have it in
 # COMPOSE_FILE from an older install. Remove it from COMPOSE_FILE in .env.
 #
-# The sandbox is now ON by default. Set SANDBOX_TOKEN in .env.
+# The sandbox is now ON by default. Set SANDBOX_TOKEN and
+# BROWSER_SERVICE_TOKEN in .env.
 services: {}

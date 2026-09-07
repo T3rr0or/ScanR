@@ -26,19 +26,21 @@ import pytest
 
 _MUTATING = {"post", "put", "patch", "delete"}
 _READ = {"get"}
-_GATES = ("require_scope", "require_admin", "_get_agent")
+_GATES = (
+    "require_scope",
+    "require_scopes",
+    "require_admin_scope",
+    "require_session_user",
+    "require_session_admin",
+    "_get_agent",
+)
 
 # Endpoints that legitimately have no authorization gate, with the reason.
 _ALLOWED_UNGATED = {
-    # Unauthenticated by definition — these are how you obtain a session.
+    # Unauthenticated by definition — these are how you obtain/end a session.
     "auth.py:login",
     "auth.py:refresh",
     "auth.py:logout",
-    # Self-service on your own account. Deliberately available to every role,
-    # including viewers: authorization is "you are this user", enforced by
-    # operating on current_user rather than an id from the request.
-    "users.py:update_profile",
-    "users.py:change_password",
 }
 
 # Reads with no scope gate. Two very different categories, kept apart on
@@ -113,6 +115,12 @@ def _endpoints(methods: set[str]) -> list[tuple[str, str]]:
     return found
 
 
+def _has_gate(signature: str) -> bool:
+    """Match dependency names exactly (``require_scope`` is a prefix of
+    ``require_scopes``, so a plain substring check can hide the wrong guard)."""
+    return any(re.search(rf"\b{re.escape(gate)}\b", signature) for gate in _GATES)
+
+
 def _mutating_endpoints() -> list[tuple[str, str]]:
     return _endpoints(_MUTATING)
 
@@ -138,7 +146,7 @@ def test_discovery_actually_finds_endpoints():
 def test_mutating_endpoint_is_gated(name, signature):
     if name in _ALLOWED_UNGATED:
         return
-    assert any(gate in signature for gate in _GATES), (
+    assert _has_gate(signature), (
         f"{name} mutates state but declares no authorization gate. Use "
         f"require_scope('<resource>:write') — a bare get_current_user "
         f"authenticates without authorizing, so viewers and read-only API keys "
@@ -169,7 +177,7 @@ def test_read_discovery_actually_finds_endpoints():
 def test_read_endpoint_is_gated(name, signature):
     if name in _ALLOWED_UNGATED_READS:
         return
-    assert any(gate in signature for gate in _GATES), (
+    assert _has_gate(signature), (
         f"{name} reads data but declares no authorization gate. Use "
         f"require_scope('<resource>:read') — a bare get_current_user ignores the "
         f"API key's scopes, so a key granted one narrow scope can read this too. "
@@ -188,7 +196,7 @@ def test_ungated_read_still_authenticates(name, signature):
     """
     if name in _UNAUTHENTICATED_READS:
         return
-    gated = any(gate in signature for gate in _GATES)
+    gated = _has_gate(signature)
     assert gated or "get_current_user" in signature, (
         f"{name} is reachable without authentication. If that is intended, add "
         f"it to _UNAUTHENTICATED_READS with a reason."
@@ -257,8 +265,103 @@ def test_no_endpoint_uses_a_scope_outside_all_scopes():
     """A typo'd scope name would silently never match a real API key."""
     from scanr.deps import ALL_SCOPES
 
+    scope_functions = {
+        "ensure_scopes",
+        "require_scope",
+        "require_scopes",
+        "require_admin_scope",
+    }
     used = set()
     for path in _V1.glob("*.py"):
-        used.update(re.findall(r'require_scope\(\s*"([^"]+)"\s*\)', path.read_text()))
+        tree = ast.parse(path.read_text())
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            if not isinstance(node.func, ast.Name) or node.func.id not in scope_functions:
+                continue
+            used.update(
+                arg.value
+                for arg in node.args
+                if isinstance(arg, ast.Constant) and isinstance(arg.value, str)
+            )
     unknown = used - set(ALL_SCOPES)
     assert not unknown, f"endpoints reference scopes missing from ALL_SCOPES: {unknown}"
+
+
+def test_privileged_endpoints_use_scope_aware_or_session_only_admin_guards():
+    """A role-only admin dependency turns every narrow admin-owned API key into
+    a full-control key. Pin each privileged route to an explicit scope, except
+    self-update which deliberately refuses API keys entirely."""
+    signatures = dict(_mutating_endpoints() + _read_endpoints())
+    expected = {
+        "users.py:list_users": "users:manage",
+        "users.py:create_user": "users:manage",
+        "users.py:update_user": "users:manage",
+        "users.py:delete_user": "users:manage",
+        "plugins.py:update_plugin": "plugins:write",
+        "ai.py:set_api_key": "ai:configure",
+        "ai.py:delete_api_key": "ai:configure",
+        "ai.py:set_config": "ai:configure",
+        "ai.py:set_model": "ai:configure",
+        "ai.py:list_provider_models": "ai:configure",
+        "integrations.py:get_topdesk_config": "integrations:manage",
+        "integrations.py:set_topdesk_config": "integrations:manage",
+        "integrations.py:delete_topdesk_config": "integrations:manage",
+        "integrations.py:test_topdesk_config": "integrations:manage",
+        "system.py:update_status": "system:manage",
+        "system.py:reset_update_status": "system:manage",
+        "system.py:cve_refresh": "system:manage",
+    }
+    for endpoint, scope in expected.items():
+        signature = signatures[endpoint]
+        assert re.search(
+            rf'\brequire_admin_scope\s*\(\s*"{re.escape(scope)}"\s*\)',
+            signature,
+        ), f"{endpoint} must require admin role plus {scope!r}"
+
+    assert re.search(
+        r"\brequire_session_admin\b", signatures["system.py:start_update"]
+    ), "self-update must reject even wildcard API keys"
+
+
+def test_ai_actions_declare_both_resource_and_ai_scopes():
+    """LLM spend and agent control must not ride on a scan/finding scope alone."""
+    signatures = dict(_mutating_endpoints())
+
+    assist = {
+        "ai.py:summarize_scan",
+        "ai.py:report_narrative",
+        "ai.py:false_positives",
+    }
+    for endpoint in assist:
+        signature = signatures[endpoint]
+        assert "findings:read" in signature and "ai:generate" in signature
+
+    agent_actions = {
+        "ai.py:launch_agent",
+        "ai.py:agent_chat",
+        "ai.py:agent_stop",
+        "ai.py:decide_agent_approval",
+        "ai.py:cancel_agent_run",
+    }
+    for endpoint in agent_actions:
+        signature = signatures[endpoint]
+        assert "scans:write" in signature and "ai:agent" in signature
+
+    scans_source = (_V1 / "scans.py").read_text()
+    resolve_fn = next(
+        node
+        for node in ast.walk(ast.parse(scans_source))
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name == "_resolve_ai_agent_fields"
+    )
+    conditional_scopes = {
+        arg.value
+        for node in ast.walk(resolve_fn)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "ensure_scopes"
+        for arg in node.args
+        if isinstance(arg, ast.Constant) and isinstance(arg.value, str)
+    }
+    assert {"ai:agent", "ai:aggressive"} <= conditional_scopes

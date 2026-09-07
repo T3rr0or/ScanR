@@ -25,7 +25,7 @@ class DomainZoneTransferPlugin(PluginBase):
         if not domain:
             return []
 
-        records = await attempt_zone_transfer(domain)
+        records = await attempt_zone_transfer(domain, host.ip)
         if not records:
             return []
 
@@ -41,7 +41,7 @@ class DomainZoneTransferPlugin(PluginBase):
             remediation="Restrict AXFR to authorized secondary nameservers only and verify DNS server ACLs.",
             references=["https://cwe.mitre.org/data/definitions/200.html"],
             protocol="tcp",
-            peer_review_command=f"dig AXFR {_q(domain)} @$(dig +short NS {_q(domain)} | head -n1)",
+            peer_review_command=f"dig AXFR {_q(domain)} @{_q(host.ip)}",
         )]
 
 

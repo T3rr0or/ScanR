@@ -1,4 +1,6 @@
 import asyncio
+import json
+import sys
 
 import pytest
 from fastapi import HTTPException
@@ -23,8 +25,10 @@ def test_token_must_match(monkeypatch):
 
 
 def test_create_args_are_hardened(monkeypatch):
-    monkeypatch.setattr(runner_app, "_PROXY", "http://sandbox-proxy:8888")
-    args = runner_app._create_args("scanr-sbx-test", ["192.0.2.0/24"])
+    args = runner_app._create_args(
+        "scanr-sbx-test", ["192.0.2.0/24"], "scanr-sbx-net-test",
+        proxy="scanr-pxy-test",
+    )
 
     # detached, non-root, locked-down
     assert "-d" in args
@@ -32,14 +36,16 @@ def test_create_args_are_hardened(monkeypatch):
     assert "--read-only" in args
     assert args[args.index("--cap-drop") + 1] == "ALL"
     assert "no-new-privileges" in args
-    assert args[args.index("--network") + 1] == runner_app._NETWORK
+    assert args[args.index("--network") + 1] == "scanr-sbx-net-test"
     assert "--pids-limit" in args
+    assert runner_app._SESSION_LABEL in args
+    assert f"{runner_app._RESOURCE_LABEL_KEY}=sandbox" in args
     # writable HOME so non-root pip/install works despite read-only rootfs
     assert any(a.startswith(f"HOME={runner_app._HOME}") for a in args)
     # keep-alive entrypoint so we can exec repeatedly
     assert args[-3:] == [runner_app._IMAGE, "sleep", "infinity"]
     # install proxy is injected
-    assert any("HTTP_PROXY=http://sandbox-proxy:8888" in a for a in args)
+    assert any("HTTP_PROXY=http://scanr-pxy-test:8888" in a for a in args)
 
 
 def test_exec_args_run_command_with_timeout():
@@ -50,6 +56,27 @@ def test_exec_args_run_command_with_timeout():
     assert args[-3:] == ["/bin/sh", "-lc", "id"]
     assert "timeout" in args
     assert "30" in args
+
+
+@pytest.mark.asyncio
+async def test_run_docker_retains_only_bounded_output(monkeypatch):
+    """Output is discarded while the child is running, not after an unbounded
+    communicate() has already accumulated it in runner memory."""
+    monkeypatch.setattr(runner_app, "_MAX_STDOUT", 32)
+    monkeypatch.setattr(runner_app, "_MAX_STDERR", 16)
+    code, out, err, timed_out = await runner_app._run_docker(
+        [
+            sys.executable,
+            "-c",
+            "import sys; sys.stdout.write('o' * 100000); sys.stderr.write('e' * 100000)",
+        ],
+        timeout=10,
+    )
+    assert code == 0
+    assert not timed_out
+    # One extra byte is deliberately retained as the truncation sentinel.
+    assert out == "o" * 33
+    assert err == "e" * 17
 
 
 def test_token_comparison_is_constant_time(monkeypatch):
@@ -117,9 +144,50 @@ async def test_session_cap_enforced(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_existing_session_rejects_changed_scope_or_egress(monkeypatch):
+    monkeypatch.setattr(runner_app, "_SESSIONS", {})
+
+    async def fake_run_docker(args, timeout):
+        return 0, "", "", False
+
+    monkeypatch.setattr(runner_app, "_run_docker", fake_run_docker)
+    name = await runner_app._ensure_session(
+        "run1", [" 198.51.100.2 ", "192.0.2.0/24", "198.51.100.2"]
+    )
+    session = runner_app._SESSIONS["run1"]
+    assert session.scope == ("192.0.2.0/24", "198.51.100.2")
+    # Ordering, duplicates, and surrounding whitespace are not policy changes.
+    assert await runner_app._ensure_session(
+        "run1", ["198.51.100.2", "192.0.2.0/24"]
+    ) == name
+
+    with pytest.raises(HTTPException) as exc:
+        await runner_app._ensure_session("run1", ["192.0.2.0/24"])
+    assert exc.value.status_code == 409
+
+    with pytest.raises(HTTPException) as exc:
+        await runner_app._ensure_session(
+            "run1", ["198.51.100.2", "192.0.2.0/24"], target_egress=True
+        )
+    assert exc.value.status_code == 409
+
+
+def test_scope_normalization_rejects_env_list_injection():
+    assert runner_app._normalize_scope(
+        ["192.0.2.99/24", "2001:0db8::1", "192.0.2.0/24"]
+    ) == ("192.0.2.0/24", "2001:db8::1")
+    with pytest.raises(HTTPException) as exc:
+        runner_app._normalize_scope(["192.0.2.1,0.0.0.0/0"])
+    assert exc.value.status_code == 400
+
+
+@pytest.mark.asyncio
 async def test_health_leaks_nothing(monkeypatch):
     """Unauthenticated probe must not report image or live session count."""
-    monkeypatch.setattr(runner_app, "_SESSIONS", {"r": runner_app.Session(name="n")})
+    monkeypatch.setattr(
+        runner_app, "_SESSIONS",
+        {"r": runner_app.Session(name="n", network="scanr-sbx-net-n")},
+    )
     body = await runner_app.health()
     assert body == {"status": "ok"}
 
@@ -144,17 +212,59 @@ def test_non_ascii_token_gives_401_not_500(monkeypatch):
 
 # ── per-run egress relay ──────────────────────────────────────────────────────
 
+def test_each_session_network_is_internal_and_labeled():
+    args = runner_app._network_args("scanr-sbx-net-test")
+    assert args[:3] == ["docker", "network", "create"]
+    assert "--internal" in args
+    assert "scanr.sandbox.session=true" in args
+    assert f"{runner_app._RESOURCE_LABEL_KEY}=network" in args
+    assert args[-1] == "scanr-sbx-net-test"
+
+
+def test_run_local_proxy_is_hardened_and_uses_only_its_session_network():
+    args = runner_app._proxy_args("scanr-pxy-test", "scanr-sbx-net-test")
+    assert args[args.index("--network") + 1] == "scanr-sbx-net-test"
+    assert "--read-only" in args
+    assert args[args.index("--cap-drop") + 1] == "ALL"
+    assert "no-new-privileges" in args
+    assert runner_app._SESSION_LABEL in args
+    assert f"{runner_app._RESOURCE_LABEL_KEY}=proxy" in args
+    assert args[-1] == runner_app._PROXY_IMAGE
+
+
 def test_relay_args_are_hardened_and_carry_the_scope():
-    args = runner_app._relay_args("scanr-rly-test", ["192.0.2.0/24", "198.51.100.7"])
+    args = runner_app._relay_args(
+        "scanr-rly-test", ["192.0.2.0/24", "198.51.100.7"],
+        "scanr-sbx-net-test",
+    )
     assert args[args.index("--user") + 1] == "1000:1000"
     assert "--read-only" in args
     assert args[args.index("--cap-drop") + 1] == "ALL"
     assert "no-new-privileges" in args
+    assert runner_app._SESSION_LABEL in args
+    assert f"{runner_app._RESOURCE_LABEL_KEY}=relay" in args
     # Starts on the internal network; the egress leg is attached separately.
-    assert args[args.index("--network") + 1] == runner_app._NETWORK
+    assert args[args.index("--network") + 1] == "scanr-sbx-net-test"
     assert any("SCANR_ALLOWED_CIDRS=192.0.2.0/24,198.51.100.7" in a for a in args)
     # No ScanR secrets, no Docker socket.
     assert not any("VAULT" in a or "SECRET" in a or "docker.sock" in a for a in args)
+
+
+@pytest.mark.asyncio
+async def test_concurrent_sessions_never_share_a_network(monkeypatch):
+    monkeypatch.setattr(runner_app, "_SESSIONS", {})
+
+    async def fake_run_docker(args, timeout):
+        return 0, "", "", False
+
+    monkeypatch.setattr(runner_app, "_run_docker", fake_run_docker)
+    await runner_app._ensure_session("run-a", ["192.0.2.1"], target_egress=True)
+    await runner_app._ensure_session("run-b", ["198.51.100.2"], target_egress=True)
+
+    first, second = runner_app._SESSIONS.values()
+    assert first.network != second.network
+    assert first.relay != second.relay
+    assert first.proxy != second.proxy
 
 
 def test_relay_egress_leg_is_a_separate_attach():
@@ -166,19 +276,24 @@ def test_relay_egress_leg_is_a_separate_attach():
 
 def test_sandbox_gets_no_socks_env_without_target_egress():
     """Default: no relay, so nothing should advertise a proxy that doesn't exist."""
-    args = runner_app._create_args("scanr-sbx-test", ["192.0.2.0/24"], relay=None)
+    args = runner_app._create_args(
+        "scanr-sbx-test", ["192.0.2.0/24"], "scanr-sbx-net-test", relay=None
+    )
     assert not any("ALL_PROXY" in a for a in args)
     assert not any("SCANR_TARGET_EGRESS" in a for a in args)
 
 
 def test_sandbox_points_at_the_relay_when_target_egress_is_on():
-    args = runner_app._create_args("scanr-sbx-test", ["192.0.2.0/24"], relay="scanr-rly-test")
+    args = runner_app._create_args(
+        "scanr-sbx-test", ["192.0.2.0/24"], "scanr-sbx-net-test",
+        relay="scanr-rly-test",
+    )
     socks = f"socks5://scanr-rly-test:{runner_app._RELAY_PORT}"
     assert any(a == f"ALL_PROXY={socks}" for a in args)
     assert any(a == f"all_proxy={socks}" for a in args)
     assert any(a == "SCANR_TARGET_EGRESS=1" for a in args)
     # Still on the internal network only — the relay is the sole path out.
-    assert args[args.index("--network") + 1] == runner_app._NETWORK
+    assert args[args.index("--network") + 1] == "scanr-sbx-net-test"
 
 
 @pytest.mark.asyncio
@@ -247,10 +362,19 @@ async def test_session_teardown_removes_the_relay_too(monkeypatch):
         removed.append(name)
 
     monkeypatch.setattr(runner_app, "_remove_container", fake_remove)
-    await runner_app._destroy_session(
-        runner_app.Session(name="scanr-sbx-x", relay="scanr-rly-x")
+    removed_networks: list[str] = []
+    monkeypatch.setattr(
+        runner_app, "_remove_network",
+        lambda name: removed_networks.append(name) or asyncio.sleep(0),
     )
-    assert removed == ["scanr-sbx-x", "scanr-rly-x"]
+    await runner_app._destroy_session(
+        runner_app.Session(
+            name="scanr-sbx-x", network="scanr-sbx-net-x",
+            proxy="scanr-pxy-x", relay="scanr-rly-x",
+        )
+    )
+    assert removed == ["scanr-sbx-x", "scanr-rly-x", "scanr-pxy-x"]
+    assert removed_networks == ["scanr-sbx-net-x"]
 
 
 @pytest.mark.asyncio
@@ -261,14 +385,112 @@ async def test_reaper_removes_relays_of_stale_sessions(monkeypatch):
         removed.append(name)
 
     monkeypatch.setattr(runner_app, "_remove_container", fake_remove)
+    removed_networks: list[str] = []
+    monkeypatch.setattr(
+        runner_app, "_remove_network",
+        lambda name: removed_networks.append(name) or asyncio.sleep(0),
+    )
     monkeypatch.setattr(runner_app, "_MAX_LIFETIME", 0)
     monkeypatch.setattr(runner_app, "_REAP_INTERVAL", 0.01)
     monkeypatch.setattr(
         runner_app, "_SESSIONS",
-        {"r": runner_app.Session(name="scanr-sbx-y", created=0.0, relay="scanr-rly-y")},
+        {"r": runner_app.Session(
+            name="scanr-sbx-y", network="scanr-sbx-net-y", created=0.0,
+            proxy="scanr-pxy-y", relay="scanr-rly-y",
+        )},
     )
     task = asyncio.create_task(runner_app._reaper())
     await asyncio.sleep(0.1)
     task.cancel()
-    assert set(removed) == {"scanr-sbx-y", "scanr-rly-y"}
+    assert set(removed) == {"scanr-sbx-y", "scanr-rly-y", "scanr-pxy-y"}
+    assert removed_networks == ["scanr-sbx-net-y"]
     assert not runner_app._SESSIONS
+
+
+# ── restart reconciliation ───────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_startup_reconciliation_removes_labeled_resources_and_old_members(monkeypatch):
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        runner_app,
+        "_SESSIONS",
+        {"stale": runner_app.Session(name="stale", network="stale-net")},
+    )
+
+    async def fake_run_docker(args, timeout):
+        calls.append(args)
+        if args[:4] == ["docker", "container", "ls", "-aq"]:
+            return 0, "labeled-container\n", "", False
+        if args[:4] == ["docker", "network", "ls", "-q"]:
+            return 0, "labeled-network\n", "", False
+        if args[:3] == ["docker", "network", "inspect"]:
+            # Covers an upgrade from the prior runner: its network was labeled,
+            # while the containers attached to it were not.
+            return 0, json.dumps({"legacy-container": {"Name": "scanr-sbx-old"}}), "", False
+        return 0, "", "", False
+
+    monkeypatch.setattr(runner_app, "_run_docker", fake_run_docker)
+    await runner_app._reconcile_orphaned_resources()
+
+    assert ["docker", "container", "rm", "-f", "labeled-container"] in calls
+    assert ["docker", "container", "rm", "-f", "legacy-container"] in calls
+    assert ["docker", "network", "rm", "labeled-network"] in calls
+    assert not runner_app._SESSIONS
+
+
+@pytest.mark.asyncio
+async def test_startup_reconciliation_fails_closed_when_docker_cannot_be_audited(monkeypatch):
+    async def broken_docker(args, timeout):
+        return 1, "", "socket unavailable", False
+
+    monkeypatch.setattr(runner_app, "_run_docker", broken_docker)
+    with pytest.raises(RuntimeError, match="could not list labeled sandbox containers"):
+        await runner_app._reconcile_orphaned_resources()
+
+
+@pytest.mark.asyncio
+async def test_egress_network_creation_is_labeled_non_internal_and_race_safe(monkeypatch):
+    calls: list[list[str]] = []
+    inspections = 0
+
+    async def fake_run_docker(args, timeout):
+        nonlocal inspections
+        calls.append(args)
+        if args[:3] == ["docker", "network", "inspect"]:
+            inspections += 1
+            if inspections == 1:
+                return 1, "", "not found", False
+            return 0, json.dumps({
+                "Driver": "bridge",
+                "Internal": False,
+                "Labels": {runner_app._EGRESS_LABEL_KEY: "true"},
+            }), "", False
+        if args[:3] == ["docker", "network", "create"]:
+            # Another runner may win the create race. Re-inspection, rather than
+            # this exit code, determines whether it is safe to continue.
+            return 1, "", "already exists", False
+        raise AssertionError(args)
+
+    monkeypatch.setattr(runner_app, "_run_docker", fake_run_docker)
+    await runner_app._ensure_egress_network()
+
+    create = next(args for args in calls if args[:3] == ["docker", "network", "create"])
+    assert create[create.index("--driver") + 1] == "bridge"
+    assert runner_app._EGRESS_LABEL in create
+    assert "--internal" not in create
+    assert inspections == 2
+
+
+@pytest.mark.asyncio
+async def test_egress_network_with_wrong_security_properties_fails_closed(monkeypatch):
+    async def fake_run_docker(args, timeout):
+        return 0, json.dumps({
+            "Driver": "bridge",
+            "Internal": True,
+            "Labels": {runner_app._EGRESS_LABEL_KEY: "true"},
+        }), "", False
+
+    monkeypatch.setattr(runner_app, "_run_docker", fake_run_docker)
+    with pytest.raises(RuntimeError, match="not ScanR's labeled, non-internal bridge"):
+        await runner_app._ensure_egress_network()

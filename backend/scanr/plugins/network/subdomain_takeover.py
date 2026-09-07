@@ -37,7 +37,7 @@ class SubdomainTakeoverPlugin(PluginBase):
 
         body_hit = False
         try:
-            async with httpx.AsyncClient(timeout=6.0, verify=False, follow_redirects=True, **context.proxy_config()) as client:
+            async with httpx.AsyncClient(timeout=6.0, verify=False, follow_redirects=False, **context.proxy_config()) as client:
                 resp = await client.get(f"http://{domain}/")
                 text = resp.text[:5000].lower()
                 body_hit = any(marker in text for marker in TAKEOVER_FINGERPRINTS[provider])
@@ -56,4 +56,3 @@ class SubdomainTakeoverPlugin(PluginBase):
                 protocol="dns",
             )]
         return []
-

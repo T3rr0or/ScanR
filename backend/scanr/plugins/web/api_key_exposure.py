@@ -62,7 +62,7 @@ class ApiKeyExposurePlugin(PluginBase):
         async with httpx.AsyncClient(
             verify=False,
             timeout=8.0,
-            follow_redirects=True,
+            follow_redirects=False,
             headers={"User-Agent": "Mozilla/5.0 (compatible; ScanR)"},
         **context.proxy_config(),
             ) as client:

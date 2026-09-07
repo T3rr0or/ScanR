@@ -48,6 +48,23 @@ async def test_create_scan_invalid_hostname_rejected(client, auth_headers):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("targets", [
+    [f"host-{i}.example" for i in range(65)],
+    ["10.0.0.0/16", "192.0.2.1"],
+    ["0.0.0.0-255.255.255.255"],
+])
+async def test_create_scan_rejects_resource_exhausting_target_sets(
+    client, auth_headers, targets,
+):
+    resp = await client.post("/api/v1/scans", headers=auth_headers, json={
+        "name": "Oversized scope",
+        "targets": targets,
+        "profile": "quick",
+    })
+    assert resp.status_code == 400
+
+
+@pytest.mark.asyncio
 async def test_create_scan_profile_json_masscan_rate_capped(client, auth_headers):
     resp = await client.post("/api/v1/scans", headers=auth_headers, json={
         "name": "Too Fast",

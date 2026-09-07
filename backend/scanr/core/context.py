@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -12,6 +13,9 @@ from scanr.models import Scan, ScanStatus
 from scanr.schemas.profile import is_safe_port_range
 
 logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from scanr.core.scope_policy import ExclusionPolicy
 
 
 _BUILTIN_PROFILES: dict[str, dict] = {
@@ -78,6 +82,11 @@ class ScanContext:
     stealth_mode: bool = False
     discovered_credentials: list = field(default_factory=list)  # in-memory only, never persisted
     rate_limiter: RateLimiter | None = None
+    exclusion_policy: "ExclusionPolicy | None" = None
+    # Numeric target -> operator-supplied/discovered hostname. The engine pins
+    # DNS before discovery, then carries this map so Host metadata and domain
+    # plugins do not lose the authorized name/SNI context.
+    target_hostnames: dict[str, str] = field(default_factory=dict)
 
     # Cancellation support
     cancelled: bool = False
@@ -158,6 +167,29 @@ class ScanContext:
     def check_cancelled(self) -> None:
         if self.cancelled:
             raise asyncio.CancelledError("Scan cancelled")
+
+    async def target_is_excluded(self, target: str, *, resolve: bool = True) -> bool:
+        return bool(
+            self.exclusion_policy
+            and await self.exclusion_policy.excludes_target(target, resolve=resolve)
+        )
+
+    def host_is_excluded(self, ip_or_host: str, hostname: str | None = None) -> bool:
+        return bool(
+            self.exclusion_policy
+            and self.exclusion_policy.excludes_host(ip_or_host, hostname)
+        )
+
+    def port_is_excluded(self, port: int) -> bool:
+        return bool(self.exclusion_policy and self.exclusion_policy.excludes_port(port))
+
+    def excluded_ports(self) -> list[int]:
+        if not self.exclusion_policy:
+            return []
+        return sorted(self.exclusion_policy.ports)
+
+    def original_hostname(self, ip: str) -> str | None:
+        return self.target_hostnames.get(ip)
 
     def store_credential(self, cred_type: str, username: str, password: str | None = None, **extra) -> None:
         """Store a discovered credential for the credential chaining phase."""

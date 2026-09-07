@@ -61,7 +61,7 @@ class PathTraversalPlugin(PluginBase):
     async def _test(self, context, ip: str, port: int, scheme: str) -> FindingData | None:
         base_url = f"{scheme}://{ip}:{port}"
         try:
-            async with httpx.AsyncClient(verify=False, timeout=httpx.Timeout(3.0, connect=2.0), follow_redirects=True,
+            async with httpx.AsyncClient(verify=False, timeout=httpx.Timeout(3.0, connect=2.0), follow_redirects=False,
                 **context.proxy_config()
             ) as client:
                 crawled = await crawl(base_url, client)

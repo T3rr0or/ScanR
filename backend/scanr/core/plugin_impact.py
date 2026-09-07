@@ -1,0 +1,258 @@
+"""Reviewed impact manifest for every built-in scanner plugin.
+
+Keeping the manifest independent of plugin imports makes registration fail
+closed even when optional scanner dependencies are unavailable. A new plugin id
+must be deliberately classified here before the runtime registry will expose it.
+"""
+from __future__ import annotations
+
+from scanr.core.plugin_base import PluginImpact
+
+
+KNOWN_PLUGIN_IDS = frozenset({
+    "authenticated.docker_privileged_check",
+    "authenticated.ssh_audit",
+    "cve.cve_matcher",
+    "network.dns_recon",
+    "network.dns_zone_transfer",
+    "network.dnssec_caa_check",
+    "network.email_security",
+    "network.icmp_info",
+    "network.ipv6_discovery",
+    "network.open_ports_info",
+    "network.subdomain_enum",
+    "network.subdomain_takeover",
+    "nuclei.runner",
+    "services.ad_password_policy",
+    "services.adb_unauth",
+    "services.adcs_enum",
+    "services.admin_share_access",
+    "services.asreproastable",
+    "services.bacnet_detect",
+    "services.bluekeep_check",
+    "services.cassandra_unauth",
+    "services.cisco_smart_install",
+    "services.clickhouse_unauth",
+    "services.consul_vault_nomad_exposure",
+    "services.couchdb_unauth",
+    "services.dcsync_check",
+    "services.dns_zone_transfer",
+    "services.docker_daemon_unauth",
+    "services.docker_registry_exposure",
+    "services.elasticsearch_unauth",
+    "services.etcd_unauth",
+    "services.firebird_default_creds",
+    "services.ftp_anon",
+    "services.ftp_cleartext",
+    "services.gitlab_exposure",
+    "services.gmsa_readable",
+    "services.grafana_exposure",
+    "services.ike_aggressive_mode",
+    "services.influxdb_unauth",
+    "services.ipmi_cipher_zero",
+    "services.java_rmi_jmx",
+    "services.jenkins_exposure",
+    "services.jupyter_unauth",
+    "services.k8s_rbac_enum",
+    "services.kerberoastable",
+    "services.kubernetes_api_unauth",
+    "services.ldap_anon_bind",
+    "services.ldap_channel_binding",
+    "services.ldap_signing",
+    "services.ldap_user_enum",
+    "services.llmnr_mdns_ssdp_exposure",
+    "services.llmnr_nbns_check",
+    "services.memcached_unauth",
+    "services.minio_s3_exposure",
+    "services.modbus_detect",
+    "services.mongodb_unauth",
+    "services.ms17_010_check",
+    "services.mssql_unauth",
+    "services.mysql_unauth",
+    "services.neo4j_unauth",
+    "services.netbios_info",
+    "services.nfs_shares",
+    "services.ntlmrelay_opportunity",
+    "services.ntp_monlist",
+    "services.oracle_tns_check",
+    "services.postgres_unauth",
+    "services.printnightmare",
+    "services.prometheus_exposure",
+    "services.rabbitmq_kafka_zookeeper_exposure",
+    "services.rdp_check",
+    "services.rdp_info",
+    "services.redis_unauth",
+    "services.service_fallback",
+    "services.sip_scan",
+    "services.smb_authenticated_enum",
+    "services.smb_guest_access",
+    "services.smb_null_session",
+    "services.smb_share_enum",
+    "services.smb_signing",
+    "services.smb_vulns",
+    "services.smtp_open_relay",
+    "services.snmp_community",
+    "services.snmp_walk",
+    "services.solr_admin_exposure",
+    "services.ssh_banner_grab",
+    "services.telnet_detect",
+    "services.trust_enum",
+    "services.unconstrained_delegation",
+    "services.vnc_auth",
+    "services.winrm_access",
+    "services.winrm_basic_auth",
+    "services.zerologon",
+    "ssh.ssh_algos",
+    "ssh.ssh_default_creds",
+    "ssh.ssh_version",
+    "ssl_tls.cert_inspector",
+    "ssl_tls.cipher_audit",
+    "ssl_tls.heartbleed",
+    "ssl_tls.poodle_beast",
+    "ssl_tls.protocol_check",
+    "web.api_key_exposure",
+    "web.aws_metadata_ssrf",
+    "web.broken_access_control",
+    "web.clickjacking",
+    "web.cookie_security",
+    "web.cors_misconfig",
+    "web.csp_analyzer",
+    "web.default_creds_web",
+    "web.deserial_probe",
+    "web.dir_bruteforce",
+    "web.dir_listing",
+    "web.exchange_autodiscover",
+    "web.graphql_introspection",
+    "web.host_header_injection",
+    "web.http_headers",
+    "web.http_methods",
+    "web.http_smuggling",
+    "web.js_libraries",
+    "web.jwt_extended",
+    "web.jwt_misconfig",
+    "web.log4shell_check",
+    "web.oauth_oidc_misconfig",
+    "web.open_redirect",
+    "web.path_traversal",
+    "web.saml_metadata_exposure",
+    "web.screenshot",
+    "web.sensitive_files",
+    "web.spring4shell_check",
+    "web.sqli_blind",
+    "web.sqli_detect",
+    "web.ssrf_detect",
+    "web.ssti_detect",
+    "web.swagger_openapi_exposure",
+    "web.waf_detect",
+    "web.xss_detect",
+    "web.xxe_detect",
+})
+
+PASSIVE_PLUGIN_IDS = frozenset({
+    "cve.cve_matcher",
+    "network.open_ports_info",
+})
+
+AUTH_ATTEMPT_PLUGIN_IDS = frozenset({
+    "services.ad_password_policy",
+    "services.admin_share_access",
+    "services.asreproastable",
+    "services.firebird_default_creds",
+    "services.ftp_anon",
+    "services.k8s_rbac_enum",
+    "services.kerberoastable",
+    "services.ldap_anon_bind",
+    "services.ldap_signing",
+    "services.ldap_user_enum",
+    "services.mssql_unauth",
+    "services.mysql_unauth",
+    "services.postgres_unauth",
+    "services.smb_authenticated_enum",
+    "services.smb_guest_access",
+    "services.smb_null_session",
+    "services.snmp_community",
+    "services.trust_enum",
+    "services.unconstrained_delegation",
+    "services.winrm_access",
+    "ssh.ssh_default_creds",
+    "web.broken_access_control",
+    "web.default_creds_web",
+    "web.dir_bruteforce",
+    "web.js_libraries",
+})
+
+INTRUSIVE_PLUGIN_IDS = frozenset({
+    "web.host_header_injection",
+    "web.open_redirect",
+    "web.ssti_detect",
+    "web.xss_detect",
+})
+
+EXPLOIT_PLUGIN_IDS = frozenset({
+    "nuclei.runner",
+    "services.bluekeep_check",
+    "services.cisco_smart_install",
+    "services.dcsync_check",
+    "services.etcd_unauth",
+    "services.gmsa_readable",
+    "services.ike_aggressive_mode",
+    "services.ipmi_cipher_zero",
+    "services.java_rmi_jmx",
+    "services.ms17_010_check",
+    "services.ntp_monlist",
+    "services.printnightmare",
+    "services.smb_vulns",
+    "services.zerologon",
+    "ssl_tls.heartbleed",
+    "ssl_tls.poodle_beast",
+    "web.aws_metadata_ssrf",
+    "web.jwt_misconfig",
+    "web.log4shell_check",
+    "web.path_traversal",
+    "web.sqli_blind",
+    "web.sqli_detect",
+    "web.ssrf_detect",
+    "web.waf_detect",
+    "web.xxe_detect",
+})
+
+STATE_CHANGING_PLUGIN_IDS = frozenset({
+    "authenticated.docker_privileged_check",
+    "authenticated.ssh_audit",
+    "services.sip_scan",
+    "services.smb_share_enum",
+    "services.smtp_open_relay",
+    "services.snmp_walk",
+    "web.deserial_probe",
+    "web.http_methods",
+    "web.http_smuggling",
+    "web.spring4shell_check",
+})
+
+_GROUPS = {
+    PluginImpact.passive: PASSIVE_PLUGIN_IDS,
+    PluginImpact.intrusive: INTRUSIVE_PLUGIN_IDS,
+    PluginImpact.auth_attempt: AUTH_ATTEMPT_PLUGIN_IDS,
+    PluginImpact.exploit: EXPLOIT_PLUGIN_IDS,
+    PluginImpact.state_changing: STATE_CHANGING_PLUGIN_IDS,
+}
+
+_classified: set[str] = set()
+for _impact, _ids in _GROUPS.items():
+    overlap = _classified & _ids
+    if overlap:  # pragma: no cover - import-time invariant
+        raise RuntimeError(f"Plugin impact groups overlap: {sorted(overlap)}")
+    _classified.update(_ids)
+if not _classified <= KNOWN_PLUGIN_IDS:  # pragma: no cover - import-time invariant
+    raise RuntimeError(f"Impact manifest contains unknown ids: {sorted(_classified - KNOWN_PLUGIN_IDS)}")
+
+PLUGIN_IMPACTS: dict[str, PluginImpact] = {
+    plugin_id: PluginImpact.active for plugin_id in KNOWN_PLUGIN_IDS
+}
+for _impact, _ids in _GROUPS.items():
+    PLUGIN_IMPACTS.update({plugin_id: _impact for plugin_id in _ids})
+
+
+def impact_for_plugin(plugin_id: str) -> PluginImpact | None:
+    """Return reviewed metadata; None means the plugin must not be registered."""
+    return PLUGIN_IMPACTS.get(plugin_id)

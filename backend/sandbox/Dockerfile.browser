@@ -1,0 +1,24 @@
+# Dedicated renderer for hostile scan targets.  It deliberately contains no
+# ScanR database and receives no application/provider/vault credentials.
+FROM python:3.12-slim@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de
+
+WORKDIR /app
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
+    HOME=/tmp/browser-home \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+# Reuse the hash-locked dependency set so this security boundary is reproducible.
+COPY requirements.txt ./requirements.txt
+RUN pip install --no-cache-dir --require-hashes -r requirements.txt \
+    && playwright install --with-deps chromium
+
+COPY scanr/core/browser.py ./scanr/core/browser.py
+COPY scanr/utils/ip_utils.py ./scanr/utils/ip_utils.py
+COPY scanr/browser_service.py ./scanr/browser_service.py
+RUN touch ./scanr/__init__.py ./scanr/core/__init__.py ./scanr/utils/__init__.py \
+    && useradd -r -u 1000 -d /app -s /usr/sbin/nologin browser
+
+USER 1000:1000
+EXPOSE 8091
+CMD ["uvicorn", "scanr.browser_service:app", "--host", "0.0.0.0", "--port", "8091", "--no-access-log", "--limit-concurrency", "8"]

@@ -15,9 +15,13 @@ class Settings(BaseSettings):
     app_version: str = "0.20.1"
     debug: bool = False
     base_dir: Path = Path(__file__).parent.parent
+    # Runtime identity controls which bootstrap-only secrets are mandatory.
+    # Workers still validate any secret they receive, but do not need the API's
+    # JWT signing key or initial-admin password merely to import task modules.
+    process_role: str = "api"
 
     # Security
-    secret_key: str  # Required — no default; must be set in environment
+    secret_key: str = ""
     algorithm: str = "HS256"
     access_token_expire_minutes: int = 15
     refresh_token_expire_days: int = 7
@@ -25,6 +29,9 @@ class Settings(BaseSettings):
     # CORS — comma-separated origins allowed to call the API
     allowed_origins: str = "http://localhost"
     secure_cookies: bool = True
+    # Explicit escape hatch for a local, plaintext development instance. DEBUG
+    # changes diagnostics and must never implicitly weaken cookie transport.
+    development_mode: bool = False
 
     # Interactive API docs (/docs, /redoc, /openapi.json). These are
     # unauthenticated by design and publish the full API surface, so they are
@@ -55,7 +62,10 @@ class Settings(BaseSettings):
     # with the built-in loopback/link-local/metadata denylist. Loopback,
     # link-local (incl. 169.254.169.254 cloud metadata), multicast, reserved,
     # and unspecified addresses are always rejected regardless of this list.
-    scan_target_denylist: str = "localhost,postgres,redis,db,scanr-api,scanr-worker"
+    scan_target_denylist: str = (
+        "localhost,postgres,redis,db,api,frontend,scan-worker,ai-worker,"
+        "control-worker,browser,sandbox-runner,scanr-api,scanr-worker"
+    )
 
     # Trusted reverse-proxy peers. The X-Forwarded-For header is only honoured
     # for rate limiting when the direct TCP peer is in this comma-separated list
@@ -116,7 +126,7 @@ class Settings(BaseSettings):
 
     # Admin bootstrap (first-run seed)
     admin_email: str = "admin@scanr.local"
-    admin_password: str  # Required — no default; must be set in environment
+    admin_password: str = ""
 
     # Self-update is intentionally opt-in. Enabling it means the API process can
     # run the configured update command on behalf of an admin user.
@@ -147,20 +157,35 @@ class Settings(BaseSettings):
             raise ValueError(f"ALGORITHM must be one of {sorted(allowed)} (got {v!r})")
         return v
 
+    @field_validator("process_role")
+    @classmethod
+    def _check_process_role(cls, v: str) -> str:
+        allowed = {"api", "scan-worker", "ai-worker", "control-worker"}
+        if v not in allowed:
+            raise ValueError(f"PROCESS_ROLE must be one of {sorted(allowed)} (got {v!r})")
+        return v
+
     @model_validator(mode="after")
     def _check_required_secrets(self) -> "Settings":
-        if not self.secret_key:
+        if self.process_role == "api" and not self.secret_key:
             raise ValueError(
                 'SECRET_KEY must be set in the environment (generate with: python3 -c "import secrets; print(secrets.token_urlsafe(32))")'
             )
-        if len(self.secret_key) < 32:
+        if self.secret_key and len(self.secret_key) < 32:
             raise ValueError("SECRET_KEY must be at least 32 characters")
+        if not self.secure_cookies and not self.development_mode:
+            raise ValueError(
+                "SECURE_COOKIES=false is permitted only when DEVELOPMENT_MODE=true; "
+                "production deployments must use HTTPS and secure cookies"
+            )
         # bcrypt refuses anything over 72 bytes. Caught here so a too-long
         # ADMIN_PASSWORD fails at startup with an actionable message, rather
         # than deep inside seed_admin() where it reads as a crash on boot.
         from scanr.auth.password import MAX_PASSWORD_BYTES, password_within_bcrypt_limit
 
-        if not password_within_bcrypt_limit(self.admin_password):
+        if self.process_role == "api" and not self.admin_password:
+            raise ValueError("ADMIN_PASSWORD must be set for the API process")
+        if self.admin_password and not password_within_bcrypt_limit(self.admin_password):
             raise ValueError(
                 f"ADMIN_PASSWORD must be at most {MAX_PASSWORD_BYTES} bytes when UTF-8 "
                 f"encoded (got {len(self.admin_password.encode('utf-8'))}) — bcrypt cannot "

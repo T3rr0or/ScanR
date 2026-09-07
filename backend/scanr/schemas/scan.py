@@ -74,10 +74,9 @@ class ScanCreate(BaseModel):
     profile: str = "standard"        # quick | standard | full | custom
     profile_json: str | None = None
     credential_id: str | None = None          # keep for backward compat
-    credentials: list[ScanCredentialIn] = []  # new: inline credentials
-    exclusions: list[str] = []                # IPs/CIDRs/hosts to skip
+    credentials: list[ScanCredentialIn] = Field(default_factory=list)  # new: inline credentials
+    exclusions: list[str] = Field(default_factory=list)                # IPs/CIDRs/hosts to skip
     ai_agent: ScanAiAgentConfig | None = None  # opt-in AI agent auto-run
-
 
 class ScanCredentialRead(BaseModel):
     id: str

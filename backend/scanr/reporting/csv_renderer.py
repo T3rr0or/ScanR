@@ -7,6 +7,7 @@ from pathlib import Path
 import aiofiles
 
 from scanr.config import get_settings
+from scanr.reporting.csv_safety import spreadsheet_safe_cell
 
 settings = get_settings()
 
@@ -37,7 +38,13 @@ async def render_csv(context: dict, report_id: str) -> Path:
     if rows:
         writer = csv.DictWriter(buf, fieldnames=list(rows[0].keys()))
         writer.writeheader()
-        writer.writerows(rows)
+        writer.writerows(
+            {
+                key: spreadsheet_safe_cell(value)
+                for key, value in row.items()
+            }
+            for row in rows
+        )
 
     async with aiofiles.open(out, "w") as f:
         await f.write(buf.getvalue())

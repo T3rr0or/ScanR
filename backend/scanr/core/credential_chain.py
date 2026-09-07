@@ -125,7 +125,7 @@ async def _test_web(context, host, username: str, password: str, source: str, co
         scheme = "https" if port in (443, 8443) else "http"
         base = f"{scheme}://{host.ip}:{port}"
 
-        async with httpx.AsyncClient(verify=False, timeout=5.0, follow_redirects=True) as client:
+        async with httpx.AsyncClient(verify=False, timeout=5.0, follow_redirects=False) as client:
             for path in ["/admin", "/login", "/wp-login.php", "/"]:
                 try:
                     resp = await client.get(f"{base}{path}", auth=(username, password))

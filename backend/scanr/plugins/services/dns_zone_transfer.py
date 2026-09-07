@@ -31,7 +31,7 @@ class DnsZoneTransferPlugin(PluginBase):
             parts = hostname.split(".")
             if len(parts) >= 2:
                 domain = ".".join(parts[-2:])
-                records = await attempt_zone_transfer(domain)
+                records = await attempt_zone_transfer(domain, host.ip)
                 if records:
                     findings.append(FindingData(
                         plugin_id=self.id,

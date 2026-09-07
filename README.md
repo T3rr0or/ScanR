@@ -117,7 +117,8 @@ permissions:
   security-events: write   # required for the code-scanning upload
 
 steps:
-  - uses: T3rr0or/ScanR/.github/actions/scanr-scan@master
+  # Pin a release tag or, for maximum supply-chain stability, a full commit SHA.
+  - uses: T3rr0or/ScanR/.github/actions/scanr-scan@v0.20.1
     with:
       url: ${{ secrets.SCANR_URL }}
       token: ${{ secrets.SCANR_API_KEY }}
@@ -226,7 +227,7 @@ All screenshots above use documentation-safe mock data such as `192.0.2.x`, `198
 
 - Docker Engine 24+
 - Docker Compose v2 (`docker compose`)
-- Ports `80` and `8000` available on the host
+- Ports `80` and `8000` available on the host loopback interface
 
 ### 1. Clone
 
@@ -241,17 +242,20 @@ cd ScanR
 cp .env.example .env
 ```
 
-Set these 3 required values in `.env`:
+Set these 6 required values in `.env`:
 
 ```bash
 # Generate secrets:
 python3 -c "import secrets; print(secrets.token_urlsafe(32))"  # → SECRET_KEY
 python3 -c "import secrets; print(secrets.token_urlsafe(16))"  # → ADMIN_PASSWORD
 python3 -c "import secrets; print(secrets.token_urlsafe(24))"  # → POSTGRES_PASSWORD
+python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"  # → VAULT_KEY
+openssl rand -hex 32  # → SANDBOX_TOKEN
+openssl rand -hex 32  # → BROWSER_SERVICE_TOKEN (generate independently)
 ```
 
-Everything else has defaults. SANDBOX_TOKEN ships with a default — regenerate
-for production (`openssl rand -hex 32`).
+Compose refuses to start when any required secret is empty. Everything else has
+safe defaults.
 
 ### 3. Start
 
@@ -261,15 +265,22 @@ docker compose up -d
 
 Services:
 
-- **frontend** - React/Vite app served by Nginx on port `80`
-- **api** - FastAPI backend on port `8000`
-- **worker** - Celery scanner worker
+- **frontend** - React/Vite app served by Nginx on loopback port `80`
+- **api** - FastAPI backend on loopback port `8000`
+- **scan-worker** - scanner and retest queue; target egress, no AI/provider or
+  sandbox credentials
+- **ai-worker** - guided/autonomous agent queue; the only application service
+  allowed to call the Docker-backed sandbox runner
+- **control-worker** - reports, schedules, watchdogs, and Celery beat; no target
+  egress or vault/provider credentials
+- **browser** - authenticated, secret-free Chromium renderer for hostile targets
 - **postgres** - application database
 - **redis** - task queue, result backend, and event bus
 - **sandbox-runner** - AI agent command-execution sandbox
-- **sandbox-proxy** - filtered egress for sandbox package installs
-- **sandbox-relay** - per-run SOCKS5 relay giving the sandbox scope-limited
-  access to a scan's targets (started on demand, only when opted in)
+- **sandbox-proxy** - per-run filtered mirror egress (image built/published but
+  never started as a shared Compose service)
+- **sandbox-relay** - per-run SOCKS5 relay giving one sandbox scope-limited
+  target access (image built/published; started only when opted in)
 
 First boot runs migrations and seeds system templates/plugins.
 
@@ -280,14 +291,42 @@ docker compose --profile build-only build   # or: make docker-build
 docker compose up -d
 ```
 
-The `build-only` profile carries **sandbox-relay**. The runner spawns it per agent
-run through the Docker API, so compose never starts it — but a plain
-`docker compose build` skips profiled services, and the image has to exist before
-a scan can opt into target egress.
+The `build-only` profile carries **sandbox-proxy** and **sandbox-relay**. The
+runner spawns one of each per agent run through the Docker API, so Compose never
+starts shared instances — but a plain `docker compose build` skips profiled
+services, and both images must exist before an agent can start a shell session.
 
 ### 4. Open
 
 Open **http://localhost** and log in with the admin credentials from `.env`.
+
+This plaintext URL is for same-host access only. Both published ports bind to
+`127.0.0.1` by default.
+
+### Production / network access: terminate HTTPS
+
+Keep `SCANR_UI_BIND=127.0.0.1`, run a TLS reverse proxy on the same host, and
+forward it to `127.0.0.1:80`. For example, a minimal Caddy site is:
+
+```caddyfile
+scanr.example.com {
+    reverse_proxy 127.0.0.1:80
+}
+```
+
+Then configure the browser-facing origin without weakening cookie transport:
+
+```dotenv
+ALLOWED_ORIGINS=https://scanr.example.com
+SECURE_COOKIES=true
+DEVELOPMENT_MODE=false
+```
+
+The frontend emits HSTS when served through that TLS edge. Do not expose port
+80 on a LAN or Tailscale network and do not disable secure cookies for a
+production deployment. If local HTTP development genuinely needs non-secure
+cookies, set `DEVELOPMENT_MODE=true` and `SECURE_COOKIES=false` explicitly; the
+application refuses the latter setting on its own.
 
 ---
 
@@ -535,11 +574,17 @@ concurrency is limited, because a hostile page chooses how long it holds you: a
 JS loop pins a core for as long as it is allowed to. The cap makes one attempt
 survivable; the concurrency limit stops it being multiplied.
 
-`BROWSER_VALIDATION_CONCURRENCY` (default `2`) is **per worker process**, so the
-deployment ceiling is that value times the Celery worker's `--concurrency` (`4`
-in the shipped compose file, giving 8). Eight pages spinning for a minute is
-eight cores — on a small host, turn one of the two numbers down. Raising
-`--concurrency` raises the browser ceiling with it.
+Production rendering runs in a dedicated sidecar that receives no database,
+Redis, JWT, vault, AI-provider, or sandbox credentials. Scan and AI workers call
+it over an internal authenticated network; Chromium and its application code do
+not run in those secret-bearing processes.
+
+`BROWSER_VALIDATION_CONCURRENCY` (default `2`) is a sidecar-wide Chromium launch
+ceiling. `BROWSER_REQUEST_LIMIT` (default `8`) also bounds requests queued by
+Uvicorn before they can accumulate request bodies or temporary screenshots. A
+hostile page can still pin one core for the full attempt cap, so tune the launch,
+memory, and CPU limits to the host rather than increasing them with Celery
+concurrency.
 
 Verdicts are `proved`, `reflected`, `not_reproduced`, and `inconclusive` (the
 page would not load — never reported as clean, for the same reason an
@@ -598,20 +643,22 @@ disposable container with the full pentest toolkit. It is **on by default** and
 **fail-closed**: if the sandbox-runner is unreachable, `run_command` returns
 "sandbox not configured" instead of falling back to something less safe.
 
-**Only one requirement:** set `SANDBOX_TOKEN` in `.env`.
+**Required tokens:** set independently generated `SANDBOX_TOKEN` and
+`BROWSER_SERVICE_TOKEN` values in `.env`. Compose refuses empty values.
 
 ```bash
 # Generate a token and add it to .env:
-echo "SANDBOX_TOKEN=$(openssl rand -hex 32)" >> .env
+printf 'SANDBOX_TOKEN=%s\n' "$(openssl rand -hex 32)" >> .env
+printf 'BROWSER_SERVICE_TOKEN=%s\n' "$(openssl rand -hex 32)" >> .env
 docker compose up -d
 ```
 
-**Verify:** `docker compose exec worker printenv SANDBOX_RUNNER_URL` should
+**Verify:** `docker compose exec ai-worker printenv SANDBOX_RUNNER_URL` should
 print `http://sandbox-runner:8090`.
 
-**Disable:** `docker compose stop sandbox-runner sandbox-proxy`. The sandbox
-services won't start on the next `docker compose up -d` unless you remove the
-`stop`.
+**Disable command execution:** `docker compose stop sandbox-runner`. The
+AI worker fails closed when the runner is unavailable. There is no shared proxy
+to stop: the runner creates and destroys an isolated proxy/network for each run.
 
 **What the shell can reach.** Two levels, both opt-in and admin-only:
 
@@ -637,13 +684,15 @@ To use `run_command` in a scan, you must also enable **"Allow command
 execution"** when launching the AI agent (admin-only aggressive opt-in).
 
 Isolation model: only a dedicated **sandbox-runner** holds the Docker socket and
-it carries **no ScanR secrets**; the secret-holding worker can't touch the
-socket. The agent gets **one persistent, hardened container per run** (state
+it carries **no ScanR application secrets**; only the AI worker can reach its
+authenticated control network, and that worker cannot touch the socket. The
+agent gets **one persistent, hardened container per run** (state
 persists across commands) that is non-root, read-only-rootfs, `cap-drop ALL`,
-and resource/time-limited, on an `internal` Docker network with no route anywhere
-by default. The path is **fail-closed** — if the runner is unavailable, command
-execution is denied — and `run_command` requires admin + the aggressive
-`allow_command_exec` opt-in.
+and resource/time-limited, on its own `internal` Docker network with no route
+anywhere by default. A separate allowlisting proxy is created on that network
+and destroyed with the run, so sandboxes never share an L2 segment. The path is
+**fail-closed** — if the runner is unavailable, command execution is denied —
+and `run_command` requires admin + the aggressive `allow_command_exec` opt-in.
 
 Two levels of network reach, both narrow:
 
@@ -707,16 +756,27 @@ Scopes are checked per endpoint. Two are worth calling out because they changed:
 | `reports:read` | list, inspect, download an existing report |
 | `reports:create` | generate a new report (spawns a background job) |
 | `reports:export` | **deprecated** — still accepted, expands to `reports:read` + `reports:create`. New keys cannot be minted with it. |
-| `ai:generate` | anything that spends LLM budget: finding summaries, report narratives, false-positive testing |
+| `ai:generate` | finding summaries, report narratives and false-positive testing; also requires `findings:read` |
+| `ai:agent` | launch and control guided/autonomous agents; also requires `scans:write` |
+| `ai:aggressive` | exploitation, command execution and target egress; also requires `ai:agent`, `scans:write`, and an admin owner |
+| `ai:configure` | administer AI provider keys, defaults and model selection; admin owner only |
+| `users:manage` | administer user accounts; admin owner only |
+| `integrations:manage` | read/change global integration configuration; admin owner only |
+| `system:manage` | update-status and CVE-feed administration; admin owner only |
 
 > **Breaking change for existing keys.** AI generation used to be reachable with
-> `findings:read`; it now requires `ai:generate`, and unlike `reports:export`
+> `findings:read`; it now requires both `findings:read` and `ai:generate`, and unlike `reports:export`
 > there is deliberately **no alias** — read access should not imply the right to
 > spend money on an upstream API. A key holding only `findings:read` will start
 > getting `403` on `POST /api/v1/ai/scans/{id}/summary`,
 > `POST /api/v1/ai/scans/{id}/report`, and
 > `POST /api/v1/ai/scans/{id}/false-positives`. Add `ai:generate` to any key
 > that needs them.
+
+Admin role and API-key scopes are independent checks: an admin-owned key only
+gets the privileges explicitly listed on that key. The `*` scope grants every
+API-key scope, but intentionally does not grant session-only operations such as
+in-process self-update or changing the owning account's profile/password.
 
 Interactive API docs are available at **http://localhost:8000/docs** when
 `DOCS_ENABLED=true`. They are unauthenticated and publish the full API surface, so
@@ -730,12 +790,14 @@ to turn them on. A local `make dev` run has them on by default.
 | Variable | Default | Description |
 |---|---:|---|
 | `SECRET_KEY` | required | JWT signing secret |
-| `VAULT_KEY` | optional | Fernet key for credential vault encryption |
+| `PROCESS_ROLE` | `api` | Compose-managed runtime identity (`api`, `scan-worker`, `ai-worker`, or `control-worker`); only the API receives JWT/admin bootstrap secrets |
+| `VAULT_KEY` | required by Compose | Fernet key for credentials and webhook signing secrets; startup/migration fails closed without it |
 | `POSTGRES_PASSWORD` | required | PostgreSQL password |
 | `ADMIN_EMAIL` | `admin@scanr.local` | Bootstrap admin email |
 | `ADMIN_PASSWORD` | required | Bootstrap admin password |
 | `ALLOWED_ORIGINS` | `http://localhost` | Comma-separated CORS origins |
-| `SECURE_COOKIES` | `true` | Mark auth cookies as secure |
+| `SECURE_COOKIES` | `true` | Mark auth cookies as secure; `false` is rejected outside explicit development mode |
+| `DEVELOPMENT_MODE` | `false` | Explicitly permits local HTTP-only development settings; never enable in production |
 | `TRUSTED_PROXIES` | empty | Comma-separated proxy IPs/CIDRs allowed to set `X-Forwarded-For` for rate limiting |
 | `SCAN_TARGET_DENYLIST` | infra defaults | Hostnames/IPs that can never be scanned (merged with built-in loopback/link-local/metadata denylist) |
 | `SCAN_HEARTBEAT_TIMEOUT` | `300` | Seconds before a heartbeat-stale running scan is auto-failed |
@@ -748,15 +810,27 @@ to turn them on. A local `make dev` run has them on by default.
 | `DEEPSEEK_API_KEY` | empty | Key for the DeepSeek provider |
 | `SANDBOX_RUNNER_URL` | empty | URL of the sandbox-runner; enables the agent's `run_command` shell when set (fail-closed if unset) |
 | `SANDBOX_TOKEN` | empty | Shared token authenticating the worker to the sandbox-runner |
+| `SANDBOX_NETWORK_PREFIX` | `scanr-sbx-net` | Prefix for the private internal network created for each agent run |
+| `SANDBOX_PROXY_IMAGE` | built image | Filtering proxy image instantiated separately for every agent run |
+| `SANDBOX_PROXY_PORT` | `8888` | Port of the run-local package-mirror proxy |
 | `SANDBOX_MAX_SESSIONS` | 8 | Ceiling on live sandbox containers |
 | `SANDBOX_RELAY_IMAGE` | built image | Image for the per-run SOCKS5 egress relay |
 | `SANDBOX_IMAGE` | `ghcr.io/t3rr0or/scanr-sandbox:latest` | Toolkit image the sandbox runs |
 | `SANDBOX_CMD_TIMEOUT` | `120` | Per-command timeout (seconds) in the sandbox |
-| `BROWSER_VALIDATION_CONCURRENCY` | `2` | Concurrent `browser_validate` attempts **per worker process**. Total ceiling = this × the worker's `--concurrency`. |
+| `BROWSER_SERVICE_TOKEN` | required by Compose | Dedicated token authenticating scan/AI workers to the isolated renderer |
+| `BROWSER_VALIDATION_CONCURRENCY` | `2` | Sidecar-wide ceiling on concurrent Chromium launches |
+| `BROWSER_REQUEST_LIMIT` | `8` | Uvicorn concurrency limit, including requests waiting for a renderer slot |
+| `BROWSER_MEMORY_LIMIT` | `1g` | Browser sidecar container memory limit |
+| `BROWSER_CPU_LIMIT` | `2.0` | Browser sidecar CPU limit |
+| `SCAN_WORKER_CONCURRENCY` | `4` | Processes consuming only the `scan` queue |
+| `AI_WORKER_CONCURRENCY` | `2` | Processes consuming only the `ai` queue |
+| `CONTROL_WORKER_CONCURRENCY` | `2` | Processes consuming only the `control` queue; one also runs beat |
 | `DATABASE_URL` | compose-managed | SQLAlchemy database URL |
 | `REDIS_URL` | compose-managed | Redis URL |
 | `CELERY_BROKER_URL` | compose-managed | Celery broker URL |
 | `CELERY_RESULT_BACKEND` | compose-managed | Celery result backend |
+| `SCANR_API_BIND` | `127.0.0.1` | Host bind address for direct plaintext API access |
+| `SCANR_UI_BIND` | `127.0.0.1` | Host bind address for the plaintext frontend; keep loopback behind TLS |
 | `WORDLIST_DIR` | `/app/wordlists` | Wordlist storage path |
 | `SELF_UPDATE_ENABLED` | `false` | Enables admin-only in-app update when using the self-update Compose override |
 | `SELF_UPDATE_COMMAND` | compose pull/up | Command run by the self-update action |
@@ -775,15 +849,22 @@ Nginx frontend
   |
   v
 FastAPI backend
-  |-- PostgreSQL: scans, hosts, ports, findings, reports
-  |-- Redis: Celery broker, result backend, live events
+  |-- PostgreSQL / Redis (private data network)
+  |-- assist-mode provider calls (API egress only)
   |
-  v
-Celery worker
-  |-- nmap / masscan
-  |-- Nuclei
-  |-- Playwright
-  |-- native Python plugins
+  +-- scan queue --> scan-worker --> targets
+  |                    |
+  |                    +--> isolated browser sidecar --> targets
+  |
+  +-- ai queue ----> ai-worker ----> providers / targets
+  |                    |  |
+  |                    |  +--> isolated browser sidecar
+  |                    +----> sandbox-runner (private control network)
+  |                               |
+  |                               +--> per-run sandbox + mirror proxy
+  |                                    (+ scoped relay when opted in)
+  |
+  +-- control queue -> control-worker + beat (data network only)
 ```
 
 ---

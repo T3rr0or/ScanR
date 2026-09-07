@@ -18,6 +18,7 @@ from scanr.deps import require_scope
 from scanr.models.base import new_uuid
 from scanr.models.user import User
 from scanr.models.webhook import Webhook
+from scanr.utils.exceptions import VaultError
 
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
 
@@ -110,6 +111,16 @@ def _to_read(w: Webhook) -> WebhookRead:
     return d
 
 
+def _encrypt_secret_or_503(secret: str | None) -> str | None:
+    try:
+        return encrypt_secret(secret)
+    except VaultError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="Webhook secret encryption is unavailable; verify VAULT_KEY",
+        ) from exc
+
+
 @router.get("", response_model=list[WebhookRead])
 async def list_webhooks(
     db: AsyncSession = Depends(get_db),
@@ -131,7 +142,7 @@ async def create_webhook(
         user_id=current_user.id,
         name=body.name,
         url=body.url,
-        secret=encrypt_secret(body.secret),
+        secret=_encrypt_secret_or_503(body.secret),
         events=json.dumps(body.events),
         enabled=body.enabled,
     )
@@ -160,7 +171,7 @@ async def update_webhook(
         webhook.url = body.url
     if body.secret is not None:
         # Empty string clears the secret (disables signing).
-        webhook.secret = encrypt_secret(body.secret)
+        webhook.secret = _encrypt_secret_or_503(body.secret)
     if body.events is not None:
         webhook.events = json.dumps(body.events)
     if body.enabled is not None:

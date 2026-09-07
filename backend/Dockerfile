@@ -41,11 +41,6 @@ RUN wget -q https://github.com/projectdiscovery/nuclei/releases/download/v3.3.9/
 
 WORKDIR /app
 
-# Keep Playwright browsers in a system path shared by build-time root and the
-# runtime scanr user. Without this, runtime resolves browsers under /app/.cache
-# while the image build may install them under root's cache.
-ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
-
 # Install Python deps from the pinned, hash-verified lock file (generated from
 # pyproject.toml incl. the [ai] extra — regenerate with:
 #   uv pip compile pyproject.toml --extra ai --python-version 3.12 --generate-hashes -o requirements.txt
@@ -57,9 +52,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Editable installs need scanr/ present.
 COPY scanr/ ./scanr/
 RUN pip install --no-cache-dir -e ".[ai]"
-
-# Install Playwright + Chromium (separate layer so code changes don't re-download browser)
-RUN playwright install --with-deps chromium
 
 # Copy migration assets
 COPY alembic/ ./alembic/
@@ -73,7 +65,7 @@ COPY docker-entrypoint.sh /usr/local/bin/scanr-entrypoint
 # Non-root user — grant nmap/masscan raw socket access via file capabilities
 # so the worker can run scans without NET_ADMIN or running as root.
 RUN groupadd -r scanr && useradd -r -g scanr -d /app -s /bin/false scanr \
-    && chown -R scanr:scanr /app /ms-playwright \
+    && chown -R scanr:scanr /app \
     && chmod +x /usr/local/bin/scanr-entrypoint \
     && setcap cap_net_raw+ep /usr/bin/nmap \
     && (setcap cap_net_raw+ep /usr/bin/masscan || true)

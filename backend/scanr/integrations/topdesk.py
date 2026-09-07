@@ -265,9 +265,19 @@ class TopdeskClient:
             "Content-Type": "application/json",
         }
 
-    def _client(self):
+    async def _client(self, url: str):
         import httpx
 
+        if self._transport is None:
+            from scanr.config import get_settings
+            from scanr.utils.safe_http import pinned_async_client
+
+            return await pinned_async_client(
+                url,
+                extra_denylist=get_settings().scan_denylist,
+                timeout=self._timeout,
+                verify=True,
+            )
         return httpx.AsyncClient(
             timeout=self._timeout,
             transport=self._transport,
@@ -286,9 +296,9 @@ class TopdeskClient:
 
         url = urljoin(self._config.base, path.lstrip("/"))
         try:
-            async with self._client() as client:
+            async with await self._client(url) as client:
                 resp = await client.request(method, url, headers=self._headers(), **kw)
-        except httpx.HTTPError as exc:
+        except (httpx.HTTPError, ValueError) as exc:
             raise TopdeskError(f"Could not reach TOPdesk: {exc}") from exc
 
         if resp.status_code in (401, 403):

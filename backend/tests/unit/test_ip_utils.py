@@ -1,9 +1,13 @@
+import pytest
+
 from scanr.utils.ip_utils import (
     classify_target,
+    expand_target_batch,
     expand_targets,
     is_forbidden_target,
     is_private,
     is_valid_ip,
+    validate_target_batch,
 )
 
 
@@ -27,6 +31,29 @@ def test_expand_range():
 def test_expand_short_range():
     result = list(expand_targets("192.168.1.1-3"))
     assert result == ["192.168.1.1", "192.168.1.2", "192.168.1.3"]
+
+
+def test_expand_range_rejects_unbounded_span_before_iteration():
+    with pytest.raises(ValueError, match="range too large"):
+        list(expand_targets("0.0.0.0-255.255.255.255"))
+
+
+def test_expand_range_rejects_reverse_range():
+    with pytest.raises(ValueError, match="ends before"):
+        list(expand_targets("10.0.0.5-10.0.0.1"))
+
+
+def test_target_batch_enforces_raw_and_aggregate_limits():
+    with pytest.raises(ValueError, match="Too many targets"):
+        validate_target_batch([f"host-{i}.example" for i in range(65)])
+    with pytest.raises(ValueError, match="more than 65536"):
+        validate_target_batch(["10.0.0.0/16", "192.0.2.1"])
+
+
+def test_expand_target_batch_is_bounded_and_preserves_order():
+    assert expand_target_batch(["192.0.2.1", "192.0.2.4/30"]) == [
+        "192.0.2.1", "192.0.2.5", "192.0.2.6",
+    ]
 
 
 def test_expand_hostname():

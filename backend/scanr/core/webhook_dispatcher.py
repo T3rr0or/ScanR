@@ -8,60 +8,72 @@ import logging
 import secrets
 from datetime import datetime, timezone
 
-import httpx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from scanr.config import get_settings
 from scanr.models.webhook import Webhook
+from scanr.utils.exceptions import VaultError
+from scanr.utils import safe_http
 
 logger = logging.getLogger(__name__)
+
+_SECRET_CIPHERTEXT_PREFIX = "enc:v1:"
 
 
 def encrypt_secret(secret: str | None) -> str | None:
     """Encrypt a webhook HMAC secret for storage.
 
     The secret authenticates ScanR to the customer's endpoint, so a database read
-    should not yield a usable signing key. Falls back to plaintext when VAULT_KEY
-    is unconfigured (it is optional) rather than refusing to save the webhook —
-    decrypt_secret reads both forms.
+    must not yield a usable signing key. Encryption failures deliberately abort
+    the write: silently storing plaintext would turn an availability/configuration
+    problem into credential disclosure.
     """
     if not secret:
         return None
     from scanr.credentials import vault
-    from scanr.utils.exceptions import VaultError
 
-    try:
-        return vault.encrypt({"v": secret})
-    except VaultError:
-        logger.warning(
-            "VAULT_KEY is not set — storing the webhook signing secret in plaintext. "
-            "Set VAULT_KEY to encrypt secrets at rest."
-        )
-        return secret
+    return _SECRET_CIPHERTEXT_PREFIX + vault.encrypt({"v": secret})
 
 
 def decrypt_secret(stored: str | None) -> str | None:
     """Return the usable secret from a stored value.
 
-    Accepts both Fernet ciphertext and legacy plaintext, so rows written before
-    encryption keep working without a data migration.
+    New values carry an explicit format/version marker. Raw Fernet ciphertext is
+    accepted only for rollback compatibility with the pre-0026 schema. Legacy
+    plaintext is migrated by Alembic and is never guessed at runtime.
     """
     if not stored:
         return None
     from scanr.credentials import vault
+    if stored.startswith(_SECRET_CIPHERTEXT_PREFIX):
+        ciphertext = stored.removeprefix(_SECRET_CIPHERTEXT_PREFIX)
+    elif stored.startswith("gAAAA"):
+        ciphertext = stored
+    else:
+        raise VaultError(
+            "Webhook secret has an unversioned storage format; run database "
+            "migration 0026 with the configured VAULT_KEY"
+        )
 
     try:
-        return vault.decrypt(stored).get("v") or None
-    except Exception:
-        return stored  # legacy plaintext, or no VAULT_KEY configured
+        payload = vault.decrypt(ciphertext)
+    except VaultError:
+        raise
+    except Exception as exc:
+        raise VaultError("Webhook secret ciphertext has an invalid payload") from exc
+    value = payload.get("v")
+    if not isinstance(value, str) or not value:
+        raise VaultError("Decrypted webhook secret has an invalid payload")
+    return value
 
 
 async def _validate_webhook_host(hostname: str) -> None:
-    """Re-validate webhook host at dispatch time to prevent TOCTOU SSRF.
+    """Best-effort early validation used while configuring a webhook.
 
-    An attacker could register a domain resolving to a safe public IP,
-    then change DNS to an internal IP after creation. Re-resolving at
-    dispatch time closes this window.
+    This gives an operator immediate feedback, but it is not the dispatch-time
+    security boundary: the delivery client resolves once, validates every DNS
+    answer, and pins its TCP connection to that approved answer.
 
     Uses the loop's resolver rather than socket.getaddrinfo: this runs on the
     async request/worker path, and a slow or hanging DNS lookup would otherwise
@@ -107,19 +119,6 @@ async def dispatch(event: str, payload: dict, user_id: str, db: AsyncSession) ->
 
 
 async def _send(webhook: Webhook, event: str, payload: dict, db: AsyncSession) -> None:
-    # Re-validate DNS at dispatch time (TOCTOU protection)
-    from urllib.parse import urlparse
-    hostname = urlparse(webhook.url).hostname
-    if hostname:
-        try:
-            await _validate_webhook_host(hostname)
-        except ValueError:
-            logger.warning("Webhook %s blocked: %s resolves to internal IP", webhook.id, hostname)
-            webhook.last_status = 403
-            webhook.last_triggered_at = datetime.now(timezone.utc)
-            await db.commit()
-            return
-
     delivery_id = secrets.token_hex(16)
     body = json.dumps({
         "event": event,
@@ -133,7 +132,17 @@ async def _send(webhook: Webhook, event: str, payload: dict, db: AsyncSession) -
         "X-ScanR-Delivery": delivery_id,
     }
 
-    signing_secret = decrypt_secret(webhook.secret)
+    try:
+        signing_secret = decrypt_secret(webhook.secret)
+    except VaultError as exc:
+        # A missing/wrong vault key or malformed ciphertext must never degrade to
+        # an unsigned delivery. Record a failed attempt without exposing either
+        # the stored value or decrypted secret in logs.
+        logger.error("Webhook %s not sent: signing secret could not be decrypted: %s", webhook.id, exc)
+        webhook.last_status = 0
+        webhook.last_triggered_at = datetime.now(timezone.utc)
+        await db.commit()
+        return
     if signing_secret:
         sig = hmac.new(signing_secret.encode(), body.encode(), hashlib.sha256).hexdigest()
         headers["X-ScanR-Signature"] = f"sha256={sig}"
@@ -141,7 +150,20 @@ async def _send(webhook: Webhook, event: str, payload: dict, db: AsyncSession) -
     status_code: int = 0
     _RETRY_DELAYS = [1, 5]  # seconds between attempts (3 total)
     try:
-        async with httpx.AsyncClient(timeout=10.0, follow_redirects=False) as client:
+        # Validation and connection use the same DNS answer. A normal httpx
+        # client would resolve again after a preflight check, leaving a DNS-
+        # rebinding window between authorization and TCP connect.
+        client = await safe_http.pinned_async_client(
+            webhook.url,
+            extra_denylist=get_settings().scan_denylist,
+            verify=True,
+            # Webhooks are user-configurable and their creation-time check
+            # rejects RFC1918 destinations. Enforce the same rule on the DNS
+            # answer actually used for the connection so a later DNS change
+            # cannot turn a public hook into an internal SSRF primitive.
+            forbid_private=True,
+        )
+        async with client:
             for attempt, delay in enumerate([0] + _RETRY_DELAYS):
                 if delay:
                     await asyncio.sleep(delay)
@@ -160,6 +182,9 @@ async def _send(webhook: Webhook, event: str, payload: dict, db: AsyncSession) -
                 except Exception as exc:
                     logger.warning("Webhook %s attempt %d failed: %s", webhook.id, attempt + 1, exc)
                     status_code = 0
+    except safe_http.UnsafeHTTPDestination as exc:
+        logger.warning("Webhook %s blocked: %s", webhook.id, exc)
+        status_code = 403
     except Exception as exc:
         logger.warning("Webhook %s delivery error: %s", webhook.id, exc)
         status_code = 0

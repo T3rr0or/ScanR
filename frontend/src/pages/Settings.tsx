@@ -1649,6 +1649,21 @@ const ALL_SCOPES = [
 		desc: "Run AI summaries, report narratives and false-positive testing (uses LLM credit)",
 	},
 	{
+		value: "ai:agent",
+		label: "AI — agent",
+		desc: "Launch and control guided or autonomous AI agent runs",
+	},
+	{
+		value: "ai:aggressive",
+		label: "AI — aggressive (admin)",
+		desc: "Allow agent exploitation, command execution and target egress; also requires AI agent and scans write",
+	},
+	{
+		value: "ai:configure",
+		label: "AI — configure (admin)",
+		desc: "Manage provider keys, defaults and model selection",
+	},
+	{
 		value: "credentials:read",
 		label: "Credentials — read",
 		desc: "List credentials",
@@ -1665,9 +1680,29 @@ const ALL_SCOPES = [
 		desc: "Register/remove agents",
 	},
 	{
+		value: "plugins:write",
+		label: "Plugins — configure (admin)",
+		desc: "Enable, disable and configure scanner plugins",
+	},
+	{
+		value: "users:manage",
+		label: "Users — manage (admin)",
+		desc: "List, create, update and delete user accounts",
+	},
+	{
+		value: "integrations:manage",
+		label: "Integrations — manage (admin)",
+		desc: "Read and change global integration configuration",
+	},
+	{
+		value: "system:manage",
+		label: "System — manage (admin)",
+		desc: "Manage update status and CVE feed refresh; self-update remains session-only",
+	},
+	{
 		value: "*",
 		label: "Full access",
-		desc: "All scopes (same as a user session)",
+		desc: "All API-key scopes; session-only operations such as self-update are excluded",
 	},
 ];
 

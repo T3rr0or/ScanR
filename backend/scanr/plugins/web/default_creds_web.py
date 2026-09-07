@@ -107,7 +107,7 @@ class DefaultCredsWebPlugin(PluginBase):
         self, context, ip: str, port: int, scheme: str, creds: list[tuple[str, str]], delay_s: float = 0.5
     ) -> list[tuple]:
         found = []
-        async with httpx.AsyncClient(verify=False, timeout=5.0, follow_redirects=True,
+        async with httpx.AsyncClient(verify=False, timeout=5.0, follow_redirects=False,
                 **context.proxy_config()
             ) as client:
             for path in ADMIN_PATHS:

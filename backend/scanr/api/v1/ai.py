@@ -21,7 +21,14 @@ from scanr.ai.llm.models import list_models as fetch_models
 from scanr.config import get_settings
 from scanr.core.limiter import limiter
 from scanr.db import get_db
-from scanr.deps import get_current_user, require_admin, require_scope
+from scanr.deps import (
+    ensure_admin,
+    ensure_scopes,
+    get_current_user,
+    require_admin_scope,
+    require_scope,
+    require_scopes,
+)
 from scanr.models import AiAgentRun, Finding, Host, Scan
 from scanr.models.base import new_uuid
 from scanr.models.user import User
@@ -92,7 +99,7 @@ async def set_api_key(
     provider: str,
     body: ApiKeyBody,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_admin),
+    current_user: User = Depends(require_admin_scope("ai:configure")),
 ):
     """Store an encrypted provider API key entered from the web app (admin only)."""
     _check_provider(provider)
@@ -110,7 +117,7 @@ async def set_api_key(
 async def delete_api_key(
     provider: str,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_admin),
+    current_user: User = Depends(require_admin_scope("ai:configure")),
 ):
     """Remove a stored provider API key (admin only). Env keys are unaffected."""
     _check_provider(provider)
@@ -122,7 +129,7 @@ async def delete_api_key(
 async def set_config(
     body: AIConfigBody,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_admin),
+    current_user: User = Depends(require_admin_scope("ai:configure")),
 ):
     """Set the default AI provider (admin only)."""
     _check_provider(body.provider)
@@ -134,7 +141,7 @@ async def set_model(
     provider: str,
     body: ModelBody,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_admin),
+    current_user: User = Depends(require_admin_scope("ai:configure")),
 ):
     """Set (or clear, with an empty model) the model used for a provider (admin)."""
     _check_provider(provider)
@@ -145,7 +152,7 @@ async def set_model(
 async def list_provider_models(
     provider: str,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_admin),
+    current_user: User = Depends(require_admin_scope("ai:configure")),
 ):
     """Fetch available models from the provider's API (cached for 5 min)."""
     _check_provider(provider)
@@ -265,7 +272,7 @@ async def summarize_scan(
     scan_id: str,
     body: SummaryRequest | None = None,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_scope("ai:generate")),
+    current_user: User = Depends(require_scopes("findings:read", "ai:generate")),
 ):
     """Generate an AI narrative summary of a scan's findings (read-only, assist mode)."""
     body = body or SummaryRequest()
@@ -336,7 +343,7 @@ async def report_narrative(
     scan_id: str,
     body: SummaryRequest | None = None,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_scope("ai:generate")),
+    current_user: User = Depends(require_scopes("findings:read", "ai:generate")),
 ):
     """Generate a structured engagement-report narrative (read-only, assist mode)."""
     body = body or SummaryRequest()
@@ -379,7 +386,7 @@ async def false_positives(
     scan_id: str,
     body: SummaryRequest | None = None,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_scope("ai:generate")),
+    current_user: User = Depends(require_scopes("findings:read", "ai:generate")),
 ):
     """Have the model flag findings likely to be false positives (advisory only)."""
     body = body or SummaryRequest()
@@ -476,18 +483,16 @@ async def launch_agent(
     scan_id: str,
     body: AgentRunRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_scope("scans:write")),
+    current_user: User = Depends(require_scopes("scans:write", "ai:agent")),
 ):
     """Launch a guided/autonomous AI agent run against a completed scan."""
     await _own_scan(db, scan_id, current_user.id)
 
     # Aggressive capabilities (exploitation / privilege escalation) are admin-only
     # and unlock active, potentially-destructive actions — require an admin.
-    if body.aggressive_requested() and getattr(current_user, "role", None) != "admin":
-        raise HTTPException(
-            status_code=403,
-            detail="Aggressive capabilities require an admin user.",
-        )
+    if body.aggressive_requested():
+        ensure_scopes(request, current_user, "ai:aggressive")
+        ensure_admin(current_user)
 
     # Validate provider + key up front so the user gets an immediate, clear error
     # instead of a failed background run.
@@ -705,13 +710,19 @@ async def agent_chat(
     run_id: str,
     body: ChatBody,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_scope("scans:write")),
+    current_user: User = Depends(require_scopes("scans:write", "ai:agent")),
 ):
     """Send a follow-up message to a completed agent run and resume it."""
     run = await db.get(AiAgentRun, run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="Agent run not found")
     await _own_scan(db, run.scan_id, current_user.id)
+
+    # Continuing an aggressive run can invoke the capabilities granted when it
+    # was created, so the caller must still hold that distinct high-risk scope.
+    if run.capabilities:
+        ensure_scopes(request, current_user, "ai:aggressive")
+        ensure_admin(current_user)
 
     if run.status == "running":
         raise HTTPException(
@@ -758,7 +769,7 @@ async def agent_stop(
     request: Request,
     run_id: str,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_scope("scans:write")),
+    current_user: User = Depends(require_scopes("scans:write", "ai:agent")),
 ):
     """Ask a running agent to stop after its current step (like Claude's Stop)."""
     run = await db.get(AiAgentRun, run_id)
@@ -787,7 +798,7 @@ async def decide_agent_approval(
     run_id: str,
     body: ApprovalBody,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_scope("scans:write")),
+    current_user: User = Depends(require_scopes("scans:write", "ai:agent")),
 ):
     """Operator allow/deny for an intrusive action a guided run is paused on.
 
@@ -804,6 +815,10 @@ async def decide_agent_approval(
     pending = _json.loads(run.pending_approval) if run.pending_approval else None
     if not pending or pending.get("approval_id") != body.approval_id:
         raise HTTPException(status_code=409, detail="No matching pending approval for this run")
+
+    if body.decision == "allow" and run.capabilities:
+        ensure_scopes(request, current_user, "ai:aggressive")
+        ensure_admin(current_user)
 
     try:
         from scanr.db.redis import get_redis
@@ -822,7 +837,7 @@ async def cancel_agent_run(
     request: Request,
     run_id: str,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_scope("scans:write")),
+    current_user: User = Depends(require_scopes("scans:write", "ai:agent")),
 ):
     """Operator Stop for an in-flight run. Sets a Redis cancel flag the worker's
     agent loop checks between iterations; the run stops cleanly and is marked

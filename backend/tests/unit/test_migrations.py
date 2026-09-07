@@ -15,7 +15,7 @@ from pathlib import Path
 from alembic import command
 from alembic.config import Config
 from alembic.script import ScriptDirectory
-from sqlalchemy import create_engine, inspect
+from sqlalchemy import create_engine, inspect, text
 
 _ALEMBIC_INI = Path(__file__).resolve().parents[2] / "alembic.ini"
 
@@ -51,6 +51,66 @@ def test_upgrade_head_builds_model_schema() -> None:
                 cols = {c["name"] for c in insp.get_columns(table.name)}
                 missing = {c.name for c in table.columns} - cols
                 assert not missing, f"{table.name} missing migrated column(s): {missing}"
+        finally:
+            engine.dispose()
+
+
+def test_webhook_secret_migration_encrypts_plaintext_and_is_rollback_safe() -> None:
+    """0026 removes ambiguous plaintext without breaking a deliberate rollback."""
+    from scanr.core.webhook_dispatcher import decrypt_secret
+    from scanr.credentials import vault
+
+    with tempfile.TemporaryDirectory() as tmp:
+        db_file = Path(tmp) / "webhook-secret.db"
+        cfg = _config(f"sqlite+aiosqlite:///{db_file}")
+        command.upgrade(cfg, "0025")
+
+        raw_ciphertext = vault.encrypt({"v": "raw-fernet-secret"})
+        versioned_ciphertext = "enc:v1:" + vault.encrypt({"v": "versioned-secret"})
+        engine = create_engine(f"sqlite:///{db_file}")
+        try:
+            with engine.begin() as conn:
+                conn.execute(
+                    text(
+                        "INSERT INTO users "
+                        "(id, email, hashed_password, role, is_active, failed_login_count) "
+                        "VALUES ('migration-user', 'migration@example.com', 'hash', "
+                        "'admin', 1, 0)"
+                    )
+                )
+                for webhook_id, secret in (
+                    ("plain", "legacy-plaintext-secret"),
+                    ("raw", raw_ciphertext),
+                    ("versioned", versioned_ciphertext),
+                ):
+                    conn.execute(
+                        text(
+                            "INSERT INTO webhooks "
+                            "(id, user_id, name, url, secret, events, enabled) "
+                            "VALUES (:id, 'migration-user', :id, "
+                            "'https://example.com/hook', :secret, '[]', 1)"
+                        ),
+                        {"id": webhook_id, "secret": secret},
+                    )
+
+            command.upgrade(cfg, "0026")
+            with engine.connect() as conn:
+                migrated = dict(
+                    conn.execute(text("SELECT id, secret FROM webhooks")).all()
+                )
+            assert all(value.startswith("enc:v1:gAAAA") for value in migrated.values())
+            assert decrypt_secret(migrated["plain"]) == "legacy-plaintext-secret"
+            assert decrypt_secret(migrated["raw"]) == "raw-fernet-secret"
+            assert decrypt_secret(migrated["versioned"]) == "versioned-secret"
+
+            command.downgrade(cfg, "0025")
+            with engine.connect() as conn:
+                downgraded = dict(
+                    conn.execute(text("SELECT id, secret FROM webhooks")).all()
+                )
+            assert all(value.startswith("gAAAA") for value in downgraded.values())
+            assert all(not value.startswith("enc:v1:") for value in downgraded.values())
+            assert decrypt_secret(downgraded["plain"]) == "legacy-plaintext-secret"
         finally:
             engine.dispose()
 
