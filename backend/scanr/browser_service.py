@@ -76,7 +76,11 @@ async def _resolve_authorized(url: str) -> tuple[str, str]:
         )
     except (OSError, UnicodeError) as exc:
         raise HTTPException(status_code=400, detail="browser target did not resolve") from exc
-    addresses = sorted({canonical_ip(info[4][0]) or info[4][0] for info in infos})
+    # str(): typeshed's sockaddr union includes a non-str form, so the element
+    # widens to str | int. For the INET families here it is already a string.
+    addresses = sorted(
+        {canonical_ip(str(info[4][0])) or str(info[4][0]) for info in infos}
+    )
     if not addresses:
         raise HTTPException(status_code=400, detail="browser target did not resolve")
     # Reject mixed answers rather than selecting the safe-looking one: otherwise

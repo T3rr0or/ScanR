@@ -16,7 +16,9 @@ async def resolve_hostname(hostname: str) -> list[str]:
     loop = asyncio.get_event_loop()
     try:
         infos = await loop.getaddrinfo(hostname, None)
-        return list({info[4][0] for info in infos})
+        # str(): typeshed's sockaddr union includes a non-str form, so the
+        # element widens to str | int; for these families it is already a string.
+        return list({str(info[4][0]) for info in infos})
     except socket.gaierror:
         return []
 

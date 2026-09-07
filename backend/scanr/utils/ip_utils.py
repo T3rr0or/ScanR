@@ -296,7 +296,9 @@ async def resolve_and_check_target(hostname: str, extra_denylist: set[str] | Non
     except (OSError, UnicodeError):  # gaierror is an OSError subclass
         return False  # cannot resolve — connection will fail at scan time anyway
     for info in infos:
-        if is_forbidden_target(info[4][0], extra_denylist):
+        # str(): typeshed's sockaddr union includes a non-str form, so the
+        # element widens to str | int; for these families it is already a string.
+        if is_forbidden_target(str(info[4][0]), extra_denylist):
             return True
     return False
 

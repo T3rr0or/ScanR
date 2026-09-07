@@ -53,6 +53,7 @@ def _credential_fields(body: str) -> str:
     present = [field for field in _CREDENTIAL_FIELDS if f'"{field}"' in body]
     return ", ".join(present) if present else "unrecognised response shape"
 
+
 # Azure IMDS
 _AZURE_METADATA_URL = "http://169.254.169.254/metadata/instance?api-version=2021-02-01"
 _AZURE_SIGNATURES = [
