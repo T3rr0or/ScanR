@@ -45,6 +45,11 @@ logger = logging.getLogger("scanr.sandbox.egress_relay")
 
 _PORT = int(os.environ.get("SCANR_RELAY_PORT", "1080"))
 _ALLOWED_RAW = os.environ.get("SCANR_ALLOWED_CIDRS", "")
+# Subnets that are scanner infrastructure rather than targets — in practice the
+# shared egress bridge, where every other run's relay and proxy listen. Denied
+# ahead of the scope check so a scan authorized for a broad RFC1918 range cannot
+# reach a sibling run's relay and borrow its scope.
+_DENIED_RAW = os.environ.get("SCANR_DENIED_CIDRS", "")
 _CONNECT_TIMEOUT = float(os.environ.get("SCANR_RELAY_CONNECT_TIMEOUT", "10"))
 _IDLE_TIMEOUT = float(os.environ.get("SCANR_RELAY_IDLE_TIMEOUT", "300"))
 # Bound concurrent relayed connections so a scan loop inside the sandbox cannot
@@ -94,8 +99,13 @@ def parse_allowlist(raw: str) -> list[ipaddress.IPv4Network | ipaddress.IPv6Netw
 
 
 class Relay:
-    def __init__(self, allowed: list[ipaddress.IPv4Network | ipaddress.IPv6Network]):
+    def __init__(
+        self,
+        allowed: list[ipaddress.IPv4Network | ipaddress.IPv6Network],
+        denied: list[ipaddress.IPv4Network | ipaddress.IPv6Network] | None = None,
+    ):
         self._allowed = allowed
+        self._denied = denied or []
         self._sem = asyncio.Semaphore(_MAX_CONNS)
 
     # ── authorization ─────────────────────────────────────────────────────────
@@ -106,6 +116,13 @@ class Relay:
         except ValueError:
             return False
         return any(ip in net for net in self._allowed)
+
+    def _is_denied(self, addr: str) -> bool:
+        try:
+            ip = ipaddress.ip_address(addr)
+        except ValueError:
+            return True
+        return any(ip in net for net in self._denied)
 
     def _check_destination(self, addr: str) -> tuple[bool, str]:
         """Single authorization choke point. Returns (allowed, reason)."""
@@ -118,6 +135,10 @@ class Relay:
         # reserved must be refused even if a scope entry somehow covers them.
         if is_forbidden_target(canon):
             return False, f"{canon} is forbidden infrastructure"
+        # Then our own egress bridge: a scope may legitimately cover RFC1918,
+        # but a sibling run's relay is never a target.
+        if self._is_denied(canon):
+            return False, f"{canon} is sandbox egress infrastructure"
         if not self._in_scope(canon):
             return False, f"{canon} is outside the scan's authorized scope"
         return True, ""
@@ -271,13 +292,21 @@ class Relay:
 async def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s %(message)s")
     allowed = parse_allowlist(_ALLOWED_RAW)
+    denied = parse_allowlist(_DENIED_RAW)
     if not allowed:
         # Still serve, so the sandbox gets a clean SOCKS refusal rather than a
         # connection error it might mistake for a firewall quirk.
         logger.warning("No egress scope configured — every destination will be refused")
     else:
         logger.info("Egress allowlist: %s", ", ".join(str(n) for n in allowed))
-    relay = Relay(allowed)
+    if denied:
+        logger.info("Egress denylist: %s", ", ".join(str(n) for n in denied))
+    else:
+        logger.warning(
+            "No egress denylist configured — cannot distinguish a target from "
+            "another run's relay on the shared bridge"
+        )
+    relay = Relay(allowed, denied)
     server = await asyncio.start_server(relay.handle, "0.0.0.0", _PORT)
     logger.info("SOCKS5 egress relay listening on 0.0.0.0:%d", _PORT)
     async with server:

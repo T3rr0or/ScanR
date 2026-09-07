@@ -102,6 +102,54 @@ class _PinnedNetworkBackend(httpcore.AsyncNetworkBackend):
         await self._backend.sleep(seconds)
 
 
+def client_pinned_to_ip(
+    ip: str,
+    port: int,
+    *,
+    hostname: str | None = None,
+    timeout: float | httpx.Timeout = 10.0,
+    verify: bool = False,
+    headers: dict | None = None,
+    proxy_config: dict | None = None,
+    follow_redirects: bool = False,
+    limits: httpx.Limits | None = None,
+) -> httpx.AsyncClient:
+    """Client for an address the scan already authorized, reached by vhost name.
+
+    Plugins prefer a hostname over an IP so name-based virtual hosts serve their
+    real application. An ordinary client resolves that name again at connect
+    time, which reopens the DNS-rebinding window the engine closed when it
+    resolved and validated the target once: a low-TTL record can point somewhere
+    else entirely by the time a plugin runs. Pinning the TCP destination to the
+    IP the engine authorized keeps the Host header and TLS SNI intact while
+    making the second lookup irrelevant.
+
+    When an egress proxy is configured the connection goes to the proxy rather
+    than the target, so pinning is skipped — the proxy is the authorized path.
+    """
+    kwargs: dict = {
+        "timeout": timeout,
+        "follow_redirects": follow_redirects,
+    }
+    if headers:
+        kwargs["headers"] = headers
+    if limits is not None:
+        kwargs["limits"] = limits
+
+    if proxy_config:
+        return httpx.AsyncClient(verify=verify, **proxy_config, **kwargs)
+
+    transport = httpx.AsyncHTTPTransport(verify=verify, trust_env=False, retries=0)
+    pool = getattr(transport, "_pool", None)
+    if pool is None or not hasattr(pool, "_network_backend"):
+        raise RuntimeError("httpx transport no longer exposes a pinnable network backend")
+    authority = (hostname or ip).rstrip(".").lower()
+    pool._network_backend = _PinnedNetworkBackend(
+        PinnedTarget(hostname=authority, ip=ip, port=port)
+    )
+    return httpx.AsyncClient(transport=transport, trust_env=False, **kwargs)
+
+
 async def pinned_async_client(
     url: str,
     *,

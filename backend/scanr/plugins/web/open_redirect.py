@@ -56,36 +56,31 @@ class OpenRedirectPlugin(PluginBase):
                         resp = await client.get(url)
                         location = resp.headers.get("location", "")
                         # Only flag if redirect goes TO external host, not just contains it as query param
-                        if location:
-                            parsed = urlparse(location)
-                            if parsed.hostname and "evil.example.com" in parsed.hostname:
-                                pass  # true open redirect — will fall through to return
-                            elif "evil.example.com" in parsed.query or "evil.example.com" in parsed.path:
-                                # Canary appears in redirect query/path but host is internal — likely login redirect
-                                if resp.status_code in (301, 302, 307, 308) and parsed.hostname is None:
-                                    # Relative redirect to same origin with canary in params — skip
-                                    continue
-                            else:
-                                continue  # no canary in location at all
-                        else:
+                        if not location:
                             continue
-                            return FindingData(
-                                plugin_id=self.id,
-                                severity=Severity.medium,
-                                title="Open Redirect",
-                                description=(
-                                    "The application redirects to an attacker-controlled URL via the "
-                                    f"'{param}' parameter. This can be used for phishing attacks."
-                                ),
-                                evidence=f"GET {url} → Location: {location}",
-                                remediation=(
-                                    "Validate redirect targets against an allowlist of trusted domains. "
-                                    "Reject or sanitize external URLs."
-                                ),
-                                references=["https://owasp.org/www-community/attacks/Unvalidated_Redirects_and_Forwards_Cheat_Sheet"],
-                                port_number=port,
-                                protocol="tcp",
-                            )
+                        parsed = urlparse(location)
+                        if not (parsed.hostname and "evil.example.com" in parsed.hostname):
+                            # Canary echoed in the query/path of a same-origin redirect (a
+                            # login bounce, say) is not a redirect we control — only a
+                            # Location whose *host* is the canary proves the redirect.
+                            continue
+                        return FindingData(
+                            plugin_id=self.id,
+                            severity=Severity.medium,
+                            title="Open Redirect",
+                            description=(
+                                "The application redirects to an attacker-controlled URL via the "
+                                f"'{param}' parameter. This can be used for phishing attacks."
+                            ),
+                            evidence=f"GET {url} → Location: {location}",
+                            remediation=(
+                                "Validate redirect targets against an allowlist of trusted domains. "
+                                "Reject or sanitize external URLs."
+                            ),
+                            references=["https://owasp.org/www-community/attacks/Unvalidated_Redirects_and_Forwards_Cheat_Sheet"],
+                            port_number=port,
+                            protocol="tcp",
+                        )
                     except Exception:
                         continue
         except Exception:

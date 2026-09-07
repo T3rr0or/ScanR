@@ -4,7 +4,7 @@ import logging
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import AfterValidator, BaseModel, Field
 from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,6 +15,7 @@ from scanr.auth.password import (
     password_within_bcrypt_limit,
     verify_password,
 )
+from scanr.core.limiter import limiter
 from scanr.db import get_db
 from scanr.deps import get_current_user, require_admin_scope, require_session_user
 from scanr.models.base import new_uuid
@@ -89,7 +90,12 @@ async def update_profile(
 
 
 @router.post("/me/change-password", status_code=204)
+# Verifying current_password makes this a password oracle. Without a limit, a
+# stolen access token could brute-force it here: the account lockout only counts
+# failures on /auth/login, so attempts against this endpoint are otherwise free.
+@limiter.limit("5/minute")
 async def change_password(
+    request: Request,
     body: PasswordChange,
     response: Response,
     db: AsyncSession = Depends(get_db),

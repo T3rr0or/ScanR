@@ -1,6 +1,11 @@
 from __future__ import annotations
 
+import logging
+
 from scanr.plugins.network._pentest_common import *
+from scanr.utils.safe_http import UnsafeHTTPDestination, pinned_async_client
+
+logger = logging.getLogger(__name__)
 
 
 class SubdomainTakeoverPlugin(PluginBase):
@@ -36,11 +41,25 @@ class SubdomainTakeoverPlugin(PluginBase):
             dangling = True
 
         body_hit = False
+        # A dangling CNAME is attacker-influenced and may point anywhere,
+        # including inside our own infrastructure. Resolve and validate the
+        # answer once, then pin to it, rather than letting a plain client
+        # follow whatever the record currently says.
         try:
-            async with httpx.AsyncClient(timeout=6.0, verify=False, follow_redirects=False, **context.proxy_config()) as client:
-                resp = await client.get(f"http://{domain}/")
+            proxy_config = context.proxy_config()
+            url = f"http://{domain}/"
+            if proxy_config:
+                client = httpx.AsyncClient(
+                    timeout=6.0, verify=False, follow_redirects=False, **proxy_config
+                )
+            else:
+                client = await pinned_async_client(url, timeout=6.0, verify=False)
+            async with client:
+                resp = await client.get(url)
                 text = resp.text[:5000].lower()
                 body_hit = any(marker in text for marker in TAKEOVER_FINGERPRINTS[provider])
+        except UnsafeHTTPDestination as exc:
+            logger.debug("subdomain_takeover: refusing %s: %s", domain, exc)
         except Exception:
             pass
 

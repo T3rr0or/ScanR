@@ -1,5 +1,7 @@
 """Unit tests for the vulnerable-JS-library plugin: detection, version ranges,
 and finding construction (no network — pure logic)."""
+import pytest
+
 from scanr.core.plugin_base import Severity
 from scanr.plugins.web.js_libraries import (
     JsLibrariesPlugin,
@@ -73,3 +75,54 @@ def test_build_finding_current_version_is_info():
     assert f is not None
     assert f.severity == Severity.info
     assert not f.cve_ids
+
+
+# ── script fetching is scope-checked ─────────────────────────────────────────
+
+def test_origin_normalizes_default_ports():
+    from scanr.plugins.web.js_libraries import _origin_of
+
+    assert _origin_of("https://a.test/x.js") == _origin_of("https://a.test:443/x.js")
+    assert _origin_of("http://a.test/x.js") == _origin_of("http://a.test:80/x.js")
+    assert _origin_of("https://a.test/x") != _origin_of("http://a.test/x")
+
+
+def test_non_http_script_srcs_have_no_origin():
+    """javascript:/data: srcs must not be mistaken for same-origin fetches."""
+    from scanr.plugins.web.js_libraries import _origin_of
+
+    assert _origin_of("javascript:void(0)") is None
+    assert _origin_of("data:text/javascript,1") is None
+    assert _origin_of("//protocol-relative/x.js") is None
+
+
+@pytest.mark.asyncio
+async def test_off_origin_script_src_goes_through_the_pinned_client(monkeypatch):
+    """A page's <script src> is attacker-influenced.
+
+    An off-origin src is a request the *target* told us to make, so it must be
+    resolved and denylist-checked rather than fetched with the scan's own
+    credential-bearing client — otherwise a src pointing at cloud metadata is a
+    straight SSRF with the operator's auth headers attached.
+    """
+    from scanr.plugins.web import js_libraries
+
+    asked: list[str] = []
+
+    async def fake_pinned(url, **kwargs):
+        asked.append(url)
+        raise js_libraries.UnsafeHTTPDestination("denied")
+
+    monkeypatch.setattr(js_libraries, "pinned_async_client", fake_pinned)
+
+    class Client:
+        async def get(self, *_a, **_kw):
+            raise AssertionError("off-origin src must not use the scan client")
+
+    results: list = []
+    await js_libraries.JsLibrariesPlugin()._fetch_and_detect(
+        Client(), "http://target.test/", ["http://169.254.169.254/latest/meta-data/"], results
+    )
+
+    assert asked == ["http://169.254.169.254/latest/meta-data/"]
+    assert results == [], "a denied fetch must not yield a finding"

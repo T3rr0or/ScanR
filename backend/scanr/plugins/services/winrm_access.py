@@ -66,7 +66,10 @@ class WinRMAccessPlugin(PluginBase):
                     else:
                         ntlm_user = username
                     auth = HttpNtlmAuth(ntlm_user, password)
-                    test_resp = session.get(url, auth=auth, timeout=10)
+                    # requests follows redirects by default; a redirecting (or MITM'd)
+                    # endpoint would otherwise complete the NTLM handshake against an
+                    # off-scope host, leaking a relayable response.
+                    test_resp = session.get(url, auth=auth, timeout=10, allow_redirects=False)
                     if test_resp.status_code in (200, 405, 500):
                         return [FindingData(
                             plugin_id=self.id,

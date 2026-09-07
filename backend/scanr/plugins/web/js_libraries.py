@@ -18,11 +18,12 @@ import logging
 import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse
 
 from scanr.core.plugin_base import FindingData, PluginBase, PluginCategory, Severity
 from scanr.plugins.web._crawler import create_web_client
 from scanr.plugins.web._ports import is_web_port, web_scheme
+from scanr.utils.safe_http import UnsafeHTTPDestination, pinned_async_client
 
 if TYPE_CHECKING:
     from scanr.core.context import ScanContext
@@ -37,6 +38,18 @@ _MAX_FETCHED = 25           # external scripts we actually download to fingerpri
 _MAX_SCRIPT_BYTES = 300_000  # only scan the head of a script for a version banner
 _SCRIPT_SRC_RE = re.compile(r"<script[^>]+src\s*=\s*[\"']?([^\"'\s>]+)", re.IGNORECASE)
 _INLINE_SCRIPT_RE = re.compile(r"<script(?![^>]*\bsrc=)[^>]*>(.*?)</script>", re.IGNORECASE | re.DOTALL)
+
+
+def _origin_of(url: str) -> tuple[str, str, int] | None:
+    """(scheme, host, port) for `url`, or None when it has no usable origin."""
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+        return None
+    try:
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    except ValueError:
+        return None
+    return parsed.scheme, parsed.hostname.rstrip(".").lower(), port
 
 
 @dataclass
@@ -222,10 +235,12 @@ class JsLibrariesPlugin(PluginBase):
             scheme = web_scheme(port)
             base = f"{scheme}://{authority}:{port.number}/"
             try:
-                detected = await self._scan_page(context, base)
+                detected = await self._scan_page(context, base, host.ip, port.number)
                 # If the vhost gave nothing but we used a hostname, retry by IP.
                 if not detected and authority != host.ip:
-                    detected = await self._scan_page(context, f"{scheme}://{host.ip}:{port.number}/")
+                    detected = await self._scan_page(
+                        context, f"{scheme}://{host.ip}:{port.number}/", host.ip, port.number
+                    )
             except Exception as exc:  # noqa: BLE001 - never let one port break the scan
                 logger.debug("js_libraries: %s failed: %s", base, exc)
                 continue
@@ -239,10 +254,19 @@ class JsLibrariesPlugin(PluginBase):
                     findings.append(finding)
         return findings
 
-    async def _scan_page(self, context: "ScanContext", base: str) -> list[tuple[str, str, str]]:
+    async def _scan_page(
+        self, context: "ScanContext", base: str, pin_ip: str, pin_port: int
+    ) -> list[tuple[str, str, str]]:
         """Fetch the page, extract scripts, and return (lib, version, source_url)."""
         results: list[tuple[str, str, str]] = []
-        async with create_web_client(context, with_limits=True) as client:
+        base_origin = _origin_of(base)
+        async with create_web_client(
+            context,
+            with_limits=True,
+            pin_ip=pin_ip,
+            pin_port=pin_port,
+            pin_hostname=base_origin[1] if base_origin else None,
+        ) as client:
             resp = await client.get(base, follow_redirects=False, timeout=10.0)
             html = resp.text
             page_url = str(resp.url)
@@ -271,21 +295,47 @@ class JsLibrariesPlugin(PluginBase):
                 else:
                     need_fetch.append(src)
 
-            await self._fetch_and_detect(client, need_fetch[:_MAX_FETCHED], results)
+            await self._fetch_and_detect(client, page_url, need_fetch[:_MAX_FETCHED], results)
         return results
 
-    async def _fetch_and_detect(self, client, urls: list[str], results: list) -> None:
+    async def _fetch_and_detect(
+        self, client, page_url: str, urls: list[str], results: list
+    ) -> None:
         sem = asyncio.Semaphore(8)
+        origin = _origin_of(page_url)
+
+        async def fetch_body(u: str) -> str | None:
+            """Return a script body, or None if the URL is not safe to fetch.
+
+            A page's script srcs are attacker-influenced: an off-origin src is a
+            request we were told to make, not one we chose. Same-origin scripts
+            reuse the scan's client (already pinned to the authorized target and
+            carrying its credentials). Anything else — a CDN-hosted bundle whose
+            URL carries no version — is fetched through a pinned client that
+            rejects loopback/link-local answers, and *without* the operator's
+            auth headers, which belong only to the target.
+            """
+            target = _origin_of(u)
+            if target is None:
+                return None  # javascript:/data:/relative — nothing to fetch
+            if target == origin:
+                r = await client.get(u, follow_redirects=False, timeout=6.0)
+                return r.text if r.status_code == 200 else None
+            async with await pinned_async_client(u, verify=False, timeout=6.0) as safe:
+                r = await safe.get(u)
+                return r.text if r.status_code == 200 else None
 
         async def one(u: str) -> None:
             async with sem:
                 try:
-                    r = await client.get(u, follow_redirects=False, timeout=6.0)
-                    if r.status_code != 200:
+                    body = await fetch_body(u)
+                    if body is None:
                         return
-                    hit = _detect(u, r.text)
+                    hit = _detect(u, body)
                     if hit:
                         results.append((hit[0], hit[1], u))
+                except UnsafeHTTPDestination as exc:
+                    logger.debug("js_libraries: refusing script src %s: %s", u, exc)
                 except Exception:  # noqa: BLE001 - a single script fetch failing is fine
                     return
 

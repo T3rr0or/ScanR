@@ -41,6 +41,27 @@ def verify_password(plain: str, hashed: str) -> bool:
         return False
 
 
+# A real hash at _TARGET_ROUNDS, used to spend the same time verifying a
+# password for an account that does not exist as for one that does. Without it,
+# an unknown email returns in microseconds while a known email costs a full
+# bcrypt verify, and that gap alone enumerates accounts. Kept as a constant
+# because generating it at import would cost a bcrypt round-trip per process;
+# test_password_dummy_verify_matches_target_cost pins it to _TARGET_ROUNDS.
+_DUMMY_HASH = "$2b$14$2Qk/OpH0P7t9cIf6OZ5a6eOraEQZBCI230dOhsdNG5AIZiFuu/Z7K"
+
+
+def dummy_verify(plain: str) -> None:
+    """Burn one bcrypt verification and discard the result.
+
+    Call on the "no such user" branch of a login so both branches take the same
+    observable time.
+    """
+    try:
+        bcrypt.checkpw(plain.encode()[:MAX_PASSWORD_BYTES], _DUMMY_HASH.encode())
+    except Exception:
+        pass
+
+
 def needs_rehash(hashed: str) -> bool:
     """Return True if the stored hash uses fewer rounds than the current target."""
     try:

@@ -93,6 +93,38 @@ def test_legacy_encoding_of_in_scope_target_allowed():
     assert ok
 
 
+# ── cross-run pivot ──────────────────────────────────────────────────────────
+
+def test_shared_egress_bridge_refused_even_when_scope_covers_it():
+    """Every run's relay and proxy share one Docker bridge.
+
+    An internal engagement legitimately scopes RFC1918, and Docker's default
+    pools sit inside 172.16.0.0/12 — so without an explicit denial this run's
+    sandbox could SOCKS to a *sibling* run's relay and borrow that run's scope.
+    """
+    r = Relay(parse_allowlist("172.16.0.0/12"), parse_allowlist("172.18.0.0/16"))
+    ok, reason = r._check_destination("172.18.0.5")  # a sibling run's relay
+    assert not ok
+    assert "sandbox egress infrastructure" in reason
+
+    # A different part of the same authorized RFC1918 scope is still reachable.
+    ok, _ = r._check_destination("172.20.5.5")
+    assert ok
+
+
+def test_denylist_beats_scope_for_legacy_encodings():
+    r = Relay(parse_allowlist("172.16.0.0/12"), parse_allowlist("172.18.0.0/16"))
+    ok, reason = r._check_destination("2886860805")  # 172.18.0.5
+    assert not ok and "sandbox egress infrastructure" in reason
+
+
+def test_no_denylist_leaves_scope_behaviour_unchanged():
+    """Relays built without a denylist keep the previous semantics."""
+    r = Relay(parse_allowlist("172.16.0.0/12"))
+    ok, _ = r._check_destination("172.18.0.5")
+    assert ok
+
+
 def test_non_address_refused():
     ok, reason = _relay()._check_destination("example.com")
     assert not ok and "not an address" in reason

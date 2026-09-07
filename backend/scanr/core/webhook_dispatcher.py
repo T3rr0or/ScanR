@@ -6,6 +6,7 @@ import hmac
 import json
 import logging
 import secrets
+from contextlib import nullcontext
 from datetime import datetime, timezone
 
 from sqlalchemy import select
@@ -102,23 +103,43 @@ async def _validate_webhook_host(hostname: str) -> None:
             )
 
 
-async def dispatch(event: str, payload: dict, user_id: str, db: AsyncSession) -> None:
-    """Fire all enabled webhooks for the given user that match the event."""
+async def dispatch(
+    event: str,
+    payload: dict,
+    user_id: str,
+    db: AsyncSession,
+    db_lock: "asyncio.Lock | None" = None,
+) -> None:
+    """Fire all enabled webhooks for the given user that match the event.
+
+    `db_lock` is the caller's session lock, when the session is shared with
+    concurrent work (a running scan). It is held only across database access:
+    delivery can take tens of seconds across retries, and holding a scan-wide
+    lock for that long stalls every other host and plugin writing findings.
+    """
+    lock = db_lock or nullcontext()
     # Filter in SQL: only fetch webhooks that match the event or subscribe to '*'
-    result = await db.execute(
-        select(Webhook).where(
-            Webhook.user_id == user_id,
-            Webhook.enabled == True,
-            Webhook.events.contains(event) | Webhook.events.contains("*"),
+    async with lock:
+        result = await db.execute(
+            select(Webhook).where(
+                Webhook.user_id == user_id,
+                Webhook.enabled == True,
+                Webhook.events.contains(event) | Webhook.events.contains("*"),
+            )
         )
-    )
-    webhooks = result.scalars().all()
+        webhooks = result.scalars().all()
 
     for webhook in webhooks:
-        await _send(webhook, event, payload, db)
+        await _send(webhook, event, payload, db, lock)
 
 
-async def _send(webhook: Webhook, event: str, payload: dict, db: AsyncSession) -> None:
+async def _send(
+    webhook: Webhook,
+    event: str,
+    payload: dict,
+    db: AsyncSession,
+    lock=None,
+) -> None:
     delivery_id = secrets.token_hex(16)
     body = json.dumps({
         "event": event,
@@ -141,7 +162,8 @@ async def _send(webhook: Webhook, event: str, payload: dict, db: AsyncSession) -
         logger.error("Webhook %s not sent: signing secret could not be decrypted: %s", webhook.id, exc)
         webhook.last_status = 0
         webhook.last_triggered_at = datetime.now(timezone.utc)
-        await db.commit()
+        async with (lock or nullcontext()):
+            await db.commit()
         return
     if signing_secret:
         sig = hmac.new(signing_secret.encode(), body.encode(), hashlib.sha256).hexdigest()
@@ -191,5 +213,6 @@ async def _send(webhook: Webhook, event: str, payload: dict, db: AsyncSession) -
 
     webhook.last_status = status_code
     webhook.last_triggered_at = datetime.now(timezone.utc)
-    await db.commit()
+    async with (lock or nullcontext()):
+        await db.commit()
     logger.info("Webhook %s fired event=%s delivery=%s status=%s", webhook.id, event, delivery_id, status_code)

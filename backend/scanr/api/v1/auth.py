@@ -9,7 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from scanr.auth import create_access_token, create_refresh_token, decode_token, verify_password
-from scanr.auth.password import hash_password, needs_rehash
+from scanr.auth.password import dummy_verify, hash_password, needs_rehash
 from scanr.config import get_settings
 from scanr.db import get_db
 from scanr.core.limiter import limiter
@@ -143,6 +143,11 @@ async def login(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail="Too many failed attempts. Please try again later.",
         )
+
+    if not user:
+        # Spend the same bcrypt time as a real verify: returning early here is a
+        # timing oracle that tells an attacker which emails have accounts.
+        dummy_verify(body.password)
 
     if not user or not verify_password(body.password, user.hashed_password):
         logger.warning("Failed login attempt from ip=%s email=%s", ip, body.email)

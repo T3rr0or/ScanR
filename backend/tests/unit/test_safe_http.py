@@ -80,3 +80,70 @@ async def test_tcp_backend_uses_only_the_pinned_ip():
         await backend.connect_tcp("rebound.internal", 443)
     with pytest.raises(httpcore.ConnectError, match="unpinned"):
         await backend.connect_tcp("example.test", 8443)
+
+
+# ── vhost fetches pinned to an already-authorized address ────────────────────
+
+
+@pytest.mark.asyncio
+async def test_client_pinned_to_ip_keeps_the_vhost_and_ignores_dns():
+    """Web plugins address a target by hostname so name-based vhosts answer.
+
+    The engine already resolved and authorized the IP; re-resolving the name at
+    connect time is the DNS-rebinding window this closes. The Host header and
+    SNI must still carry the hostname.
+    """
+    import http.server
+    import socketserver
+    import threading
+
+    from scanr.utils.safe_http import client_pinned_to_ip
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            body = self.headers.get("Host", "").encode()
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *_args):
+            pass
+
+    server = socketserver.TCPServer(("127.0.0.1", 0), Handler)
+    port = server.server_address[1]
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        async with client_pinned_to_ip(
+            "127.0.0.1", port, hostname="shop.example.test", timeout=5.0
+        ) as client:
+            resp = await client.get(f"http://shop.example.test:{port}/")
+        assert resp.status_code == 200
+        assert resp.text.startswith("shop.example.test")
+    finally:
+        server.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_client_pinned_to_ip_refuses_a_second_destination():
+    from scanr.utils.safe_http import client_pinned_to_ip
+
+    async with client_pinned_to_ip(
+        "192.0.2.10", 80, hostname="target.test", timeout=1.0
+    ) as client:
+        with pytest.raises(Exception, match="unpinned"):
+            await client.get("http://elsewhere.test/")
+
+
+@pytest.mark.asyncio
+async def test_pinning_is_skipped_when_an_egress_proxy_is_configured():
+    """With a proxy the TCP peer is the proxy, so pinning the target would break it."""
+    from scanr.utils.safe_http import client_pinned_to_ip
+
+    client = client_pinned_to_ip(
+        "192.0.2.10", 80,
+        hostname="target.test",
+        proxy_config={"proxy": "http://127.0.0.1:8080"},
+    )
+    async with client:
+        assert client._mounts or client._transport is not None

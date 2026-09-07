@@ -45,6 +45,9 @@ _PIDS = os.environ.get("SANDBOX_PIDS", "256")
 # non-internal leg; only the relay is ever attached to it.
 _RELAY_IMAGE = os.environ.get("SANDBOX_RELAY_IMAGE", "scanr-sandbox-relay:latest")
 _EGRESS_NETWORK = os.environ.get("SANDBOX_EGRESS_NETWORK", "scanr_sandbox_egress")
+# CIDRs of the shared egress bridge itself, discovered at startup. Relays refuse
+# these outright: they are where every *other* run's relay and proxy live.
+_EGRESS_DENY: tuple[str, ...] = ()
 _RELAY_PORT = int(os.environ.get("SANDBOX_RELAY_PORT", "1080"))
 _RELAY_MEM = os.environ.get("SANDBOX_RELAY_MEM", "128m")
 # Hard cap on how long any one session container may live, regardless of the
@@ -100,6 +103,9 @@ class Session:
 # run_id -> Session. The agent loop is sequential per run, so no per-session lock
 # is needed for exec; a global lock guards create/reap bookkeeping.
 _SESSIONS: dict[str, Session] = {}
+# Creations in flight, keyed by run_id — one shared task per run, so concurrent
+# /exec calls for the same run wait on it instead of racing to build a second.
+_PENDING: dict[str, asyncio.Task] = {}
 _LOCK = asyncio.Lock()
 
 
@@ -203,6 +209,14 @@ def _relay_args(name: str, scope: list[str], network: str) -> list[str]:
     It holds no ScanR secrets, drops all capabilities, and runs non-root: it needs
     nothing but two sockets.
     """
+    if not _EGRESS_DENY:
+        # Without the bridge's own subnet the relay cannot tell a target from a
+        # sibling run's relay, so a scope covering RFC1918 would let one run
+        # pivot through another. Refuse rather than relay unguarded.
+        raise HTTPException(
+            status_code=503,
+            detail="sandbox egress bridge subnet is unknown; relay not started",
+        )
     return [
         "docker", "run", "-d", "--name", name,
         "--label", _SESSION_LABEL,
@@ -214,6 +228,7 @@ def _relay_args(name: str, scope: list[str], network: str) -> list[str]:
         "--security-opt", "no-new-privileges",
         "--memory", _RELAY_MEM, "--pids-limit", "64",
         "--env", f"SCANR_ALLOWED_CIDRS={','.join(scope)}",
+        "--env", f"SCANR_DENIED_CIDRS={','.join(_EGRESS_DENY)}",
         "--env", f"SCANR_RELAY_PORT={_RELAY_PORT}",
         _RELAY_IMAGE,
     ]
@@ -450,6 +465,39 @@ async def _inspect_egress_network() -> dict | None:
     return details
 
 
+def _egress_subnets(details: dict) -> tuple[str, ...]:
+    """Return the CIDRs Docker assigned to the shared egress bridge.
+
+    Every run's relay and package proxy sit on this one bridge, so its subnet is
+    scanner infrastructure: reaching it is never a legitimate scan destination,
+    and allowing it would let one run's sandbox speak SOCKS to a *sibling* run's
+    relay and borrow that run's scope.
+    """
+    ipam = details.get("IPAM") or {}
+    configs = ipam.get("Config") or []
+    subnets: list[str] = []
+    if isinstance(configs, list):
+        for entry in configs:
+            if not isinstance(entry, dict):
+                continue
+            subnet = entry.get("Subnet")
+            if not subnet:
+                continue
+            try:
+                subnets.append(str(ipaddress.ip_network(subnet, strict=False)))
+            except ValueError:
+                raise RuntimeError(
+                    f"Docker reported an unparseable subnet {subnet!r} for "
+                    f"{_EGRESS_NETWORK!r}"
+                )
+    if not subnets:
+        raise RuntimeError(
+            f"could not determine the subnet of {_EGRESS_NETWORK!r}; refusing to "
+            "start a relay that cannot deny cross-run pivots"
+        )
+    return tuple(sorted(subnets))
+
+
 def _validate_egress_network(details: dict) -> None:
     labels = details.get("Labels") or {}
     valid = (
@@ -490,6 +538,10 @@ async def _ensure_egress_network() -> None:
                 f"could not create or inspect sandbox egress network {_EGRESS_NETWORK!r}"
             )
     _validate_egress_network(details)
+    global _EGRESS_DENY
+    _EGRESS_DENY = _egress_subnets(details)
+    logger.info("Sandbox egress bridge %s -> denying %s to relays",
+                _EGRESS_NETWORK, ",".join(_EGRESS_DENY))
 
 
 async def _remove_container(name: str) -> None:
@@ -573,70 +625,110 @@ def _normalize_scope(scope: list[str]) -> tuple[str, ...]:
     return tuple(sorted(normalized))
 
 
-async def _ensure_session(run_id: str, scope: list[str], target_egress: bool = False) -> str:
-    """Return the container name for ``run_id``, creating it if needed."""
-    normalized_scope = _normalize_scope(scope)
-    async with _LOCK:
-        sess = _SESSIONS.get(run_id)
-        if sess is not None:
-            if (
-                sess.scope != normalized_scope
-                or sess.target_egress != bool(target_egress)
-            ):
-                raise HTTPException(
-                    status_code=409,
-                    detail="run_id is already bound to a different sandbox scope or egress policy",
-                )
-            return sess.name
-        if len(_SESSIONS) >= _MAX_SESSIONS:
-            raise HTTPException(
-                status_code=429,
-                detail=(
-                    f"sandbox session limit reached ({_MAX_SESSIONS} live sessions); "
-                    "stop a run or raise SANDBOX_MAX_SESSIONS"
-                ),
-            )
-        suffix = f"{run_id[:8]}-{uuid.uuid4().hex[:6]}"
-        name = f"scanr-sbx-{suffix}"
-        network = f"{_NETWORK_PREFIX}-{suffix}"
-        proxy: str | None = None
-        relay: str | None = None
-        if target_egress and not normalized_scope:
-            raise HTTPException(
-                status_code=400,
-                detail="target egress requested but the scan has no authorized scope",
-            )
-        code, _out, err, _to = await _run_docker(_network_args(network), timeout=60)
-        if code != 0:
-            await _remove_network(network)
-            raise HTTPException(status_code=502, detail=f"failed to create sandbox network: {err[:300]}")
-        try:
-            proxy = await _start_proxy(suffix, network)
-            if target_egress:
-                relay = await _start_relay(suffix, list(normalized_scope), network)
+def _bound_name(sess: Session, scope: tuple[str, ...], target_egress: bool) -> str:
+    """Return the session's container name, or 409 if it was bound differently."""
+    if sess.scope != scope or sess.target_egress != target_egress:
+        raise HTTPException(
+            status_code=409,
+            detail="run_id is already bound to a different sandbox scope or egress policy",
+        )
+    return sess.name
 
-            code, _out, err, _to = await _run_docker(
-                _create_args(name, list(normalized_scope), network, relay, proxy), timeout=120
-            )
-            if code != 0:
-                raise HTTPException(status_code=502, detail=f"failed to start sandbox: {err[:300]}")
-        except Exception:
-            await _remove_container(name)
-            if relay:
-                await _remove_container(relay)
-            if proxy:
-                await _remove_container(proxy)
-            await _remove_network(network)
-            raise
+
+async def _create_session(run_id: str, scope: tuple[str, ...], target_egress: bool) -> None:
+    """Bring up one run's network, proxy, relay and container.
+
+    Deliberately holds no global lock: this takes minutes in the worst case, and
+    every /exec call goes through _ensure_session. Serializing it would let one
+    run's slow startup freeze every other run's tool calls.
+    """
+    suffix = f"{run_id[:8]}-{uuid.uuid4().hex[:6]}"
+    name = f"scanr-sbx-{suffix}"
+    network = f"{_NETWORK_PREFIX}-{suffix}"
+    proxy: str | None = None
+    relay: str | None = None
+    if target_egress and not scope:
+        raise HTTPException(
+            status_code=400,
+            detail="target egress requested but the scan has no authorized scope",
+        )
+    code, _out, err, _to = await _run_docker(_network_args(network), timeout=60)
+    if code != 0:
+        await _remove_network(network)
+        raise HTTPException(status_code=502, detail=f"failed to create sandbox network: {err[:300]}")
+    try:
+        proxy = await _start_proxy(suffix, network)
+        if target_egress:
+            relay = await _start_relay(suffix, list(scope), network)
+
+        code, _out, err, _to = await _run_docker(
+            _create_args(name, list(scope), network, relay, proxy), timeout=120
+        )
+        if code != 0:
+            raise HTTPException(status_code=502, detail=f"failed to start sandbox: {err[:300]}")
+    except Exception:
+        await _remove_container(name)
+        if relay:
+            await _remove_container(relay)
+        if proxy:
+            await _remove_container(proxy)
+        await _remove_network(network)
+        raise
+    async with _LOCK:
         _SESSIONS[run_id] = Session(
             name=name,
             network=network,
             proxy=proxy,
             relay=relay,
-            scope=normalized_scope,
-            target_egress=bool(target_egress),
+            scope=scope,
+            target_egress=target_egress,
         )
-        return name
+
+
+async def _ensure_session(run_id: str, scope: list[str], target_egress: bool = False) -> str:
+    """Return the container name for ``run_id``, creating it if needed.
+
+    Concurrent callers for the same run share one creation task; callers for
+    other runs are never blocked by it.
+    """
+    normalized_scope = _normalize_scope(scope)
+    egress = bool(target_egress)
+
+    while True:
+        async with _LOCK:
+            # A finished task whose waiters were all cancelled has nobody left to
+            # clear it; drop it here so it stops counting against the cap. Any
+            # caller still awaiting one holds its own reference.
+            for rid in [r for r, t in _PENDING.items() if t.done()]:
+                del _PENDING[rid]
+            sess = _SESSIONS.get(run_id)
+            if sess is not None:
+                return _bound_name(sess, normalized_scope, egress)
+            task = _PENDING.get(run_id)
+            if task is None:
+                # In-flight creations hold a slot so concurrent starts cannot
+                # overshoot the cap between the check and the insert.
+                if len(_SESSIONS) + len(_PENDING) >= _MAX_SESSIONS:
+                    raise HTTPException(
+                        status_code=429,
+                        detail=(
+                            f"sandbox session limit reached ({_MAX_SESSIONS} live sessions); "
+                            "stop a run or raise SANDBOX_MAX_SESSIONS"
+                        ),
+                    )
+                task = asyncio.create_task(
+                    _create_session(run_id, normalized_scope, egress)
+                )
+                _PENDING[run_id] = task
+
+        try:
+            # Shielded: this caller giving up must not cancel a creation that
+            # other callers for the same run are also waiting on.
+            await asyncio.shield(task)
+        finally:
+            async with _LOCK:
+                if _PENDING.get(run_id) is task and task.done():
+                    del _PENDING[run_id]
 
 
 async def _destroy_session(sess: Session) -> None:
@@ -656,10 +748,20 @@ async def _reaper() -> None:
     while True:
         await asyncio.sleep(_REAP_INTERVAL)
         now = time.monotonic()
+        # Claim the stale sessions under the lock, then tear them down outside
+        # it: several `docker rm` calls per session would otherwise block every
+        # /exec on the runner once a minute.
         async with _LOCK:
-            stale = [rid for rid, s in _SESSIONS.items() if now - s.created > _MAX_LIFETIME]
-            for rid in stale:
-                await _destroy_session(_SESSIONS.pop(rid))
+            stale = [
+                _SESSIONS.pop(rid)
+                for rid, s in list(_SESSIONS.items())
+                if now - s.created > _MAX_LIFETIME
+            ]
+        for sess in stale:
+            try:
+                await _destroy_session(sess)
+            except Exception:
+                logger.exception("failed to reap sandbox session %s", sess.name)
 
 
 @app.post("/exec")

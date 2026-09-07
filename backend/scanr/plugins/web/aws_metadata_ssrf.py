@@ -35,6 +35,24 @@ _USERDATA_SIGNATURES = [
     re.compile(r"#!/bin|cloud-init|#cloud-config|#!/usr/bin/env"),
 ]
 
+# Field names the IMDS credential document is expected to carry. Reporting which
+# of these were present proves the credentials were readable without copying the
+# key material itself into a finding.
+_CREDENTIAL_FIELDS = (
+    "AccessKeyId",
+    "SecretAccessKey",
+    "Token",
+    "Expiration",
+    "Type",
+    "Code",
+)
+
+
+def _credential_fields(body: str) -> str:
+    """Name the credential fields present in an IMDS response, never their values."""
+    present = [field for field in _CREDENTIAL_FIELDS if f'"{field}"' in body]
+    return ", ".join(present) if present else "unrecognised response shape"
+
 # Azure IMDS
 _AZURE_METADATA_URL = "http://169.254.169.254/metadata/instance?api-version=2021-02-01"
 _AZURE_SIGNATURES = [
@@ -135,7 +153,13 @@ class AwsMetadataSsrfPlugin(PluginBase):
                                     f"http://169.254.169.254/latest/meta-data/iam/security-credentials/{role}"
                                 )
                                 if r3.status_code == 200:
-                                    cred_info += f"\nIAM credentials accessible: {r3.text[:200]}"
+                                    # Never persist the live key material — evidence lands
+                                    # in the findings table, reports and the UI, outside the
+                                    # credential vault. Naming the fields proves exposure.
+                                    cred_info += (
+                                        "\nIAM credentials accessible: yes (redacted; "
+                                        f"fields: {_credential_fields(r3.text)})"
+                                    )
                         except Exception:
                             pass
 

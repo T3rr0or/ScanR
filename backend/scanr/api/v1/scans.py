@@ -20,6 +20,7 @@ from scanr.schemas.profile import validate_profile_json
 from scanr.schemas.scan import ScanCredentialRead
 from scanr.schemas.host import HostRead
 from scanr.core.limiter import limiter
+from scanr.utils import safe_xml
 from scanr.utils.ip_utils import classify_target
 
 router = APIRouter(prefix="/scans", tags=["scans"])
@@ -726,10 +727,11 @@ async def import_findings(
     if len(body.report.encode("utf-8", errors="ignore")) > _MAX_IMPORT_BYTES:
         raise HTTPException(status_code=413, detail="Report too large (max 50 MB)")
 
-    import xml.etree.ElementTree as ET
     imported = 0
     try:
-        root = ET.fromstring(body.report)
+        root = safe_xml.fromstring(body.report)
+    except safe_xml.XmlSecurityError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid XML report")
 

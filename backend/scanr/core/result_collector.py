@@ -123,20 +123,24 @@ class ResultCollector:
             # are not blocked behind long-running host/plugin batches.
             await self.db.commit()
             logger.debug("Finding recorded: %s [%s] on host %s", data.title, data.severity, host_id)
+            notify = data.severity.value == "critical" and bool(self._user_id)
+            finding_id = finding.id
 
-            # Fire webhook for critical findings (was dead code — fixed)
-            if data.severity.value == "critical" and self._user_id:
-                try:
-                    from scanr.core.webhook_dispatcher import dispatch
-                    await dispatch("finding.critical", {
-                        "scan_id": self.scan_id,
-                        "finding_id": finding.id,
-                        "title": data.title,
-                        "plugin_id": data.plugin_id,
-                        "severity": data.severity.value,
-                    }, self._user_id, self.db)
-                except Exception as exc:
-                    logger.debug("Webhook dispatch error: %s", exc)
+        # Outside the lock: delivery retries sleep for seconds at a time, and
+        # this lock guards every database write for the whole scan. The
+        # dispatcher re-acquires it around its own queries and commits.
+        if notify:
+            try:
+                from scanr.core.webhook_dispatcher import dispatch
+                await dispatch("finding.critical", {
+                    "scan_id": self.scan_id,
+                    "finding_id": finding_id,
+                    "title": data.title,
+                    "plugin_id": data.plugin_id,
+                    "severity": data.severity.value,
+                }, self._user_id, self.db, db_lock=self._lock)
+            except Exception as exc:
+                logger.debug("Webhook dispatch error: %s", exc)
 
     async def _find_prior_triage(self, host_id: str | None, data: "FindingData") -> "Finding | None":
         """Look up prior triage with the same tenant-scoped finding key.

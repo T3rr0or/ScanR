@@ -232,7 +232,8 @@ def test_run_local_proxy_is_hardened_and_uses_only_its_session_network():
     assert args[-1] == runner_app._PROXY_IMAGE
 
 
-def test_relay_args_are_hardened_and_carry_the_scope():
+def test_relay_args_are_hardened_and_carry_the_scope(monkeypatch):
+    monkeypatch.setattr(runner_app, "_EGRESS_DENY", ("172.18.0.0/16",))
     args = runner_app._relay_args(
         "scanr-rly-test", ["192.0.2.0/24", "198.51.100.7"],
         "scanr-sbx-net-test",
@@ -246,13 +247,26 @@ def test_relay_args_are_hardened_and_carry_the_scope():
     # Starts on the internal network; the egress leg is attached separately.
     assert args[args.index("--network") + 1] == "scanr-sbx-net-test"
     assert any("SCANR_ALLOWED_CIDRS=192.0.2.0/24,198.51.100.7" in a for a in args)
+    # The shared egress bridge is denied, so one run cannot reach a sibling
+    # run's relay and borrow its scope.
+    assert any("SCANR_DENIED_CIDRS=172.18.0.0/16" in a for a in args)
     # No ScanR secrets, no Docker socket.
     assert not any("VAULT" in a or "SECRET" in a or "docker.sock" in a for a in args)
+
+
+def test_relay_is_refused_when_the_egress_subnet_is_unknown(monkeypatch):
+    """Fail closed: an unguarded relay would allow cross-run pivots."""
+    monkeypatch.setattr(runner_app, "_EGRESS_DENY", ())
+    with pytest.raises(HTTPException) as exc:
+        runner_app._relay_args("scanr-rly-test", ["192.0.2.0/24"], "scanr-sbx-net-test")
+    assert exc.value.status_code == 503
 
 
 @pytest.mark.asyncio
 async def test_concurrent_sessions_never_share_a_network(monkeypatch):
     monkeypatch.setattr(runner_app, "_SESSIONS", {})
+    monkeypatch.setattr(runner_app, "_PENDING", {})
+    monkeypatch.setattr(runner_app, "_EGRESS_DENY", ("172.18.0.0/16",))
 
     async def fake_run_docker(args, timeout):
         return 0, "", "", False
@@ -265,6 +279,70 @@ async def test_concurrent_sessions_never_share_a_network(monkeypatch):
     assert first.network != second.network
     assert first.relay != second.relay
     assert first.proxy != second.proxy
+
+
+@pytest.mark.asyncio
+async def test_slow_session_creation_does_not_block_other_runs(monkeypatch):
+    """One run's container bring-up must not serialize every other run.
+
+    _ensure_session runs on every /exec, so holding a global lock across the
+    (minutes-long, worst case) docker bring-up froze unrelated runs' tool calls.
+    """
+    monkeypatch.setattr(runner_app, "_SESSIONS", {})
+    monkeypatch.setattr(runner_app, "_PENDING", {})
+    block = asyncio.Event()
+
+    async def fake_run_docker(args, timeout):
+        # Only the slow run's container create waits; everything else is instant.
+        if "run-slow" in " ".join(args):
+            await block.wait()
+        return 0, "", "", False
+
+    monkeypatch.setattr(runner_app, "_run_docker", fake_run_docker)
+
+    slow = asyncio.create_task(runner_app._ensure_session("run-slow", ["192.0.2.1"]))
+    await asyncio.sleep(0)  # let the slow creation start and park
+
+    # The fast run must complete while the slow one is still mid-creation.
+    name = await asyncio.wait_for(
+        runner_app._ensure_session("run-fast", ["198.51.100.2"]), timeout=1.0
+    )
+    assert name in {s.name for s in runner_app._SESSIONS.values()}
+    assert not slow.done()
+
+    block.set()
+    await asyncio.wait_for(slow, timeout=1.0)
+    assert set(runner_app._SESSIONS) == {"run-slow", "run-fast"}
+
+
+@pytest.mark.asyncio
+async def test_concurrent_exec_for_one_run_creates_a_single_session(monkeypatch):
+    """Callers racing on the same run_id share one creation, not one each."""
+    monkeypatch.setattr(runner_app, "_SESSIONS", {})
+    monkeypatch.setattr(runner_app, "_PENDING", {})
+    creates = 0
+    release = asyncio.Event()
+
+    async def fake_run_docker(args, timeout):
+        nonlocal creates
+        if args[:2] == ["docker", "create"] or "--name" in args:
+            creates += 1
+        await release.wait()
+        return 0, "", "", False
+
+    monkeypatch.setattr(runner_app, "_run_docker", fake_run_docker)
+
+    waiters = [
+        asyncio.create_task(runner_app._ensure_session("run-x", ["192.0.2.1"]))
+        for _ in range(4)
+    ]
+    await asyncio.sleep(0)
+    release.set()
+    names = await asyncio.wait_for(asyncio.gather(*waiters), timeout=2.0)
+
+    assert len(set(names)) == 1, "each caller should get the same container"
+    assert list(runner_app._SESSIONS) == ["run-x"]
+    assert runner_app._PENDING == {}
 
 
 def test_relay_egress_leg_is_a_separate_attach():
@@ -310,6 +388,8 @@ async def test_target_egress_without_scope_is_refused(monkeypatch):
 async def test_relay_failure_denies_the_session(monkeypatch):
     """If the component that enforces scope can't start, the sandbox must not."""
     monkeypatch.setattr(runner_app, "_SESSIONS", {})
+    monkeypatch.setattr(runner_app, "_PENDING", {})
+    monkeypatch.setattr(runner_app, "_EGRESS_DENY", ("172.18.0.0/16",))
     removed: list[str] = []
 
     async def fake_run_docker(args, timeout):
@@ -465,6 +545,7 @@ async def test_egress_network_creation_is_labeled_non_internal_and_race_safe(mon
                 "Driver": "bridge",
                 "Internal": False,
                 "Labels": {runner_app._EGRESS_LABEL_KEY: "true"},
+                "IPAM": {"Config": [{"Subnet": "172.18.0.0/16"}]},
             }), "", False
         if args[:3] == ["docker", "network", "create"]:
             # Another runner may win the create race. Re-inspection, rather than
