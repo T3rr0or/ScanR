@@ -107,6 +107,7 @@ KNOWN_PLUGIN_IDS = frozenset({
     "ssh.ssh_default_creds",
     "ssh.ssh_version",
     "ssl_tls.cert_inspector",
+    "ssl_tls.forward_secrecy",
     "ssl_tls.cipher_audit",
     "ssl_tls.heartbleed",
     "ssl_tls.poodle_beast",
@@ -115,6 +116,8 @@ KNOWN_PLUGIN_IDS = frozenset({
     "web.aws_metadata_ssrf",
     "web.broken_access_control",
     "web.clickjacking",
+    "web.cms_enum",
+    "web.command_injection",
     "web.cookie_security",
     "web.cors_misconfig",
     "web.csp_analyzer",
@@ -185,6 +188,7 @@ AUTH_ATTEMPT_PLUGIN_IDS = frozenset({
 })
 
 INTRUSIVE_PLUGIN_IDS = frozenset({
+    "web.command_injection",
     "web.host_header_injection",
     "web.open_redirect",
     "web.ssti_detect",
