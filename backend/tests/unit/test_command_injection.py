@@ -34,8 +34,11 @@ def _install(monkeypatch, handler):
     monkeypatch.setattr(ci, "create_web_client", factory)
 
 
-async def _run(base="http://192.0.2.10:80"):
-    return await ci.CommandInjectionPlugin()._test_host(_Ctx(), base, 80)
+async def _run(base="http://192.0.2.10:80", budget=None):
+    from scanr.plugins.web._budget import Budget
+    return await ci.CommandInjectionPlugin()._test_host(
+        _Ctx(), base, 80, budget or Budget(300.0)
+    )
 
 
 # ── echo oracle ──────────────────────────────────────────────────────────────
@@ -152,3 +155,55 @@ def test_payloads_never_write_or_call_out():
     forbidden = ("rm ", "curl", "wget", "nc ", ">", "mv ", "dd ", "mkfifo", "chmod")
     for payload in all_payloads:
         assert not any(bad in payload for bad in forbidden), payload
+
+
+# ── time budget ──────────────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_an_exhausted_budget_stops_the_check(monkeypatch):
+    """The plugin must stop itself rather than be cancelled by the engine.
+
+    paths x params x the timing oracle can exceed the plugin's own 300s timeout
+    on a slow host, and a cancelled check yields no partial result at all.
+    """
+    from scanr.plugins.web._budget import Budget
+
+    asked = []
+
+    def handler(request):
+        asked.append(str(request.url))
+        return httpx.Response(200, text="ok")
+
+    _install(monkeypatch, handler)
+    spent = Budget(0.0)
+    assert await _run(budget=spent) is None
+    assert spent.expired_early is True
+    # The crawl still happens, but no parameter probing is attempted.
+    assert not any("scanr_cmdi_baseline" in u for u in asked)
+
+
+@pytest.mark.asyncio
+async def test_a_thin_budget_skips_the_timing_oracle(monkeypatch):
+    """The timing oracle stalls on purpose; never start one we cannot finish."""
+    from scanr.plugins.web._budget import Budget
+
+    called = {"timing": False}
+
+    async def fake_timing(self, client, url, param):
+        called["timing"] = True
+        return None
+
+    monkeypatch.setattr(ci.CommandInjectionPlugin, "_timing_probe", fake_timing)
+    _install(monkeypatch, lambda r: httpx.Response(200, text="static"))
+
+    await _run(budget=Budget(ci._SLEEP_SECONDS * 3 - 1))
+    assert called["timing"] is False, "thin budget must not start the timing oracle"
+
+    called["timing"] = False
+    await _run(budget=Budget(300.0))
+    assert called["timing"] is True, "a full budget must still run it"
+
+
+def test_budget_is_inside_the_declared_plugin_timeout():
+    """Stopping deliberately only works if we stop before the engine cancels us."""
+    assert ci._HOST_BUDGET < ci.CommandInjectionPlugin.timeout

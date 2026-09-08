@@ -40,6 +40,7 @@ from typing import TYPE_CHECKING
 from urllib.parse import quote
 
 from scanr.core.plugin_base import FindingData, PluginBase, PluginCategory, Severity
+from scanr.plugins.web._budget import Budget
 from scanr.plugins.web._crawler import crawl, create_web_client
 from scanr.plugins.web._http_evidence import format_from_httpx
 from scanr.plugins.web._ports import is_web_port, web_scheme
@@ -97,6 +98,10 @@ def _payloads(token: str, prefix: str = "") -> list[tuple[str, str]]:
     return out
 
 
+# Wall-clock allowance per host, inside the plugin's own 300s timeout so the
+# check stops deliberately instead of being cancelled with nothing to show.
+_HOST_BUDGET = 150.0
+
 class CrlfInjectionPlugin(PluginBase):
     id = "web.crlf_injection"
     name = "CRLF Injection / HTTP Response Splitting"
@@ -112,13 +117,17 @@ class CrlfInjectionPlugin(PluginBase):
 
     async def check(self, context: "ScanContext", host: "Host") -> list[FindingData]:
         findings: list[FindingData] = []
+        budget = Budget(_HOST_BUDGET)
         for port in host.ports:
+            if budget.spent():
+                logger.info("crlf_injection: %s budget spent, %s", host.ip, budget.note())
+                break
             if not is_web_port(port):
                 continue
             scheme = web_scheme(port)
             base_url = f"{scheme}://{host.ip}:{port.number}"
             try:
-                finding = await self._test_host(context, base_url, port.number)
+                finding = await self._test_host(context, base_url, port.number, budget)
             except Exception as exc:  # noqa: BLE001 - one port must not end the scan
                 logger.debug("crlf_injection: %s failed: %s", base_url, exc)
                 continue
@@ -126,7 +135,9 @@ class CrlfInjectionPlugin(PluginBase):
                 findings.append(finding)
         return findings
 
-    async def _test_host(self, context, base_url: str, port: int) -> FindingData | None:
+    async def _test_host(
+        self, context, base_url: str, port: int, budget: Budget
+    ) -> FindingData | None:
         token = f"scanr{secrets.token_hex(6)}"
         async with create_web_client(context) as client:
             crawled = await crawl(base_url, client)
@@ -137,12 +148,16 @@ class CrlfInjectionPlugin(PluginBase):
                 url = f"{base_url}{path}"
                 # Vector 1: straight injection into any candidate parameter.
                 for param in params:
+                    if budget.spent():
+                        return None
                     hit = await self._probe(client, url, param, token, port, prefix="")
                     if hit:
                         return hit
                 # Vector 2: parameters proven to reach Location. Worth the extra
                 # request each, since header concatenation lives on redirects.
                 for param in _REDIRECT_PARAMS:
+                    if budget.spent():
+                        return None
                     if not await self._reaches_location(client, url, param):
                         continue
                     hit = await self._probe(

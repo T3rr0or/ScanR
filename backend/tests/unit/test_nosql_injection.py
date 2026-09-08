@@ -41,7 +41,8 @@ def _install(monkeypatch, handler):
 
 
 async def _run(base="http://192.0.2.10:80"):
-    return await ns.NoSqlInjectionPlugin()._test_host(_Ctx(), base, 80)
+    from scanr.plugins.web._budget import Budget
+    return await ns.NoSqlInjectionPlugin()._test_host(_Ctx(), base, 80, Budget(300.0))
 
 
 _LOGIN_FAILED = "<html>Login failed. Please try again.</html>"

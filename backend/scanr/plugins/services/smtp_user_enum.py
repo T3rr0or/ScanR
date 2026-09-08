@@ -39,6 +39,10 @@ SMTP_PORTS = [25, 587]
 # 'root' is aliased on virtually every Unix mail host, and on the ones where it
 # is not, the negative answer is still an honest test of the verb.
 PROBE_NAME = "root"
+# A name no mailbox can plausibly have. A server that answers this the same way
+# it answers PROBE_NAME is an accept-all: it confirms every address, so its
+# reply carries no information and is not enumeration.
+CONTROL_NAME = "scanr-nx-3f9c1a7e-does-not-exist"
 
 _FINAL_LINE = re.compile(r"^(?P<code>\d{3}) ")
 _ANY_LINE = re.compile(r"^(?P<code>\d{3})[- ]")
@@ -107,14 +111,18 @@ class SmtpUserEnumPlugin(PluginBase):
                 continue
             if probed is None:
                 continue
-            banner, vrfy, expn = probed
-            finding = self._analyze(host.ip, port.number, banner, vrfy, expn)
+            banner, vrfy, expn, control = probed
+            finding = self._analyze(host.ip, port.number, banner, vrfy, expn, control)
             if finding:
                 findings.append(finding)
         return findings
 
-    async def _probe(self, ip: str, port: int) -> tuple[bytes, bytes, bytes] | None:
-        """Return (greeting, VRFY reply, EXPN reply), or None if this is not SMTP."""
+    async def _probe(self, ip: str, port: int) -> tuple[bytes, bytes, bytes, bytes] | None:
+        """Return (greeting, VRFY reply, EXPN reply, VRFY control reply).
+
+        The control reply is what separates a server that genuinely resolves
+        mailboxes from one that confirms anything it is asked.
+        """
         writer = None
         try:
             reader, writer = await asyncio.wait_for(
@@ -136,12 +144,16 @@ class SmtpUserEnumPlugin(PluginBase):
             await writer.drain()
             expn = await self._read(reader, timeout=5.0)
 
+            writer.write(f"VRFY {CONTROL_NAME}\r\n".encode())
+            await writer.drain()
+            control = await self._read(reader, timeout=5.0)
+
             try:
                 writer.write(b"QUIT\r\n")
                 await writer.drain()
             except Exception:
                 pass
-            return banner, vrfy, expn
+            return banner, vrfy, expn, control
         finally:
             if writer is not None:
                 writer.close()
@@ -171,6 +183,7 @@ class SmtpUserEnumPlugin(PluginBase):
         banner: bytes | None,
         vrfy: bytes | None,
         expn: bytes | None,
+        control: bytes | None = None,
     ) -> FindingData | None:
         if _reply_code(banner) != "220":
             # Not an SMTP greeting — never report.
@@ -179,6 +192,18 @@ class SmtpUserEnumPlugin(PluginBase):
         vrfy_works = _is_functional(vrfy)
         expn_works = _is_functional(expn)
         if not (vrfy_works or expn_works):
+            return None
+
+        # Accept-all check. A server that confirms an address which cannot exist
+        # confirms everything, so a 250 for a real name proves nothing and an
+        # attacker learns no more than they already knew. Only suppress on a
+        # reply we actually got: no control reply means the probe did not
+        # complete, and we fall back to reporting rather than silently dropping.
+        if control is not None and _is_functional(control):
+            logger.debug(
+                "smtp_user_enum: %s:%s confirms %r too — accept-all, not enumeration",
+                ip, port, CONTROL_NAME,
+            )
             return None
 
         verbs = [name for name, works in (("VRFY", vrfy_works), ("EXPN", expn_works)) if works]

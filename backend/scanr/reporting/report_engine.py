@@ -60,6 +60,15 @@ class ReportEngine:
         raw_shots = screenshots_result.scalars().all()
         screenshots = [_enrich_screenshot(s) for s in raw_shots]
 
+        # Assurance data: what ran and what passed, not just what was wrong.
+        from scanr.models.plugin_run import PluginRun
+        from scanr.reporting.coverage import build_coverage
+
+        runs_result = await self.db.execute(
+            select(PluginRun).where(PluginRun.scan_id == scan.id)
+        )
+        coverage = build_coverage(runs_result.scalars().all())
+
         from scanr.reporting.executive_summary import generate_summary
         exec_summary = generate_summary(scan, hosts, findings)
 
@@ -72,6 +81,7 @@ class ReportEngine:
             "total_findings": len(findings),
             "screenshots": screenshots,
             "executive_summary": exec_summary,
+            "coverage": coverage,
         }
 
         settings.reports_dir.mkdir(parents=True, exist_ok=True)

@@ -79,7 +79,7 @@ def test_only_a_resolved_account_counts_as_functional(raw, expected):
 
 @pytest.mark.asyncio
 async def test_working_vrfy_is_reported(monkeypatch):
-    _patch_probe(monkeypatch, result=(BANNER, VRFY_OK, EXPN_DISABLED))
+    _patch_probe(monkeypatch, result=(BANNER, VRFY_OK, EXPN_DISABLED, VRFY_UNKNOWN_USER))
 
     findings = await SmtpUserEnumPlugin().check(None, _host([_port(25)]))
 
@@ -98,7 +98,7 @@ async def test_working_vrfy_is_reported(monkeypatch):
 @pytest.mark.asyncio
 async def test_251_forwarding_reply_counts_as_enumeration(monkeypatch):
     """251 names the forwarding target, which is disclosure in its own right."""
-    _patch_probe(monkeypatch, result=(BANNER, VRFY_FORWARDED, EXPN_DISABLED))
+    _patch_probe(monkeypatch, result=(BANNER, VRFY_FORWARDED, EXPN_DISABLED, VRFY_UNKNOWN_USER))
 
     findings = await SmtpUserEnumPlugin().check(None, _host([_port(587)]))
 
@@ -108,7 +108,7 @@ async def test_251_forwarding_reply_counts_as_enumeration(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_working_expn_is_reported_with_list_expansion_impact(monkeypatch):
-    _patch_probe(monkeypatch, result=(BANNER, VRFY_NOT_IMPLEMENTED, EXPN_OK))
+    _patch_probe(monkeypatch, result=(BANNER, VRFY_NOT_IMPLEMENTED, EXPN_OK, VRFY_UNKNOWN_USER))
 
     findings = await SmtpUserEnumPlugin().check(None, _host([_port(25)]))
 
@@ -121,7 +121,7 @@ async def test_working_expn_is_reported_with_list_expansion_impact(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_both_verbs_are_reported_in_one_finding(monkeypatch):
-    _patch_probe(monkeypatch, result=(BANNER, VRFY_OK, EXPN_OK))
+    _patch_probe(monkeypatch, result=(BANNER, VRFY_OK, EXPN_OK, VRFY_UNKNOWN_USER))
 
     findings = await SmtpUserEnumPlugin().check(None, _host([_port(25)]))
 
@@ -135,14 +135,14 @@ async def test_both_verbs_are_reported_in_one_finding(monkeypatch):
 async def test_stubbed_252_reply_is_not_enumeration(monkeypatch):
     """'Cannot VRFY, but will accept and attempt delivery' is the same answer for
     every address, so it confirms nothing about the account."""
-    _patch_probe(monkeypatch, result=(BANNER, VRFY_STUBBED, VRFY_STUBBED))
+    _patch_probe(monkeypatch, result=(BANNER, VRFY_STUBBED, VRFY_STUBBED, VRFY_UNKNOWN_USER))
 
     assert await SmtpUserEnumPlugin().check(None, _host([_port(25)])) == []
 
 
 @pytest.mark.asyncio
 async def test_disabled_verbs_are_not_reported(monkeypatch):
-    _patch_probe(monkeypatch, result=(BANNER, VRFY_NOT_IMPLEMENTED, EXPN_DISABLED))
+    _patch_probe(monkeypatch, result=(BANNER, VRFY_NOT_IMPLEMENTED, EXPN_DISABLED, VRFY_UNKNOWN_USER))
 
     assert await SmtpUserEnumPlugin().check(None, _host([_port(587)])) == []
 
@@ -150,7 +150,7 @@ async def test_disabled_verbs_are_not_reported(monkeypatch):
 @pytest.mark.asyncio
 async def test_rejected_probe_is_not_reported(monkeypatch):
     """A bare 550 for one name cannot be told apart from a blanket refusal."""
-    _patch_probe(monkeypatch, result=(BANNER, VRFY_UNKNOWN_USER, EXPN_DISABLED))
+    _patch_probe(monkeypatch, result=(BANNER, VRFY_UNKNOWN_USER, EXPN_DISABLED, VRFY_UNKNOWN_USER))
 
     assert await SmtpUserEnumPlugin().check(None, _host([_port(25)])) == []
 
@@ -159,7 +159,7 @@ async def test_rejected_probe_is_not_reported(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_non_smtp_service_on_the_port_is_not_reported(monkeypatch):
-    _patch_probe(monkeypatch, result=(b"SSH-2.0-OpenSSH_9.6\r\n", VRFY_OK, EXPN_OK))
+    _patch_probe(monkeypatch, result=(b"SSH-2.0-OpenSSH_9.6\r\n", VRFY_OK, EXPN_OK, VRFY_UNKNOWN_USER))
 
     assert await SmtpUserEnumPlugin().check(None, _host([_port(25)])) == []
 
@@ -194,3 +194,39 @@ def test_plugin_probes_a_single_well_known_name():
     assert PROBE_NAME == "root"
     assert SmtpUserEnumPlugin.intrusive is False
     assert SmtpUserEnumPlugin.destructive is False
+
+
+# ── accept-all servers ───────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_accept_all_server_is_not_reported(monkeypatch):
+    """A server that confirms an impossible address confirms everything.
+
+    Its 250 for a real name carries no information, so an attacker learns
+    nothing they did not already have. Reporting it would be a false positive
+    on every accept-all relay on the internet.
+    """
+    _patch_probe(monkeypatch, result=(BANNER, VRFY_OK, EXPN_OK, VRFY_OK))
+    assert await SmtpUserEnumPlugin().check(None, _host([_port(25)])) == []
+
+
+@pytest.mark.asyncio
+async def test_control_refusal_still_reports_real_enumeration(monkeypatch):
+    """The discriminator: real name resolves, impossible name does not."""
+    _patch_probe(monkeypatch, result=(BANNER, VRFY_OK, EXPN_DISABLED, VRFY_UNKNOWN_USER))
+    findings = await SmtpUserEnumPlugin().check(None, _host([_port(25)]))
+    assert len(findings) == 1
+
+
+@pytest.mark.asyncio
+async def test_missing_control_reply_falls_back_to_reporting(monkeypatch):
+    """An incomplete probe must not silently suppress a genuine finding."""
+    _patch_probe(monkeypatch, result=(BANNER, VRFY_OK, EXPN_DISABLED, None))
+    assert len(await SmtpUserEnumPlugin().check(None, _host([_port(25)]))) == 1
+
+
+def test_control_name_cannot_be_a_real_mailbox():
+    from scanr.plugins.services.smtp_user_enum import CONTROL_NAME
+
+    assert len(CONTROL_NAME) > 20
+    assert "does-not-exist" in CONTROL_NAME

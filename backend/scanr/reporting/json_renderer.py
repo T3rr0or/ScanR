@@ -15,7 +15,35 @@ async def render_json(context: dict, report_id: str) -> Path:
     findings = context["findings"]
     hosts = context["hosts"]
 
+    coverage = context.get("coverage")
     data = {
+        "coverage": {
+            # What was actually checked. A short findings list means something
+            # different depending on whether 4 checks ran or 4000.
+            "checks_run": coverage.checks_run,
+            "checks_completed": coverage.checks_completed,
+            "checks_clean": coverage.checks_clean,
+            "checks_with_findings": coverage.checks_with_findings,
+            "checks_incomplete": coverage.checks_incomplete,
+            "checks_timed_out": coverage.checks_timed_out,
+            "checks_failed": coverage.checks_failed,
+            "completion_pct": coverage.completion_pct,
+            "clean_pct": coverage.clean_pct,
+            "plugins_used": coverage.plugins_used,
+            "hosts_checked": coverage.hosts_checked,
+            "per_plugin": [
+                {
+                    "plugin_id": p.plugin_id,
+                    "hosts_checked": p.hosts_checked,
+                    "clean": p.clean,
+                    "with_findings": p.with_findings,
+                    "timed_out": p.timed_out,
+                    "failed": p.failed,
+                    "findings_total": p.findings_total,
+                }
+                for p in coverage.per_plugin
+            ],
+        } if coverage else None,
         "scan": {
             "id": scan.id,
             "name": scan.name,

@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING
 import httpx
 
 from scanr.core.plugin_base import FindingData, PluginBase, PluginCategory, Severity
+from scanr.plugins.web._budget import Budget
 from scanr.plugins.web._crawler import crawl, create_web_client
 from scanr.plugins.web._http_evidence import format_from_httpx
 from scanr.plugins.web._ports import is_web_port, web_scheme
@@ -50,6 +51,10 @@ _SLEEP_SECONDS = 5
 # so ordinary jitter, a slow backend, or a shared-host hiccup cannot trip it.
 _DELAY_MARGIN = 3.0
 _BASELINE_VALUE = "scanr_cmdi_baseline"
+# Wall-clock allowance per host, comfortably inside the plugin's own 300s
+# timeout so we stop deliberately rather than being cancelled by the engine.
+# Measured need: paths x params x the timing oracle can otherwise reach ~50 min.
+_HOST_BUDGET = 210.0
 
 
 def _echo_payloads(marker: str) -> list[tuple[str, str]]:
@@ -94,13 +99,17 @@ class CommandInjectionPlugin(PluginBase):
 
     async def check(self, context: "ScanContext", host: "Host") -> list[FindingData]:
         findings: list[FindingData] = []
+        budget = Budget(_HOST_BUDGET)
         for port in host.ports:
+            if budget.spent():
+                logger.info("command_injection: %s budget spent, %s", host.ip, budget.note())
+                break
             if not is_web_port(port):
                 continue
             scheme = web_scheme(port)
             base_url = f"{scheme}://{host.ip}:{port.number}"
             try:
-                finding = await self._test_host(context, base_url, port.number)
+                finding = await self._test_host(context, base_url, port.number, budget)
             except Exception as exc:  # noqa: BLE001 - one port must not end the scan
                 logger.debug("command_injection: %s failed: %s", base_url, exc)
                 continue
@@ -108,7 +117,9 @@ class CommandInjectionPlugin(PluginBase):
                 findings.append(finding)
         return findings
 
-    async def _test_host(self, context, base_url: str, port: int) -> FindingData | None:
+    async def _test_host(
+        self, context, base_url: str, port: int, budget: Budget
+    ) -> FindingData | None:
         async with create_web_client(context) as client:
             crawled = await crawl(base_url, client)
             params = list(dict.fromkeys(crawled.get_params + _TEST_PARAMS))[:10]
@@ -116,13 +127,15 @@ class CommandInjectionPlugin(PluginBase):
 
             for path in paths:
                 for param in params:
-                    hit = await self._test_param(client, base_url, path, param, port)
+                    if budget.spent():
+                        return None
+                    hit = await self._test_param(client, base_url, path, param, port, budget)
                     if hit:
                         return hit
         return None
 
     async def _test_param(
-        self, client, base_url: str, path: str, param: str, port: int
+        self, client, base_url: str, path: str, param: str, port: int, budget: Budget
     ) -> FindingData | None:
         url = f"{base_url}{path}"
         try:
@@ -152,7 +165,11 @@ class CommandInjectionPlugin(PluginBase):
                         evidence_extra=format_from_httpx(resp),
                     )
 
-        # 2) Timing oracle — the blind case.
+        # 2) Timing oracle — the blind case, and by far the expensive half:
+        # every delay payload costs a real stall. Skip it rather than start one
+        # we cannot finish.
+        if budget.remaining < _SLEEP_SECONDS * 3:
+            return None
         timing = await self._timing_probe(client, url, param)
         if timing is not None:
             payload, label, baseline_s, slow_s = timing

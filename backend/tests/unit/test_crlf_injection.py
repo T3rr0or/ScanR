@@ -38,7 +38,8 @@ def _install(monkeypatch, handler):
 
 
 async def _run(base="http://192.0.2.10:80"):
-    return await ci.CrlfInjectionPlugin()._test_host(_Ctx(), base, 80)
+    from scanr.plugins.web._budget import Budget
+    return await ci.CrlfInjectionPlugin()._test_host(_Ctx(), base, 80, Budget(300.0))
 
 
 def _vulnerable_handler(request):

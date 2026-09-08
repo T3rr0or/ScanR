@@ -114,6 +114,69 @@
   {{ total_findings }} finding(s) across {{ findings_by_plugin | length }} plugin(s)
 </p>
 
+{% if coverage and coverage.checks_run %}
+<h2>Assurance &mdash; What Was Checked</h2>
+<p style="color:#475569;font-size:13px;margin-bottom:10px;">
+  A findings list only means something alongside the checks that found nothing.
+  {{ coverage.plugins_used }} distinct check(s) ran against
+  {{ coverage.hosts_checked }} host(s), {{ coverage.checks_run }} check-host
+  combination(s) in total.
+</p>
+<table class="host-table">
+  <tr><th>Outcome</th><th>Checks</th><th>Share</th></tr>
+  <tr>
+    <td>Passed &mdash; ran, found nothing</td>
+    <td>{{ coverage.checks_clean }}</td>
+    <td>{{ coverage.clean_pct }}% of completed</td>
+  </tr>
+  <tr>
+    <td>Reported a finding</td>
+    <td>{{ coverage.checks_with_findings }}</td>
+    <td>&mdash;</td>
+  </tr>
+  {% if coverage.checks_incomplete %}
+  <tr>
+    <td>Did not complete &mdash; no verdict for that host</td>
+    <td>{{ coverage.checks_incomplete }}</td>
+    <td>{{ coverage.checks_timed_out }} timed out, {{ coverage.checks_failed }} errored</td>
+  </tr>
+  {% endif %}
+  <tr>
+    <td><strong>Completed</strong></td>
+    <td><strong>{{ coverage.checks_completed }}</strong></td>
+    <td><strong>{{ coverage.completion_pct }}% of attempted</strong></td>
+  </tr>
+</table>
+
+{% if coverage.incomplete_plugins %}
+<p style="margin-top:10px;color:#b45309;font-size:12px;">
+  <strong>Incomplete coverage.</strong> These checks did not finish on every
+  host, so absence of a finding from them is not evidence of absence:
+  {% for p in coverage.incomplete_plugins %}
+    <code>{{ p.plugin_id }}</code> ({{ p.incomplete }} of {{ p.hosts_checked }}){% if not loop.last %}, {% endif %}
+  {% endfor %}
+</p>
+{% endif %}
+
+<details style="margin-top:12px;">
+  <summary style="cursor:pointer;color:#475569;font-size:13px;">
+    Per-check detail ({{ coverage.per_plugin | length }} checks)
+  </summary>
+  <table class="host-table" style="margin-top:8px;">
+    <tr><th>Check</th><th>Hosts</th><th>Passed</th><th>Findings</th><th>Incomplete</th></tr>
+    {% for p in coverage.per_plugin %}
+    <tr>
+      <td><code>{{ p.plugin_id }}</code></td>
+      <td>{{ p.hosts_checked }}</td>
+      <td>{{ p.clean }}</td>
+      <td>{{ p.findings_total }}</td>
+      <td>{% if p.incomplete %}{{ p.incomplete }}{% else %}&mdash;{% endif %}</td>
+    </tr>
+    {% endfor %}
+  </table>
+</details>
+{% endif %}
+
 <h2>Hosts Discovered</h2>
 <table class="host-table">
   <thead><tr><th>IP</th><th>Hostname</th><th>OS</th><th>Open Ports</th><th>Status</th></tr></thead>

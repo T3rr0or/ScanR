@@ -47,6 +47,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from scanr.core.plugin_base import FindingData, PluginBase, PluginCategory, Severity
+from scanr.plugins.web._budget import Budget
 from scanr.plugins.web._crawler import crawl, create_web_client
 from scanr.plugins.web._http_evidence import format_from_httpx
 from scanr.plugins.web._ports import is_web_port, web_scheme
@@ -112,6 +113,10 @@ class _Probe:
         self.resp = resp
 
 
+# Wall-clock allowance per host, inside the plugin's own 300s timeout so the
+# check stops deliberately instead of being cancelled with nothing to show.
+_HOST_BUDGET = 180.0
+
 class NoSqlInjectionPlugin(PluginBase):
     id = "web.nosql_injection"
     name = "NoSQL Injection"
@@ -127,13 +132,17 @@ class NoSqlInjectionPlugin(PluginBase):
 
     async def check(self, context: "ScanContext", host: "Host") -> list[FindingData]:
         findings: list[FindingData] = []
+        budget = Budget(_HOST_BUDGET)
         for port in host.ports:
+            if budget.spent():
+                logger.info("nosql_injection: %s budget spent, %s", host.ip, budget.note())
+                break
             if not is_web_port(port):
                 continue
             scheme = web_scheme(port)
             base_url = f"{scheme}://{host.ip}:{port.number}"
             try:
-                finding = await self._test_host(context, base_url, port.number)
+                finding = await self._test_host(context, base_url, port.number, budget)
             except Exception as exc:  # noqa: BLE001 - one port must not end the scan
                 logger.debug("nosql_injection: %s failed: %s", base_url, exc)
                 continue
@@ -141,7 +150,9 @@ class NoSqlInjectionPlugin(PluginBase):
                 findings.append(finding)
         return findings
 
-    async def _test_host(self, context, base_url: str, port: int) -> FindingData | None:
+    async def _test_host(
+        self, context, base_url: str, port: int, budget: Budget
+    ) -> FindingData | None:
         async with create_web_client(context) as client:
             crawled = await crawl(base_url, client)
             candidates = crawled.get_params + crawled.form_fields + _TEST_PARAMS
@@ -151,6 +162,8 @@ class NoSqlInjectionPlugin(PluginBase):
             for path in paths:
                 url = f"{base_url}{path}"
                 for param in params:
+                    if budget.spent():
+                        return None
                     hit = await self._test_query_param(client, url, param, port)
                     if hit:
                         return hit
