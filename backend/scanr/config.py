@@ -12,7 +12,7 @@ class Settings(BaseSettings):
 
     # Application
     app_name: str = "ScanR"
-    app_version: str = "0.21.0"
+    app_version: str = "0.22.0"
     debug: bool = False
     base_dir: Path = Path(__file__).parent.parent
     # Runtime identity controls which bootstrap-only secrets are mandatory.
