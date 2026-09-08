@@ -145,6 +145,17 @@ class ApiKeyExposurePlugin(PluginBase):
     # — these are variable/config names, not actual secret values.
     _IDENTIFIER_RE = re.compile(r'^[a-z][a-z0-9._\-]*$')
 
+    # Anti-CSRF tokens are *meant* to be in the page. They are per-session, useless
+    # to anyone who cannot already make requests as that session, and rotated on
+    # login. Every server-rendered framework emits one, so matching them turns a
+    # critical finding into noise on most of the web. Found against a real
+    # Nextcloud instance, whose `data-requesttoken` tripped the generic pattern.
+    _CSRF_KEYS = (
+        "requesttoken", "csrf-token", "csrf_token", "csrftoken",
+        "xsrf-token", "xsrf_token", "authenticity_token",
+        "__requestverificationtoken", "anti-forgery", "antiforgery",
+    )
+
     def _has_entropy(self, val: str) -> bool:
         """Reject low-entropy / placeholder values for the Generic Secret pattern."""
         lower = val.lower().strip("'\"")
@@ -158,6 +169,15 @@ class ApiKeyExposurePlugin(PluginBase):
             return False
         return True
 
+    def _is_csrf_token(self, content: str, match_start: int) -> bool:
+        """True if the matched key is an anti-CSRF token rather than a secret.
+
+        The generic pattern only captures the value, so the attribute or field
+        name it belongs to has to be read from the text just before the match.
+        """
+        window = content[max(0, match_start - 40):match_start + 20].lower()
+        return any(key in window for key in self._CSRF_KEYS)
+
     def _scan_content(self, content: str, url: str, hits: list) -> None:
         for pattern_name, regex in _PATTERNS:
             for match in regex.finditer(content):
@@ -166,6 +186,8 @@ class ApiKeyExposurePlugin(PluginBase):
                 if pattern_name == "Generic Secret":
                     captured = match.group(1) if match.lastindex else val
                     if not self._has_entropy(captured):
+                        continue
+                    if self._is_csrf_token(content, match.start()):
                         continue
                 masked = val[:6] + "..." + val[-4:] if len(val) > 12 else val[:3] + "..."
                 hits.append({"pattern": pattern_name, "url": url, "masked": masked})
