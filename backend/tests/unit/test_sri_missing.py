@@ -119,3 +119,46 @@ async def test_http_and_https_third_party_scripts_are_scored_differently(monkeyp
     assert http_finding.cvss_score > https_finding.cvss_score
     assert "over plaintext HTTP" in http_finding.title
     assert "over HTTPS" in https_finding.title
+
+
+# ── commented-out subresources ───────────────────────────────────────────────
+
+def test_conditional_comment_subresource_is_not_reported():
+    """A tag inside an HTML comment is not a subresource the browser fetches.
+
+    This exact block was found on a live Portainer install during real-network
+    validation and was reported as a missing-SRI finding. No browser released
+    this decade evaluates a `lt IE 9` conditional comment, so the script never
+    loads and there is nothing to protect with a hash.
+    """
+    from scanr.plugins.web.sri_missing import _extract
+
+    html = (
+        '<base id="base"/><!--[if lt IE 9]>'
+        '<script src="//html5shim.googlecode.com/svn/trunk/html5.js"></script>'
+        "<![endif]-->"
+    )
+    assert _extract(html, "https://host.test/") == []
+
+
+def test_multiline_comment_is_stripped_whole():
+    from scanr.plugins.web.sri_missing import _extract
+
+    html = (
+        "<!--[if lt IE 9]>\n"
+        '  <script src="https://old.example.net/shim.js"></script>\n'
+        "<![endif]-->"
+    )
+    assert _extract(html, "https://host.test/") == []
+
+
+def test_a_real_resource_beside_a_commented_one_is_still_reported():
+    """Stripping comments must not swallow the live tags around them."""
+    from scanr.plugins.web.sri_missing import _extract
+
+    html = (
+        '<!--[if lt IE 9]><script src="https://old.example.net/shim.js"></script><![endif]-->'
+        '<script src="https://cdn.example.net/real.js"></script>'
+    )
+    urls = [r.url for r in _extract(html, "https://host.test/")]
+    assert urls == ["https://cdn.example.net/real.js"]

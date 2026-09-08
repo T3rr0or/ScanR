@@ -44,6 +44,9 @@ logger = logging.getLogger(__name__)
 
 HTTP_PORTS = [80, 81, 443, 3000, 5000, 8000, 8008, 8080, 8081, 8443, 8888, 9000, 9090, 9443]
 
+# Non-greedy so adjacent comments are removed individually, and DOTALL so a
+# multi-line conditional-comment block is matched whole.
+_COMMENT_RE = re.compile(r"<!--.*?-->", re.S)
 _SCRIPT_TAG_RE = re.compile(r"<script\b[^>]*\bsrc\s*=[^>]*>", re.I)
 _LINK_TAG_RE = re.compile(r"<link\b[^>]*>", re.I)
 _ATTR_RE = re.compile(r"""\b([a-zA-Z-]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))""")
@@ -81,8 +84,21 @@ class _Resource:
         self.scheme = scheme
 
 
+def _strip_comments(html: str) -> str:
+    """Remove HTML comments before looking for subresources.
+
+    A tag inside a comment is not a subresource. Conditional comments are the
+    common case in the wild — `<!--[if lt IE 9]><script src=...><![endif]-->`
+    still ships in a lot of vendored templates, and the browser never fetches
+    it, so reporting a missing hash on it is a false positive. Found against a
+    real Portainer install, whose page carries exactly that html5shim block.
+    """
+    return _COMMENT_RE.sub("", html)
+
+
 def _extract(html: str, page_url: str) -> list[_Resource]:
     """Cross-origin scripts/stylesheets in `html` that carry no integrity hash."""
+    html = _strip_comments(html)
     page_host = (urlparse(page_url).hostname or "").rstrip(".").lower()
     found: list[_Resource] = []
     seen: set[str] = set()
