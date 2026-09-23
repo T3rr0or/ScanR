@@ -66,3 +66,15 @@ def test_the_secret_value_is_masked_in_the_hit():
     masked = _hits(html)[0]["masked"]
     assert "sk9dLm2Qx7Rv4Tn8Wz1Yb3Hc" not in masked
     assert "..." in masked
+
+
+def test_csrf_field_does_not_hide_an_adjacent_api_key():
+    assert len(_hits('csrf_token: "abc", api_key: "sk9dLm2Qx7Rv4Tn8Wz1Yb3Hc"')) == 1
+
+
+def test_csrf_text_in_secret_value_does_not_hide_secret():
+    assert len(_hits('secret: "csrf_token_Zx91QmLp44RtYv7Kd2Nw"')) == 1
+
+
+def test_direct_csrf_assignment_is_skipped():
+    assert _hits('csrf_token: "sk9dLm2Qx7Rv4Tn8Wz1Yb3Hc"') == []

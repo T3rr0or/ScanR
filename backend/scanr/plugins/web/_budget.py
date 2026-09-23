@@ -6,8 +6,8 @@ declared timeout, and the engine then cancels the check mid-iteration. The run
 is recorded as a timeout rather than lost silently, but the host is left with an
 incomplete check and no partial result.
 
-A budget makes the plugin decide when to stop. It finishes the parameter it is
-on, returns whatever it found, and reports honestly that it stopped early --
+A budget makes the plugin decide when to stop. It bounds each port probe,
+retains earlier findings, and reports honestly that it stopped early --
 which is strictly better than being cancelled with nothing to show.
 """
 from __future__ import annotations
@@ -43,6 +43,6 @@ class Budget:
     def note(self) -> str:
         """A line for the finding/log when the check stopped early."""
         return (
-            f"Check stopped after its {self._seconds:.0f}s budget; "
+            f"Check could not finish within its {self._seconds:.0f}s budget; "
             "coverage of this host is partial."
         )

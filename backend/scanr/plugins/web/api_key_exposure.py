@@ -175,8 +175,17 @@ class ApiKeyExposurePlugin(PluginBase):
         The generic pattern only captures the value, so the attribute or field
         name it belongs to has to be read from the text just before the match.
         """
-        window = content[max(0, match_start - 40):match_start + 20].lower()
-        return any(key in window for key in self._CSRF_KEYS)
+        start = match_start
+        while start > 0 and (content[start - 1].isalnum() or content[start - 1] in "_-$"):
+            start -= 1
+        end = match_start
+        while end < len(content) and (content[end].isalnum() or content[end] in "_-$"):
+            end += 1
+        key = content[start:end].lower()
+        if key.startswith("data-"):
+            key = key[5:]
+        return key in self._CSRF_KEYS
+
 
     def _scan_content(self, content: str, url: str, hits: list) -> None:
         for pattern_name, regex in _PATTERNS:

@@ -62,6 +62,14 @@ class FindingData:
     peer_review_command: str | None = None
 
 
+class BudgetedFindings(list[FindingData]):
+    """Findings retained when a check exhausts its time allowance."""
+
+    def __init__(self, findings, *, incomplete_reason: str | None = None):
+        super().__init__(findings)
+        self.incomplete_reason = incomplete_reason
+
+
 class PluginBase(ABC):
     # Subclasses MUST set these
     id: str

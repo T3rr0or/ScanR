@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from scanr.config import get_settings
-from scanr.models import Finding, Host, Report, Scan, Screenshot
+from scanr.models import Finding, Host, Port, Report, Scan, Screenshot
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -35,7 +35,7 @@ class ReportEngine:
         hosts_result = await self.db.execute(
             select(Host)
             .where(Host.scan_id == scan.id)
-            .options(selectinload(Host.ports))
+            .options(selectinload(Host.ports).selectinload(Port.service))
         )
         hosts = hosts_result.scalars().all()
 

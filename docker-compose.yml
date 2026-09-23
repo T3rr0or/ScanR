@@ -345,6 +345,7 @@ services:
       - "${SCANR_UI_BIND:-127.0.0.1}:80:80"
     networks:
       - frontend
+      - ingress
 
   # ── AI command-execution sandbox ──────────────────────────────────────────
   # Only the sandbox-runner gets the Docker socket; it holds NO ScanR secrets.
@@ -430,6 +431,10 @@ volumes:
   wordlists_data:
 
 networks:
+  # Docker needs a non-internal network to publish nginx's host port. Keep
+  # this separate from the internal API link and the data/worker networks.
+  ingress:
+
   # Browser-facing nginx can reach only the API, never databases or workers.
   frontend:
     internal: true

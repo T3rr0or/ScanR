@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from scanr.core.context import ScanContext
-from scanr.core.plugin_base import PluginCategory, PluginImpact
+from scanr.core.plugin_base import BudgetedFindings, PluginCategory, PluginImpact
 from scanr.core.plugin_manager import get_enabled_plugins
 from scanr.core.rate_limiter import RateLimiter
 from scanr.core.result_collector import ResultCollector
@@ -1108,6 +1108,13 @@ class ScanEngine:
                     plugin.check(context, host),
                     timeout=getattr(plugin, "timeout", None) or context.performance_config()["timeout"],
                 )
+                incomplete_reason = (
+                    findings.incomplete_reason if isinstance(findings, BudgetedFindings) else None
+                )
+                if incomplete_reason:
+                    await context.log.warn(
+                        incomplete_reason, phase="plugin", host=host.ip, plugin=plugin.id,
+                    )
                 for f in findings:
                     await collector.add_finding(host.id, f)
                     context.findings_count += 1
@@ -1121,7 +1128,8 @@ class ScanEngine:
                     context,
                     host,
                     plugin.id,
-                    status="success",
+                    status="timeout" if incomplete_reason else "success",
+                    error=incomplete_reason,
                     duration_ms=_elapsed_ms(started),
                     findings_count=len(findings),
                 )

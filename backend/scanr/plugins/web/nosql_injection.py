@@ -43,10 +43,11 @@ a predicate, not a script with side effects.
 from __future__ import annotations
 
 import json
+import asyncio
 import logging
 from typing import TYPE_CHECKING
 
-from scanr.core.plugin_base import FindingData, PluginBase, PluginCategory, Severity
+from scanr.core.plugin_base import BudgetedFindings, FindingData, PluginBase, PluginCategory, Severity
 from scanr.plugins.web._budget import Budget
 from scanr.plugins.web._crawler import crawl, create_web_client
 from scanr.plugins.web._http_evidence import format_from_httpx
@@ -142,13 +143,19 @@ class NoSqlInjectionPlugin(PluginBase):
             scheme = web_scheme(port)
             base_url = f"{scheme}://{host.ip}:{port.number}"
             try:
-                finding = await self._test_host(context, base_url, port.number, budget)
+                async with asyncio.timeout(budget.remaining):
+                    finding = await self._test_host(context, base_url, port.number, budget)
+            except TimeoutError:
+                budget.expired_early = True
+                break
             except Exception as exc:  # noqa: BLE001 - one port must not end the scan
                 logger.debug("nosql_injection: %s failed: %s", base_url, exc)
                 continue
             if finding:
                 findings.append(finding)
-        return findings
+        return BudgetedFindings(
+            findings, incomplete_reason=budget.note() if budget.expired_early else None,
+        )
 
     async def _test_host(
         self, context, base_url: str, port: int, budget: Budget
