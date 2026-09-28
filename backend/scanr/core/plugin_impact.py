@@ -26,6 +26,7 @@ KNOWN_PLUGIN_IDS = frozenset({
     "network.open_ports_info",
     "network.subdomain_enum",
     "network.subdomain_takeover",
+    "nuclei.network_runner",
     "nuclei.runner",
     "services.ad_password_policy",
     "services.adb_unauth",
@@ -51,6 +52,7 @@ KNOWN_PLUGIN_IDS = frozenset({
     "services.enip_detect",
     "services.esxi_exposure",
     "services.etcd_unauth",
+    "services.exim_version",
     "services.firebird_default_creds",
     "services.ftp_anon",
     "services.ftp_cleartext",
@@ -259,6 +261,7 @@ INTRUSIVE_PLUGIN_IDS = frozenset({
 })
 
 EXPLOIT_PLUGIN_IDS = frozenset({
+    "nuclei.network_runner",
     "nuclei.runner",
     "services.bluekeep_check",
     "services.cisco_smart_install",
