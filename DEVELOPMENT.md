@@ -106,9 +106,34 @@ python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().
 1. Create `backend/scanr/plugins/<category>/<name>.py`
 2. Extend `PluginBase`, set `id`, `name`, `category`, `severity`, `ports`
 3. Implement `async def check(self, context, host) -> list[FindingData]`
-4. Plugin auto-discovered on next worker restart — no registration needed
+4. **Classify the plugin's impact.** Registration is fail-closed: the runtime
+   registry in `backend/scanr/core/plugin_manager.py` refuses to expose any
+   plugin whose `id` is not in the reviewed manifest, so a new plugin does *not*
+   auto-discover until you add it. In `backend/scanr/core/plugin_impact.py`:
+   - add the `id` to `KNOWN_PLUGIN_IDS`, and
+   - add it to exactly one impact group — `PASSIVE_PLUGIN_IDS` (sends nothing to
+     the target), `INTRUSIVE_PLUGIN_IDS` (sends attack payloads),
+     `AUTH_ATTEMPT_PLUGIN_IDS` (sends credentials / authenticates),
+     `EXPLOIT_PLUGIN_IDS` (exploit or reflection-vector probe), or
+     `STATE_CHANGING_PLUGIN_IDS` (can modify the target). Leave it out of every
+     group for a plain `active` probe.
 
-Compliance/MITRE tags: add entry in `backend/scanr/core/compliance.py` and `backend/scanr/core/mitre.py`.
+   The impact drives the safety gate: `safe` runs only passive/active,
+   `balanced` adds intrusive, `aggressive` adds auth/exploit/state-changing.
+   `test_impact_manifest_covers_every_plugin_source_exactly` fails until every
+   plugin `id` in the source tree is classified here.
+5. **Wire a capability toggle** (optional): if the plugin should only run when an
+   enumeration capability is enabled, add it to `_filter_plugins_by_capabilities`
+   in `backend/scanr/core/engine.py`.
+6. Plugin metadata is auto-seeded into the DB on the next worker restart once it
+   is registered — no edit to `backend/scanr/db/init_db.py` is required.
+
+Compliance/MITRE tags (optional but expected): add an entry in
+`backend/scanr/core/compliance.py` and `backend/scanr/core/mitre.py`.
+
+Add a unit test under `backend/tests/unit/` following the per-plugin convention
+(e.g. `test_<name>.py`), testing the pure helpers directly rather than sending
+live traffic.
 
 ---
 
