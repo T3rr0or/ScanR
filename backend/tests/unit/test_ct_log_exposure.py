@@ -16,7 +16,7 @@ from scanr.plugins.ssl_tls.ct_log_exposure import (
 )
 
 
-def _host(hostname="www.example.com", ip="192.0.2.70"):
+def _host(hostname="example.com", ip="192.0.2.70"):
     return SimpleNamespace(ip=ip, hostname=hostname, ports=[])
 
 
@@ -53,6 +53,50 @@ def test_sensitive_names_flags_internal_labels():
 
 
 # ── plugin behaviour ─────────────────────────────────────────────────────────
+
+@pytest.mark.parametrize("hostname", [
+    "app.example.co.uk", "example.co.uk", "app.example.com", "tenant.github.io",
+])
+def test_domain_preserves_supplied_scope(hostname):
+    assert CtLogExposurePlugin._domain(None, _host(hostname)) == hostname
+
+
+def test_domain_preserves_original_hostname_scope():
+    context = SimpleNamespace(original_hostname=lambda ip: "*.App.Example.Co.Uk.")
+    assert CtLogExposurePlugin._domain(context, _host(None)) == "app.example.co.uk"
+
+
+@pytest.mark.asyncio
+async def test_ct_response_excludes_unrelated_domains(monkeypatch):
+    rows = [{"name_value": "\n".join([
+        "app.example.co.uk", "www.app.example.co.uk", "vault.unrelated.co.uk",
+        "vault.example.co.uk", "vault.notapp.example.co.uk",
+    ])}]
+
+    class FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            pass
+
+        async def get(self, url, **kwargs):
+            assert url == "https://crt.sh/?output=json&q=%25.app.example.co.uk"
+            return SimpleNamespace(status_code=200, content=b"[]", json=lambda: rows)
+
+    async def fake_client(url, **kwargs):
+        return FakeClient()
+
+    monkeypatch.setattr(
+        "scanr.plugins.ssl_tls.ct_log_exposure.pinned_async_client", fake_client
+    )
+    findings = await CtLogExposurePlugin().check(None, _host("app.example.co.uk"))
+    assert len(findings) == 1
+    assert findings[0].severity.value == "info"
+    assert "Distinct hostnames published: 2" in findings[0].evidence
+    assert "www.app.example.co.uk" in findings[0].evidence
+    assert "vault." not in findings[0].evidence
+
 
 @pytest.mark.asyncio
 async def test_flagged_names_raise_severity(monkeypatch):

@@ -144,10 +144,10 @@ class CtLogExposurePlugin(PluginBase):
         hostname = hostname.removeprefix("*.").rstrip(".")
         if not hostname or _is_ip(hostname) or "." not in hostname:
             return None
-        # Query the registrable-looking parent so sibling hosts are included; a
-        # deeper name would only return that one host's own certificates.
-        labels = hostname.split(".")
-        return ".".join(labels[-2:]) if len(labels) > 2 else hostname
+        # Keep the supplied hostname as the scope. Guessing a registrable parent
+        # from the last two labels turns app.example.co.uk into co.uk (and can
+        # cross tenant boundaries on shared hosting domains).
+        return hostname
 
     async def _query_ct_logs(self, domain: str) -> list[str]:
         url = _CT_LOG_URL.format(domain=domain)

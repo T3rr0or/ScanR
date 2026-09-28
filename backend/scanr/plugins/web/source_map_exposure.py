@@ -20,12 +20,14 @@ was minified out of the bundle is frequently still sitting in the map.
 """
 from __future__ import annotations
 
+import base64
+import binascii
 import json
 import logging
 import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
-from urllib.parse import urljoin, urlparse
+from urllib.parse import unquote_to_bytes, urljoin, urlparse
 
 from scanr.core.plugin_base import FindingData, PluginBase, PluginCategory, Severity
 from scanr.plugins.web._crawler import create_web_client
@@ -48,7 +50,6 @@ _MAX_SOURCES_SHOWN = 25
 # Maps are large by nature; read enough to parse and stop.
 _MAX_MAP_BYTES = 8 * 1024 * 1024
 _MAX_SCRIPT_BYTES = 4 * 1024 * 1024
-_SCRIPT_TAIL_BYTES = 4096
 
 # Secrets that survive minification and turn up in recovered sources. Kept
 # deliberately narrow — each pattern matches a credential format, not a word
@@ -74,6 +75,7 @@ class SourceMap:
     has_contents: bool = False
     size: int = 0
     secrets: list[str] = field(default_factory=list)
+    inline: bool = False
 
 
 def extract_script_urls(html: str, page_url: str) -> list[str]:
@@ -112,14 +114,32 @@ def map_candidates(script_url: str, script_tail: str) -> list[str]:
     match = _SOURCE_MAPPING_RE.search(script_tail)
     if match:
         declared = match.group(1).strip().strip('"\'')
-        if declared.startswith("data:"):
-            candidates.append(script_url)  # inline map, already in hand
+        if declared.lower().startswith("data:"):
+            candidates.append(declared)
         else:
             candidates.append(urljoin(script_url, declared))
     conventional = script_url.split("?")[0] + ".map"
     if conventional not in candidates:
         candidates.append(conventional)
     return candidates
+
+
+def decode_inline_map(uri: str) -> str | None:
+    """Decode a bounded data URI without issuing a network request."""
+    header, separator, payload = uri.partition(",")
+    if not separator or len(header) > 256 or len(payload) > 3 * _MAX_MAP_BYTES:
+        return None
+    try:
+        raw = unquote_to_bytes(payload)
+        if header.lower().endswith(";base64"):
+            if len(raw) > 4 * ((_MAX_MAP_BYTES + 2) // 3):
+                return None
+            raw = base64.b64decode(raw, validate=True)
+        if len(raw) > _MAX_MAP_BYTES:
+            return None
+        return raw.decode("utf-8")
+    except (ValueError, UnicodeError, binascii.Error):
+        return None
 
 
 def parse_source_map(body: str) -> tuple[list[str], bool] | None:
@@ -200,30 +220,35 @@ class SourceMapExposurePlugin(PluginBase):
                 return []
 
             for script_url in extract_script_urls(page.text, f"{base_url}/")[:_MAX_SCRIPTS]:
-                tail = await self._script_tail(client, script_url)
-                if tail is None:
+                body = await self._script_body(client, script_url)
+                if body is None:
                     continue
-                for candidate in map_candidates(script_url, tail):
+                for candidate in map_candidates(script_url, body):
                     if candidate in tried:
                         continue
                     tried.add(candidate)
-                    source_map = await self._fetch_map(client, candidate, script_url)
+                    if candidate.lower().startswith("data:"):
+                        decoded = decode_inline_map(candidate)
+                        source_map = self._parse_map(decoded, script_url, script_url, inline=True)
+                    else:
+                        source_map = await self._fetch_map(client, candidate, script_url)
                     if source_map is not None:
                         found.append(source_map)
                         break  # one confirmed map per script is enough
         return found
 
     @staticmethod
-    async def _script_tail(client, script_url: str) -> str | None:
-        """The end of a script, where the sourceMappingURL comment lives."""
+    async def _script_body(client, script_url: str) -> str | None:
+        """Read the bounded bundle, including inline maps larger than a short tail."""
         try:
             response = await client.get(script_url, timeout=8.0)
         except Exception:
             return None
         if response.status_code != 200:
             return None
-        body = response.text[:_MAX_SCRIPT_BYTES]
-        return body[-_SCRIPT_TAIL_BYTES:]
+        if len(response.content) > _MAX_SCRIPT_BYTES:
+            return ""  # Still try the conventional sidecar without parsing a truncated bundle.
+        return response.text
 
     @staticmethod
     async def _fetch_map(client, url: str, script_url: str) -> SourceMap | None:
@@ -234,6 +259,15 @@ class SourceMapExposurePlugin(PluginBase):
         if response.status_code != 200:
             return None
         body = response.text[:_MAX_MAP_BYTES]
+        source_map = SourceMapExposurePlugin._parse_map(body, url, script_url)
+        if source_map is not None:
+            source_map.size = len(response.content)
+        return source_map
+
+    @staticmethod
+    def _parse_map(body: str | None, url: str, script_url: str, *, inline: bool = False) -> SourceMap | None:
+        if body is None:
+            return None
         parsed = parse_source_map(body)
         if parsed is None:
             return None
@@ -243,7 +277,8 @@ class SourceMapExposurePlugin(PluginBase):
             script_url=script_url,
             sources=sources,
             has_contents=has_contents,
-            size=len(response.content),
+            size=len(body.encode("utf-8")),
+            inline=inline,
             secrets=find_secrets(body),
         )
 
@@ -260,7 +295,10 @@ class SourceMapExposurePlugin(PluginBase):
 
         evidence: list[str] = []
         for source_map in maps[:_MAX_MAPS_REPORTED]:
-            evidence.append(f"GET {source_map.url} → 200 ({source_map.size} bytes)")
+            if source_map.inline:
+                evidence.append(f"Inline source map in {source_map.script_url} ({source_map.size} decoded bytes)")
+            else:
+                evidence.append(f"GET {source_map.url} → 200 ({source_map.size} bytes)")
             evidence.append(f"  referenced by: {source_map.script_url}")
             evidence.append(
                 f"  sources: {len(source_map.sources)} original file(s); "

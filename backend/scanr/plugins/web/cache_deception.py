@@ -46,9 +46,9 @@ logger = logging.getLogger(__name__)
 HTTP_PORTS = [80, 443, 8080, 8443, 8000, 8888, 3000, 5000]
 
 # Paths that usually serve per-user or otherwise dynamic content. The root is
-# included because on a single-page application it is often the only route.
+# last because a generic landing page should not use the probe budget before
+# account and other potentially private routes have been checked.
 _BASE_PATHS = (
-    "/",
     "/account",
     "/profile",
     "/dashboard",
@@ -56,6 +56,7 @@ _BASE_PATHS = (
     "/home",
     "/user",
     "/api/me",
+    "/",
 )
 
 # Delimiters that separate "what the application routes on" from "what the cache
@@ -216,10 +217,10 @@ class CacheDeceptionPlugin(PluginBase):
         # Unique per run, so the cache entry this creates is at a URL no real
         # user will request.
         filename = f"scanr-{secrets.token_hex(6)}"
-        probes = 0
         async with create_web_client(
             context, pin_ip=ip, pin_port=port, pin_hostname=authority
         ) as client:
+            baselines: list[tuple[str, str]] = []
             for base_path in _BASE_PATHS:
                 baseline = await self._get(client, f"{base_url}{base_path}")
                 if baseline is None:
@@ -227,9 +228,15 @@ class CacheDeceptionPlugin(PluginBase):
                 status, headers, body = baseline
                 if status != 200 or "html" not in headers.get("content-type", "").lower():
                     continue
+                baselines.append((base_path, body))
 
-                for delimiter in _DELIMITERS:
-                    for extension in _STATIC_EXTENSIONS:
+            # Try each viable route once before spending more probes on any one
+            # route. A landing page can accept every suffix while a private
+            # route may need only one specific delimiter to expose a flaw.
+            probes = 0
+            for delimiter in _DELIMITERS:
+                for extension in _STATIC_EXTENSIONS:
+                    for base_path, body in baselines:
                         if probes >= _MAX_PROBES:
                             return None
                         probes += 1
