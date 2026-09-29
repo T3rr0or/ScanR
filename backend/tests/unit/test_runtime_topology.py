@@ -34,7 +34,7 @@ def test_service_networks_enforce_the_runtime_trust_boundaries() -> None:
     expected = {
         "redis": {"data"},
         "postgres": {"data"},
-        "frontend": {"frontend"},
+        "frontend": {"frontend", "ingress"},
         "api": {"frontend", "data", "api_egress"},
         "scan-worker": {"data", "browser_control", "scan_egress"},
         "ai-worker": {"data", "browser_control", "sandbox_control", "scan_egress"},

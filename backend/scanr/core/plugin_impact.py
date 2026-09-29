@@ -175,6 +175,31 @@ KNOWN_PLUGIN_IDS = frozenset({
     "web.waf_detect",
     "web.xss_detect",
     "web.xxe_detect",
+    "authenticated.laps_status",
+    "authenticated.windows_defenses",
+    "authenticated.windows_local_privesc",
+    "authenticated.windows_patch_status",
+    "network.open_resolver",
+    "services.db_extended_unauth",
+    "services.devops_platform_exposure",
+    "services.dns_dynamic_update",
+    "services.grpc_reflection",
+    "services.iscsi_exposure",
+    "services.ldap_anon_write",
+    "services.printer_exposure",
+    "services.rtsp_exposure",
+    "services.smtp_smuggling",
+    "services.udp_amplification",
+    "services.vpn_appliance_exposure",
+    "ssh.terrapin",
+    "ssl_tls.ct_log_exposure",
+    "ssl_tls.handshake_hardening",
+    "ssl_tls.ticketbleed",
+    "web.aspnet_viewstate",
+    "web.cache_deception",
+    "web.ntlm_endpoint_disclosure",
+    "web.source_map_exposure",
+    "web.websocket_security",
 })
 
 PASSIVE_PLUGIN_IDS = frozenset({
@@ -182,6 +207,7 @@ PASSIVE_PLUGIN_IDS = frozenset({
     "network.open_ports_info",
     # Reads banners the scan already collected; sends nothing itself.
     "services.python_eol",
+    "ssl_tls.ct_log_exposure",
 })
 
 AUTH_ATTEMPT_PLUGIN_IDS = frozenset({
@@ -215,6 +241,10 @@ AUTH_ATTEMPT_PLUGIN_IDS = frozenset({
     "web.default_creds_web",
     "web.dir_bruteforce",
     "web.js_libraries",
+    "authenticated.laps_status",
+    "authenticated.windows_defenses",
+    "authenticated.windows_local_privesc",
+    "authenticated.windows_patch_status",
 })
 
 INTRUSIVE_PLUGIN_IDS = frozenset({
@@ -225,6 +255,7 @@ INTRUSIVE_PLUGIN_IDS = frozenset({
     "web.open_redirect",
     "web.ssti_detect",
     "web.xss_detect",
+    "web.aspnet_viewstate",
 })
 
 EXPLOIT_PLUGIN_IDS = frozenset({
@@ -253,6 +284,8 @@ EXPLOIT_PLUGIN_IDS = frozenset({
     "web.ssrf_detect",
     "web.waf_detect",
     "web.xxe_detect",
+    "services.udp_amplification",
+    "ssl_tls.ticketbleed",
 })
 
 STATE_CHANGING_PLUGIN_IDS = frozenset({
@@ -267,6 +300,10 @@ STATE_CHANGING_PLUGIN_IDS = frozenset({
     "web.http_methods",
     "web.http_smuggling",
     "web.spring4shell_check",
+    "services.dns_dynamic_update",
+    "services.ldap_anon_write",
+    "services.smtp_smuggling",
+    "web.cache_deception",
 })
 
 _GROUPS = {

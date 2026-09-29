@@ -312,6 +312,82 @@ COMPLIANCE_MAP: dict[str, list[str]] = {
     "network.subdomain_takeover": [
         "ISO27001:A.8.9", "CIS:4.8", "NIST:CM-8",
     ],
+    # New coverage plugins
+    "network.open_resolver": [
+        "ISO27001:A.8.20", "CIS:9.2", "NIST:SC-5",
+    ],
+    "services.udp_amplification": [
+        "ISO27001:A.8.20", "CIS:9.2", "NIST:SC-5",
+    ],
+    "services.dns_dynamic_update": [
+        "ISO27001:A.8.20", "CIS:4.8", "NIST:SC-20",
+    ],
+    "services.vpn_appliance_exposure": [
+        "PCI-DSS:6.3.3", "ISO27001:A.8.8", "CIS:12.7", "NIST:SI-2",
+    ],
+    "services.devops_platform_exposure": [
+        "PCI-DSS:6.3.1", "ISO27001:A.8.4", "CIS:16.1", "NIST:AC-3",
+    ],
+    "services.db_extended_unauth": [
+        "PCI-DSS:2.2.1", "ISO27001:A.8.5", "CIS:3.3", "NIST:AC-3",
+    ],
+    "services.rtsp_exposure": [
+        "ISO27001:A.8.20", "CIS:4.8", "NIST:AC-3",
+    ],
+    "services.printer_exposure": [
+        "ISO27001:A.8.20", "CIS:4.8", "NIST:AC-3",
+    ],
+    "services.iscsi_exposure": [
+        "PCI-DSS:2.2.1", "ISO27001:A.8.5", "CIS:3.3", "NIST:AC-3",
+    ],
+    "services.grpc_reflection": [
+        "ISO27001:A.8.9", "CIS:16.1", "NIST:AC-3",
+    ],
+    "services.smtp_smuggling": [
+        "PCI-DSS:2.2.1", "ISO27001:A.8.20", "CIS:9.3",
+    ],
+    "services.ldap_anon_write": [
+        "PCI-DSS:7.1.1", "ISO27001:A.8.3", "CIS:6.8", "NIST:AC-6",
+    ],
+    "ssh.terrapin": [
+        "PCI-DSS:4.2.1", "ISO27001:A.8.24", "CIS:16.11", "NIST:SC-8",
+    ],
+    "ssl_tls.handshake_hardening": [
+        "PCI-DSS:4.2.1", "ISO27001:A.8.24", "CIS:18.5", "NIST:SC-8",
+    ],
+    "ssl_tls.ticketbleed": [
+        "PCI-DSS:6.3.3", "ISO27001:A.8.8", "CIS:7.4", "NIST:SI-2",
+    ],
+    "ssl_tls.ct_log_exposure": [
+        "ISO27001:A.8.9", "CIS:4.8", "NIST:CM-8",
+    ],
+    "web.source_map_exposure": [
+        "PCI-DSS:6.4.1", "ISO27001:A.8.9", "CIS:16.1", "NIST:SI-10",
+    ],
+    "web.aspnet_viewstate": [
+        "PCI-DSS:6.4.1", "ISO27001:A.8.9", "CIS:16.1", "NIST:SI-10",
+    ],
+    "web.ntlm_endpoint_disclosure": [
+        "ISO27001:A.8.9", "CIS:4.8", "NIST:SC-30",
+    ],
+    "web.websocket_security": [
+        "PCI-DSS:6.4.1", "ISO27001:A.8.9", "CIS:16.1",
+    ],
+    "web.cache_deception": [
+        "PCI-DSS:6.4.1", "ISO27001:A.8.9", "CIS:16.1", "NIST:SC-28",
+    ],
+    "authenticated.windows_patch_status": [
+        "PCI-DSS:6.3.3", "ISO27001:A.8.8", "CIS:7.3", "NIST:SI-2",
+    ],
+    "authenticated.windows_local_privesc": [
+        "PCI-DSS:7.1.1", "ISO27001:A.8.2", "CIS:5.4", "NIST:AC-6",
+    ],
+    "authenticated.laps_status": [
+        "PCI-DSS:8.3.1", "ISO27001:A.8.5", "CIS:5.2", "NIST:IA-5",
+    ],
+    "authenticated.windows_defenses": [
+        "PCI-DSS:5.2.1", "ISO27001:A.8.7", "CIS:10.1", "NIST:SI-3",
+    ],
 }
 
 

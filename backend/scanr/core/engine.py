@@ -125,7 +125,7 @@ def _filter_plugins_by_capabilities(plugins: list, profile: dict) -> list:
             continue
         if not enum["directory_enum"] and pid in {"web.dir_bruteforce", "web.sensitive_files"}:
             continue
-        if not enum["dns_recon"] and pid in {"network.dns_recon", "network.dns_zone_transfer", "network.subdomain_takeover"}:
+        if not enum["dns_recon"] and pid in {"network.dns_recon", "network.dns_zone_transfer", "network.subdomain_takeover", "ssl_tls.ct_log_exposure"}:
             continue
         if not enum["subdomain_enum"] and pid == "network.subdomain_enum":
             continue

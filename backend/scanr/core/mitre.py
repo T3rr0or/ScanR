@@ -72,6 +72,32 @@ MITRE_MAP: dict[str, list[str]] = {
     "nuclei.runner":                ["T1190", "T1203"],
     # Authenticated checks
     "authenticated.ssh_audit":      ["T1078.001", "T1552.001", "T1201"],
+    # New coverage plugins
+    "network.open_resolver":            ["T1498.002"],  # Reflection Amplification
+    "services.udp_amplification":       ["T1498.002"],
+    "services.dns_dynamic_update":      ["T1584.002", "T1565.001"],  # Compromise Infra: DNS + Data Manip
+    "services.vpn_appliance_exposure":  ["T1133", "T1190"],  # External Remote Services + Exploit Public App
+    "services.devops_platform_exposure":["T1195.002", "T1078.001"],  # Supply Chain: Software + Default Accounts
+    "services.db_extended_unauth":      ["T1078.001", "T1530"],  # Default Accounts + Data from Cloud Storage
+    "services.rtsp_exposure":           ["T1125"],       # Video Capture
+    "services.printer_exposure":        ["T1200", "T1552.001"],  # Hardware Additions + Creds in Files
+    "services.iscsi_exposure":          ["T1200", "T1039"],  # Hardware Additions + Data from Network Share
+    "services.grpc_reflection":         ["T1046"],       # Network Service Discovery
+    "services.smtp_smuggling":          ["T1534", "T1656"],  # Internal Spearphishing + Impersonation
+    "services.ldap_anon_write":         ["T1098", "T1136.002"],  # Account Manipulation + Create Domain Account
+    "ssh.terrapin":                     ["T1557", "T1040"],  # Adversary-in-the-Middle + Network Sniffing
+    "ssl_tls.handshake_hardening":      ["T1040", "T1557"],
+    "ssl_tls.ticketbleed":              ["T1040", "T1552.004"],  # Sniffing + Private Keys
+    "ssl_tls.ct_log_exposure":          ["T1596.003", "T1590.002"],  # Digital Certificates + DNS
+    "web.source_map_exposure":          ["T1592.002", "T1552.001"],  # Host Info + Creds in Files
+    "web.aspnet_viewstate":             ["T1190", "T1552.001"],  # Exploit Public App + Creds in Files
+    "web.ntlm_endpoint_disclosure":     ["T1590.002", "T1592.002"],  # Gather Victim DNS + Host Info
+    "web.websocket_security":           ["T1185"],       # Browser Session Hijacking
+    "web.cache_deception":              ["T1539", "T1185"],  # Steal Web Session Cookie + Session Hijack
+    "authenticated.windows_patch_status": ["T1210", "T1082"],  # Exploit Remote Services + System Info
+    "authenticated.windows_local_privesc":["T1548.002", "T1574.009", "T1003.001"],  # Bypass UAC + Unquoted Path + LSASS
+    "authenticated.laps_status":        ["T1078.003", "T1550.002"],  # Local Accounts + Pass the Hash
+    "authenticated.windows_defenses":   ["T1562.001", "T1003.001"],  # Impair Defenses + LSASS Memory
 }
 
 # Human-readable technique names (for display)
@@ -110,6 +136,24 @@ TECHNIQUE_NAMES: dict[str, str] = {
     "T1565.001":"Stored Data Manipulation",
     "T1595.001":"Active Scanning: Scanning IP Blocks",
     "T1649":    "Steal or Forge Authentication Certificates",
+    "T1098":    "Account Manipulation",
+    "T1125":    "Video Capture",
+    "T1133":    "External Remote Services",
+    "T1136.002":"Create Account: Domain Account",
+    "T1195.002":"Supply Chain Compromise: Software",
+    "T1200":    "Hardware Additions",
+    "T1539":    "Steal Web Session Cookie",
+    "T1548.002":"Abuse Elevation Control: Bypass UAC",
+    "T1550.002":"Use Alternate Auth Material: Pass the Hash",
+    "T1552.004":"Unsecured Credentials: Private Keys",
+    "T1557":    "Adversary-in-the-Middle",
+    "T1562.001":"Impair Defenses: Disable or Modify Tools",
+    "T1574.009":"Hijack Execution Flow: Unquoted Path",
+    "T1584.002":"Compromise Infrastructure: DNS Server",
+    "T1590.002":"Gather Victim Network Information: DNS",
+    "T1656":    "Impersonation",
+    "T1003.001":"OS Credential Dumping: LSASS Memory",
+    "T1078.003":"Valid Accounts: Local Accounts",
 }
 
 
