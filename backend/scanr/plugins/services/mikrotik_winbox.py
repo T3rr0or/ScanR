@@ -35,13 +35,14 @@ logger = logging.getLogger(__name__)
 WINBOX_PORT = 8291
 _TIMEOUT = 5.0
 
-# Non-traversal Winbox "index/list" request: the framed message a Winbox client
-# sends to enumerate the server's plugin DLLs (which carry the RouterOS version).
-# It contains no path-traversal sequence — the exploit's `//./..` payload is not
-# sent by this scanner.
-_WINBOX_INDEX_REQUEST = bytes.fromhex("1300000010020000") + b"list" + b"\x00" * 4
+# Safe Winbox index request used by Nmap's official mikrotik-routeros-version
+# NSE script. The index response includes plugin DLL names and their RouterOS
+# versions. This is not the CVE-2018-14847 file traversal request.
+_WINBOX_INDEX_REQUEST = (
+    b"\x13\x02index\x00\x00\x00\x00\x00\x00\x00\xff\xed\x00\x00\x00\x00\x00"
+)
 
-_VERSION_RE = re.compile(rb"(\d+)\.(\d+)(?:\.(\d+))?")
+_VERSION_RE = re.compile(rb"[A-Za-z0-9_]+\.dll\s+([0-9]+(?:\.[0-9]+)+)")
 
 REFERENCES = [
     "https://nvd.nist.gov/vuln/detail/CVE-2018-14847",
@@ -77,21 +78,17 @@ def is_vulnerable_14847(version: tuple[int, ...]) -> bool:
 
 
 def _extract_ros_version(data: bytes) -> str | None:
-    """Pull the highest plausible RouterOS version token from a Winbox reply."""
+    """Extract a RouterOS version from an index response's ``name.dll version`` rows."""
     best: tuple[int, ...] | None = None
     best_str: str | None = None
     for m in _VERSION_RE.finditer(data):
-        major = int(m.group(1))
-        # RouterOS majors are 6 or 7 in the field; ignore unrelated numbers.
-        if major not in (6, 7):
+        token = m.group(1).decode("ascii", errors="ignore")
+        version = parse_ros_version(token)
+        if version is None or version[0] not in (6, 7):
             continue
-        parts = [int(m.group(1)), int(m.group(2))]
-        if m.group(3) is not None:
-            parts.append(int(m.group(3)))
-        tup = tuple(parts)
-        if best is None or tup > best:
-            best = tup
-            best_str = ".".join(str(p) for p in parts)
+        if best is None or version > best:
+            best = version
+            best_str = token
     return best_str
 
 
@@ -106,7 +103,16 @@ async def _winbox_probe(ip: str, port: int) -> bytes | None:
         reader, writer = await asyncio.wait_for(asyncio.open_connection(ip, port), timeout=_TIMEOUT)
         writer.write(_WINBOX_INDEX_REQUEST)
         await writer.drain()
-        return await asyncio.wait_for(reader.read(4096), timeout=_TIMEOUT)
+        # The NSE protocol reader consumes a 20-byte response header, whose
+        # signed big-endian body length is at bytes 14-15, then the full body.
+        header = await asyncio.wait_for(reader.readexactly(20), timeout=_TIMEOUT)
+        body_len = int.from_bytes(header[14:16], "big", signed=True)
+        if body_len < 0:
+            return header
+        if body_len > 65536:
+            return None
+        body = await asyncio.wait_for(reader.readexactly(body_len), timeout=_TIMEOUT)
+        return header + body
     except Exception:
         return None
     finally:
@@ -191,16 +197,16 @@ class MikrotikWinboxPlugin(PluginBase):
             description=(
                 f"TCP port {port} (MikroTik Winbox) is reachable. The RouterOS version could not be read, so "
                 "CVE-2018-14847 exploitability is unconfirmed, but an exposed Winbox interface should not be "
-                "reachable from untrusted networks: unpatched RouterOS (before 6.42.1) is vulnerable to an "
+                "reachable from untrusted networks: affected RouterOS builds are vulnerable to an "
                 "unauthenticated credential-disclosure traversal over exactly this port."
             ),
             evidence=f"{ip}:{port}/tcp open (MikroTik Winbox)",
             remediation=(
-                "Confirm the RouterOS version is 6.42.1 or later, restrict Winbox (8291) to trusted management "
+                "Confirm RouterOS has the 6.42.1 fix (or the 6.40.8 long-term backport), restrict Winbox (8291) to trusted management "
                 "networks or a VPN, and disable it on the WAN interface."
             ),
             references=REFERENCES,
-            cve_ids=["CVE-2018-14847"],
+            cve_ids=[],
             port_number=port,
             protocol="tcp",
         )

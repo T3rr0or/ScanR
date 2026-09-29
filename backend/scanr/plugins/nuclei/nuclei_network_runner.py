@@ -47,6 +47,28 @@ NETWORK_TEMPLATES = ["network", "javascript"]
 # pointed at web ports where they cannot match.
 _MAX_TARGETS = 50
 
+# Prefer ports that frequently host services covered by Nuclei's network
+# templates when a scan finds more open ports than the per-host cap permits.
+_PRIORITY_PORTS = (
+    22, 23, 53, 111, 135, 139, 445, 1433, 1521, 3306, 3389, 5432,
+    5900, 5985, 5986, 6379, 7001, 7002, 8089, 9200, 11211, 27017,
+)
+_PRIORITY_PORT_RANK = {port: rank for rank, port in enumerate(_PRIORITY_PORTS)}
+
+
+def _target_sort_key(port: object) -> tuple[int, int, int]:
+    """Rank known network services first, then fingerprinted, then other ports."""
+    number = int(getattr(port, "number", 0) or 0)
+    service = getattr(port, "service", None)
+    name = str(getattr(service, "name", "") or "").lower()
+    product = str(getattr(service, "product", "") or "").strip()
+    fingerprinted = bool(name and name not in {"unknown", "tcpwrapped"}) or bool(product)
+    return (
+        _PRIORITY_PORT_RANK.get(number, len(_PRIORITY_PORT_RANK)),
+        0 if fingerprinted else 1,
+        number,
+    )
+
 
 class NucleiNetworkRunnerPlugin(PluginBase):
     id = "nuclei.network_runner"
@@ -61,16 +83,29 @@ class NucleiNetworkRunnerPlugin(PluginBase):
             logger.warning("nuclei binary not found — skipping nuclei.network_runner plugin")
             return []
 
-        targets = [
-            f"{host.ip}:{port.number}"
+        ports = [
+            port
             for port in host.ports
             if port.state == "open" and not is_web_port(port)
         ]
-        if not targets:
+        if not ports:
             return []
-        # Bound the work: a host with hundreds of open ports should not spawn an
-        # unbounded scan. The first N cover the services that matter in practice.
-        targets = targets[:_MAX_TARGETS]
+        # Bound the work while preferring common Nuclei services and ports with
+        # service fingerprints. Port discovery is usually numeric, so slicing
+        # the original list would silently starve high-numbered services.
+        ports.sort(key=_target_sort_key)
+        if len(ports) > _MAX_TARGETS:
+            skipped = len(ports) - _MAX_TARGETS
+            await context.log.info(
+                f"Nuclei network scan capped at {_MAX_TARGETS} of {len(ports)} open non-web ports; "
+                f"{skipped} lower-priority ports were skipped",
+                phase="plugin",
+            )
+            logger.warning(
+                "nuclei network scan capped at %d of %d ports for %s (%d skipped)",
+                _MAX_TARGETS, len(ports), host.ip, skipped,
+            )
+        targets = [f"{host.ip}:{port.number}" for port in ports[:_MAX_TARGETS]]
 
         return await self._run_nuclei(targets, context)
 

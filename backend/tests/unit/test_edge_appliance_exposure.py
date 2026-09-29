@@ -45,7 +45,9 @@ async def test_sonicwall_sma_detected_high(monkeypatch):
     sw = [f for f in findings if "SonicWall" in f.title]
     assert len(sw) == 1
     assert sw[0].severity is Severity.high
-    assert "CVE-2021-20028" in sw[0].cve_ids
+    assert sw[0].cve_ids == []
+    assert "CVE-" not in sw[0].description
+    assert "sonicwall.com" in " ".join(sw[0].references)
 
 
 @pytest.mark.asyncio
@@ -57,7 +59,21 @@ async def test_vcenter_version_extracted(monkeypatch):
     vc = [f for f in findings if "vCenter" in f.title]
     assert len(vc) == 1
     assert "8.0.2" in vc[0].title
-    assert "CVE-2024-38812" in vc[0].cve_ids
+    assert vc[0].cve_ids == []
+    assert "broadcom.com/support/vmware-security-advisories" in vc[0].references[0]
+
+
+@pytest.mark.asyncio
+async def test_current_or_unknown_build_is_not_attributed_to_known_cves(monkeypatch):
+    # A product marker is not evidence that its firmware falls in any CVE's
+    # affected range, even when the server exposes a version string.
+    _install(monkeypatch, {
+        "/": (200, "SonicWall SMA 100 Series current firmware", None),
+    })
+    findings = await _run(_host())
+    assert len(findings) == 1
+    assert findings[0].cve_ids == []
+    assert "exact model or firmware build" in findings[0].description
 
 
 @pytest.mark.asyncio

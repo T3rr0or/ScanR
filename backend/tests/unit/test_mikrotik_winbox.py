@@ -1,6 +1,7 @@
 """MikroTik Winbox exposure / CVE-2018-14847."""
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 
 import pytest
@@ -30,13 +31,49 @@ def test_floor_guards_against_garbage():
 
 
 def test_extract_version_picks_routeros_token():
-    # Ignores unrelated numbers, keeps the highest 6.x/7.x token.
-    data = b"\x13\x00some 1.2.3 binary 6.42.12 dll list 6.40 x"
+    # The safe index response gives versions in its plugin DLL rows.
+    data = b"index: advtool.dll  6.42.12\x00secure.dll 6.40.8"
     assert mw._extract_ros_version(data) == "6.42.12"
 
 
 def test_extract_version_none_when_absent():
     assert mw._extract_ros_version(b"\x00\x01\x02nothing here 1.0") is None
+
+
+def test_index_request_matches_nmap_safe_winbox_probe():
+    # Payload from Nmap's official mikrotik-routeros-version NSE script.
+    assert mw._WINBOX_INDEX_REQUEST == bytes.fromhex(
+        "1302696e64657800000000000000ffed0000000000"
+    )
+    assert b"//./.." not in mw._WINBOX_INDEX_REQUEST
+    assert b".." not in mw._WINBOX_INDEX_REQUEST
+
+
+@pytest.mark.asyncio
+async def test_probe_sends_index_request_and_reads_framed_version_response():
+    received = []
+    response_body = b"advtool.dll 6.49.7\x00secure.dll 6.49.7"
+    response_header = bytearray(20)
+    response_header[14:16] = len(response_body).to_bytes(2, "big", signed=True)
+
+    async def handle(reader, writer):
+        received.append(await reader.readexactly(len(mw._WINBOX_INDEX_REQUEST)))
+        writer.write(bytes(response_header) + response_body)
+        await writer.drain()
+        writer.close()
+        await writer.wait_closed()
+
+    server = await asyncio.start_server(handle, "127.0.0.1", 0)
+    try:
+        port = server.sockets[0].getsockname()[1]
+        response = await mw._winbox_probe("127.0.0.1", port)
+    finally:
+        server.close()
+        await server.wait_closed()
+
+    assert received == [mw._WINBOX_INDEX_REQUEST]
+    assert response is not None
+    assert mw._extract_ros_version(response) == "6.49.7"
 
 
 def _host(state="open"):
@@ -47,7 +84,7 @@ def _host(state="open"):
 @pytest.mark.asyncio
 async def test_vulnerable_version_is_high(monkeypatch):
     async def _probe(ip, port):
-        return b"...RouterOS 6.40.5 winbox list..."
+        return b"index: advtool.dll 6.40.5\x00secure.dll 6.40.5"
     monkeypatch.setattr(mw, "_winbox_probe", _probe)
     findings = await mw.MikrotikWinboxPlugin().check(object(), _host())
     assert len(findings) == 1
@@ -59,7 +96,7 @@ async def test_vulnerable_version_is_high(monkeypatch):
 @pytest.mark.asyncio
 async def test_patched_version_is_low(monkeypatch):
     async def _probe(ip, port):
-        return b"RouterOS 6.48.6 stable"
+        return b"index: advtool.dll 6.48.6\x00secure.dll 6.48.6"
     monkeypatch.setattr(mw, "_winbox_probe", _probe)
     findings = await mw.MikrotikWinboxPlugin().check(object(), _host())
     assert len(findings) == 1
@@ -75,6 +112,7 @@ async def test_exposed_without_version_is_medium(monkeypatch):
     assert len(findings) == 1
     assert findings[0].severity is Severity.medium
     assert "port exposed" in findings[0].title
+    assert findings[0].cve_ids == []
 
 
 @pytest.mark.asyncio
@@ -84,9 +122,3 @@ async def test_closed_port_yields_nothing(monkeypatch):
     monkeypatch.setattr(mw, "_winbox_probe", _probe)
     findings = await mw.MikrotikWinboxPlugin().check(object(), _host(state="closed"))
     assert findings == []
-
-
-def test_index_request_has_no_traversal():
-    # The scanner must never send the //./.. traversal the exploit uses.
-    assert b"//./.." not in mw._WINBOX_INDEX_REQUEST
-    assert b".." not in mw._WINBOX_INDEX_REQUEST

@@ -5,16 +5,22 @@ import json
 from types import SimpleNamespace
 
 import pytest
+from sqlalchemy import select
 
-from scanr.core.plugin_base import Severity
+from scanr.core.engine import _filter_plugins_by_capabilities
+from scanr.core.plugin_base import PluginImpact, Severity
+from scanr.db.init_db import seed_templates
+from scanr.models.scan_template import ScanTemplate
 from scanr.plugins.nuclei import nuclei_network_runner as nr
 
 
 class _Ctx:
     def __init__(self):
+        self.messages = []
         self.log = SimpleNamespace(info=self._noop)
 
     async def _noop(self, *a, **k):
+        self.messages.append((a, k))
         return None
 
     def performance_config(self):
@@ -73,11 +79,48 @@ async def test_only_non_web_open_ports_are_targeted(monkeypatch):
     await nr.NucleiNetworkRunnerPlugin().check(_Ctx(), host)
 
     targets = [captured["cmd"][i + 1] for i, a in enumerate(captured["cmd"]) if a == "-u"]
-    assert targets == ["192.0.2.10:7001", "192.0.2.10:3306"]
+    assert targets == ["192.0.2.10:3306", "192.0.2.10:7001"]
     # OAST callbacks cannot be confirmed through the egress proxy — must be off.
     assert "-no-interactsh" in captured["cmd"]
     # Rate limit is taken from the scan's performance config.
     assert "40" in captured["cmd"]
+
+
+@pytest.mark.asyncio
+async def test_port_cap_prioritizes_known_services_and_reports_skips(monkeypatch):
+    monkeypatch.setattr(nr.shutil, "which", lambda _: "/usr/bin/nuclei")
+    captured: dict = {}
+    monkeypatch.setattr(nr.asyncio, "create_subprocess_exec", _fake_exec(b"", captured))
+    ctx = _Ctx()
+    host = _host([_port(number) for number in range(1, 61)] + [_port(7001), _port(27017)])
+
+    await nr.NucleiNetworkRunnerPlugin().check(ctx, host)
+
+    targets = [captured["cmd"][i + 1] for i, arg in enumerate(captured["cmd"]) if arg == "-u"]
+    assert len(targets) == nr._MAX_TARGETS
+    assert "192.0.2.10:7001" in targets
+    assert "192.0.2.10:27017" in targets
+    assert "192.0.2.10:60" not in targets
+    assert any("12 lower-priority ports were skipped" in args[0][0] for args in ctx.messages)
+
+
+@pytest.mark.asyncio
+async def test_stock_network_nuclei_profile_requires_aggressive_safety(db):
+    await seed_templates(db)
+    result = await db.execute(
+        select(ScanTemplate).where(ScanTemplate.name == "Nuclei Network Vulnerability Scan")
+    )
+    template = result.scalar_one()
+    profile = json.loads(template.profile_json)
+
+    assert "nuclei.network_runner" in profile["plugins"]
+    assert profile["enumeration"]["nuclei"] is True
+    assert profile["safety_level"] == "aggressive"
+
+    runner = SimpleNamespace(id="nuclei.network_runner", impact=PluginImpact.exploit)
+    assert _filter_plugins_by_capabilities([runner], profile) == [runner]
+    balanced = {**profile, "safety_level": "balanced"}
+    assert _filter_plugins_by_capabilities([runner], balanced) == []
 
 
 @pytest.mark.asyncio
