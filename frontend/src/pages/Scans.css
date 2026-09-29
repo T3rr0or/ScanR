@@ -57,10 +57,12 @@
 .scans-table th:nth-child(7), .scans-table th:nth-child(8) { width: 11%; }
 .scans-table th { position: sticky; top: 0; z-index: 1; padding: 11px 12px; background: #111; border-bottom: 1px solid rgba(255,255,255,.22); color: #aaa; font-size: 11px; font-weight: 700; white-space: nowrap; }
 .scans-table td { padding: 11px 12px; border-bottom: 1px solid var(--border); color: #d4d4d4; font-size: 12px; vertical-align: middle; }
-.scans-table tbody tr:hover { background: #151515; }
+.scans-table tbody tr.scans-row { cursor: pointer; }
+.scans-table tbody tr.scans-row:hover, .scans-table tbody tr.scans-row:focus-visible { background: #151515; }
+.scans-table tbody tr.scans-row:focus-visible { outline: 1px solid #ff4d1a; outline-offset: -1px; }
 .scans-cell-name { min-width: 0; }
-.scans-cell-name button { display: block; max-width: 260px; overflow: hidden; padding: 0; color: #f2f2f2; font-size: 13px; font-weight: 700; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
-.scans-cell-name button:hover { color: #ff4d1a; }
+.scans-cell-name span { display: block; max-width: 260px; overflow: hidden; padding: 0; color: #f2f2f2; font-size: 13px; font-weight: 700; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
+.scans-row:hover .scans-cell-name span, .scans-row:focus-visible .scans-cell-name span { color: #ff4d1a; }
 .scans-cell-name small { display: block; margin-top: 3px; color: #8a8a8a; font: 10px var(--font-mono), monospace; }
 .scans-cell-target { max-width: 180px; overflow: hidden; font-family: var(--font-mono), monospace; text-overflow: ellipsis; white-space: nowrap; }
 .scans-cell-profile { max-width: 130px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

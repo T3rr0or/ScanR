@@ -451,15 +451,26 @@ export default function Scans({ onOpenScan, openNewScan, onNewScanOpened }: Prop
                 const findingCount = s.findings_critical + s.findings_high + s.findings_medium + s.findings_low
                 const progress = Math.min(100, Math.max(0, (s.progress ?? 0) <= 1 ? (s.progress ?? 0) * 100 : (s.progress ?? 0)))
                 return (
-                  <tr key={s.id}>
-                    <td className="scans-cell-name"><button type="button" onClick={() => onOpenScan?.(s.id)}>{s.name}</button><small>{s.id.slice(0, 8)}</small></td>
+                  <tr
+                    key={s.id}
+                    className="scans-row"
+                    tabIndex={0}
+                    aria-label={`Open ${s.name} scan console`}
+                    onClick={() => onOpenScan?.(s.id)}
+                    onKeyDown={event => {
+                      if (event.target !== event.currentTarget || (event.key !== 'Enter' && event.key !== ' ')) return
+                      event.preventDefault()
+                      onOpenScan?.(s.id)
+                    }}
+                  >
+                    <td className="scans-cell-name"><span>{s.name}</span><small>{s.id.slice(0, 8)}</small></td>
                     <td className="scans-cell-target" title={(s.targets ?? []).join(', ')}>{(s.targets ?? [])[0] || 'No target'}{(s.targets ?? []).length > 1 ? ` +${(s.targets ?? []).length - 1}` : ''}</td>
                     <td className="scans-cell-profile">{s.profile || 'Default'}</td>
                     <td><span className="scans-status"><span className={`scans-status-dot scans-status-${s.status}`} />{s.status === 'pending' ? 'Draft' : s.status[0].toUpperCase() + s.status.slice(1)}{s.status === 'running' ? ` ${Math.round(progress)}%` : ''}</span>{s.status === 'failed' && s.error_message && <small className="scans-cell-error" title={s.error_message}>{s.error_message}</small>}</td>
                     <td className="scans-cell-number">{s.hosts_up}<span> / {s.hosts_total}</span></td>
                     <td className={`scans-cell-number ${findingCount ? 'has-findings' : ''}`}>{findingCount}</td>
                     <td className="scans-cell-time">{s.started_at ? relTime(s.started_at) : 'Never'}</td>
-                    <td className="scans-cell-actions"><details className="scans-actions-menu">
+                    <td className="scans-cell-actions" onClick={event => event.stopPropagation()}><details className="scans-actions-menu">
                       <summary>Actions <span aria-hidden="true">▾</span></summary>
                       <div className="scans-actions-list">
                       <button type="button" onClick={() => onOpenScan?.(s.id)}>Open console</button>
