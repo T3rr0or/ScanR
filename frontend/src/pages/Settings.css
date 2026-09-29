@@ -10,13 +10,13 @@
 }
 .settings-page *, .settings-page *::before, .settings-page *::after { border-radius: 0 !important; box-shadow: none !important; }
 .settings-header { min-height: 67px; display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 11px clamp(18px, 2.5vw, 36px); border-bottom: 1px solid var(--settings-rule); }
-.settings-header h1 { margin: 3px 0 0; color: var(--settings-ink); font-size: 22px; font-weight: 700; letter-spacing: -.035em; line-height: 1.1; }
+.settings-header h1 { margin: 3px 0 0; color: var(--settings-ink); font-size: 24px; font-weight: 700; letter-spacing: -.035em; line-height: 1.1; }
 .settings-header p { margin: 0; color: var(--settings-muted); font-size: 11px; }
 .settings-shell { display: grid; grid-template-columns: minmax(185px, 225px) minmax(0, 1fr); min-height: calc(100vh - 135px); }
 .settings-nav { border-right: 1px solid var(--settings-rule); padding: 18px 0; }
 .settings-nav-group-label { padding: 8px 22px 10px; color: var(--settings-muted); font-size: 10px; font-weight: 700; letter-spacing: .04em; }
 .settings-nav-admin { margin-top: 25px; border-top: 1px solid var(--settings-rule); padding-top: 20px; }
-.settings-nav-item { display: grid; grid-template-columns: 1fr; align-items: center; gap: 8px; width: 100%; min-height: 38px; padding: 0 20px; text-align: left; background: transparent; border: 0; border-top: 1px solid var(--settings-rule); color: var(--settings-muted); cursor: pointer; font-size: 12px; font-weight: 600; }
+.settings-nav-item { display: grid; grid-template-columns: 1fr; align-items: center; gap: 8px; width: 100%; min-height: 42px; padding: 0 20px; text-align: left; background: transparent; border: 0; border-top: 1px solid var(--settings-rule); color: var(--settings-muted); cursor: pointer; font-size: 13px; font-weight: 600; }
 .settings-nav-item:last-of-type { border-bottom: 1px solid var(--settings-rule); }
 .settings-nav-item:hover { color: var(--settings-ink); }
 .settings-nav-item.active { background: #151515; color: var(--settings-ink); border-left: 3px solid var(--settings-accent); padding-left: 17px; }
