@@ -1,23 +1,14 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
-	type LucideIcon,
-	Key,
-	Webhook,
 	Copy,
 	Check,
 	Trash2,
 	Plus,
 	Send,
-	Database,
 	RefreshCw,
-	Settings as SettingsIcon,
-	User,
-	Users,
-	Monitor,
 	ExternalLink,
 	Terminal,
-	Sparkles,
 	Ticket,
 } from "lucide-react";
 import { apiKeysApi, type APIKeyCreated } from "@/api/apiKeys";
@@ -29,6 +20,7 @@ import { useAuthStore } from "@/store/auth";
 import { integrationsApi } from "@/api/integrations";
 import { parseJwtRole } from "@/utils/jwt";
 import { apiErrorMessage } from "@/utils/apiError";
+import "./Settings.css";
 
 type Tab =
 	| "profile"
@@ -43,104 +35,60 @@ type Tab =
 const TABS: {
 	id: Tab;
 	label: string;
-	Icon: LucideIcon;
+	description: string;
 	adminOnly?: boolean;
 }[] = [
-	{ id: "profile", label: "Profile", Icon: User },
-	{ id: "api-keys", label: "API Keys", Icon: Key },
-	{ id: "webhooks", label: "Webhooks", Icon: Webhook },
-	{ id: "cve", label: "CVE Database", Icon: Database },
-	{ id: "ai", label: "AI", Icon: Sparkles, adminOnly: true },
-	{ id: "integrations", label: "Integrations", Icon: Ticket, adminOnly: true },
-	{ id: "system", label: "System", Icon: Monitor, adminOnly: true },
-	{ id: "users", label: "Users", Icon: Users, adminOnly: true },
+	{ id: "profile", label: "Profile", description: "Identity and account access" },
+	{ id: "api-keys", label: "API keys", description: "Programmatic access and scopes" },
+	{ id: "webhooks", label: "Webhooks", description: "Event delivery endpoints" },
+	{ id: "cve", label: "CVE database", description: "Vulnerability data and sync status" },
+	{ id: "ai", label: "AI providers", description: "Keys, models, and autonomy", adminOnly: true },
+	{ id: "integrations", label: "Integrations", description: "Connected service credentials", adminOnly: true },
+	{ id: "system", label: "System", description: "Runtime health and updates", adminOnly: true },
+	{ id: "users", label: "Users", description: "People, roles, and access", adminOnly: true },
 ];
 
 export default function Settings() {
 	const [activeTab, setActiveTab] = useState<Tab>("profile");
 	const token = useAuthStore((s) => s.token);
-
-	// Decode role from JWT to show admin-only tabs
 	const role = parseJwtRole(token);
-
 	const visibleTabs = TABS.filter((t) => !t.adminOnly || role === "admin");
+	const selectedTab = TABS.find((t) => t.id === activeTab) ?? TABS[0];
 
 	return (
-		<div className="page-pad">
-			<div
-				style={{
-					display: "flex",
-					alignItems: "center",
-					gap: 10,
-					marginBottom: 24,
-				}}
-			>
-				<SettingsIcon size={18} style={{ color: "var(--accent)" }} />
-				<h1 style={{ fontSize: 20, fontWeight: 700, color: "var(--text-0)" }}>
-					Settings
-				</h1>
-			</div>
-
-			<div
-				style={{
-					display: "flex",
-					gap: 20,
-					alignItems: "flex-start",
-					flexWrap: "wrap",
-				}}
-			>
-				<div
-					className="panel"
-					style={{
-						width: "clamp(140px, 25vw, 180px)",
-						flexShrink: 0,
-						padding: 6,
-					}}
-				>
-					{visibleTabs.map(({ id, label, Icon }) => {
-						const active = activeTab === id;
-						return (
-							<button
-								key={id}
-								onClick={() => setActiveTab(id)}
-								style={{
-									display: "flex",
-									alignItems: "center",
-									gap: 8,
-									width: "100%",
-									padding: "8px 10px",
-									borderRadius: 6,
-									background: active ? "var(--bg-3)" : "transparent",
-									border: active
-										? "1px solid var(--border)"
-										: "1px solid transparent",
-									cursor: "pointer",
-									textAlign: "left",
-									marginBottom: 2,
-									color: active ? "var(--text-0)" : "var(--text-2)",
-								}}
-							>
-								<Icon size={13} />
-								<span style={{ fontSize: 13, fontWeight: active ? 600 : 400 }}>
-									{label}
-								</span>
-							</button>
-						);
-					})}
-				</div>
-
-				<div style={{ flex: 1, minWidth: 0, maxWidth: 700 }}>
-					{activeTab === "profile" && <ProfileSection />}
-					{activeTab === "api-keys" && <ApiKeysSection />}
-					{activeTab === "webhooks" && <WebhooksSection />}
-					{activeTab === "cve" && <CveDatabaseSection />}
-					{activeTab === "ai" && role === "admin" && <AiSection />}
-					{activeTab === "integrations" && role === "admin" && <IntegrationsSection />}
-					{activeTab === "system" && role === "admin" && <SystemSection />}
-					{activeTab === "users" && role === "admin" && (
-						<UserManagementSection />
-					)}
-				</div>
+		<div className="settings-page">
+			<header className="settings-header">
+				<h1>Settings</h1>
+				<p>Access, integrations, and runtime configuration</p>
+			</header>
+			<div className="settings-shell">
+				<nav className="settings-nav" aria-label="Settings sections">
+					<div className="settings-nav-group-label">ACCOUNT</div>
+					{visibleTabs.filter((t) => !t.adminOnly).map((item) => (
+						<button key={item.id} className={`settings-nav-item ${activeTab === item.id ? "active" : ""}`} onClick={() => setActiveTab(item.id)} aria-current={activeTab === item.id ? "page" : undefined}>
+							<span>{item.label}</span>
+						</button>
+					))}
+					{role === "admin" && <div className="settings-nav-group-label settings-nav-admin">ADMINISTRATION</div>}
+					{visibleTabs.filter((t) => t.adminOnly).map((item) => (
+						<button key={item.id} className={`settings-nav-item ${activeTab === item.id ? "active" : ""}`} onClick={() => setActiveTab(item.id)} aria-current={activeTab === item.id ? "page" : undefined}>
+							<span>{item.label}</span>
+						</button>
+					))}
+				</nav>
+				<main className="settings-main">
+					<div className="settings-section-heading"><div><h2>{selectedTab.label}</h2><p>{selectedTab.description}</p></div></div>
+					<div className="settings-section-body">
+						{activeTab === "profile" && <ProfileSection />}
+						{activeTab === "api-keys" && <ApiKeysSection />}
+						{activeTab === "webhooks" && <WebhooksSection />}
+						{activeTab === "cve" && <CveDatabaseSection />}
+						{activeTab === "ai" && role === "admin" && <AiSection />}
+						{activeTab === "integrations" && role === "admin" && <IntegrationsSection />}
+						{activeTab === "system" && role === "admin" && <SystemSection />}
+						{activeTab === "users" && role === "admin" && <UserManagementSection />}
+					</div>
+				</main>
 			</div>
 		</div>
 	);
@@ -378,7 +326,7 @@ function AiSection() {
 									</div>
 								)}
 
-								{/* Model override — dropdown */}
+								{/* Model override – dropdown */}
 								<div
 									style={{
 										display: "flex",
@@ -405,7 +353,6 @@ function AiSection() {
 												alignItems: "center",
 												justifyContent: "space-between",
 												padding: "6px 10px",
-												borderRadius: 6,
 												border: "1px solid var(--border)",
 												cursor: "pointer",
 												fontSize: 12.5,
@@ -445,8 +392,6 @@ function AiSection() {
 													overflow: "auto",
 													background: "var(--bg-0)",
 													border: "1px solid var(--border)",
-													borderRadius: 6,
-													boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
 												}}
 											>
 												<div
@@ -529,7 +474,7 @@ function AiSection() {
 								<div
 									style={{ fontSize: 11, color: "var(--text-3)", marginTop: 4 }}
 								>
-									Using: <code>{status?.effective_models?.[id] ?? "—"}</code>
+									Using: <code>{status?.effective_models?.[id] ?? "–"}</code>
 									{status?.model_overrides?.[id] ? " (custom)" : " (default)"}
 								</div>
 							</div>
@@ -777,7 +722,6 @@ function SystemSection() {
 								fontSize: 11,
 								fontWeight: 600,
 								padding: "2px 8px",
-								borderRadius: 12,
 								background: "oklch(0.25 0.1 60 / 0.3)",
 								color: "var(--sev-medium)",
 							}}
@@ -800,7 +744,6 @@ function SystemSection() {
 								style={{
 									background: "var(--bg-1)",
 									border: "1px solid var(--border)",
-									borderRadius: 8,
 									padding: 14,
 									marginTop: 8,
 								}}
@@ -858,7 +801,6 @@ function SystemSection() {
 																	style={{
 																		width: 22,
 																		height: 22,
-																		borderRadius: "50%",
 																		display: "flex",
 																		alignItems: "center",
 																		justifyContent: "center",
@@ -926,7 +868,6 @@ function SystemSection() {
 									<div
 										style={{
 											height: 6,
-											borderRadius: 3,
 											background: "var(--bg-3)",
 											overflow: "hidden",
 											marginBottom: 12,
@@ -937,7 +878,6 @@ function SystemSection() {
 												style={{
 													width: "15%",
 													height: "100%",
-													borderRadius: 3,
 													background: "var(--accent)",
 													animation: "scanr-pulse 1.4s ease-in-out infinite",
 												}}
@@ -948,11 +888,8 @@ function SystemSection() {
 												style={{
 													width: "100%",
 													height: "100%",
-													borderRadius: 3,
-													background:
-														"linear-gradient(90deg, transparent 0%, var(--accent) 40%, color-mix(in oklch, var(--accent) 80%, white) 50%, var(--accent) 60%, transparent 100%)",
-													backgroundSize: "200% 100%",
-													animation: "scanr-shimmer 1.6s linear infinite",
+											background:
+												"var(--accent)",
 												}}
 											/>
 										)}
@@ -961,7 +898,6 @@ function SystemSection() {
 												style={{
 													width: "100%",
 													height: "100%",
-													borderRadius: 3,
 													background: "var(--ok)",
 													transition: "width 0.4s ease",
 												}}
@@ -973,7 +909,7 @@ function SystemSection() {
 								{/* State messages */}
 								{updateState === "queued" && (
 									<div style={{ fontSize: 12, color: "var(--text-2)" }}>
-										Queued — starting soon…
+										Queued – starting soon…
 									</div>
 								)}
 								{updateState === "running" && (
@@ -1010,7 +946,6 @@ function SystemSection() {
 												color: "var(--text-3)",
 												background: "var(--bg-0)",
 												padding: 8,
-												borderRadius: 4,
 												maxHeight: 180,
 												overflow: "auto",
 												whiteSpace: "pre-wrap",
@@ -1033,7 +968,7 @@ function SystemSection() {
 											gap: 8,
 										}}
 									>
-										ScanR is restarting with v{latestVersion} — page will reload
+										ScanR is restarting with v{latestVersion} – page will reload
 										shortly.
 										<button
 											onClick={() => window.location.reload()}
@@ -1062,7 +997,6 @@ function SystemSection() {
 												color: "var(--sev-high)",
 												padding: "8px",
 												background: "var(--bg-0)",
-												borderRadius: 4,
 												maxHeight: 200,
 												overflow: "auto",
 												whiteSpace: "pre-wrap",
@@ -1104,7 +1038,6 @@ function SystemSection() {
 													marginBottom: 8,
 													padding: "6px 8px",
 													background: "var(--bg-0)",
-													borderRadius: 4,
 												}}
 											>
 												{updateErr}
@@ -1139,7 +1072,6 @@ function SystemSection() {
 								style={{
 									background: "var(--bg-1)",
 									border: "1px solid var(--border)",
-									borderRadius: 8,
 									padding: 14,
 									marginTop: 8,
 								}}
@@ -1162,7 +1094,6 @@ function SystemSection() {
 									style={{
 										background: "var(--bg-0)",
 										border: "1px solid var(--border)",
-										borderRadius: 6,
 										padding: "10px 14px",
 									}}
 								>
@@ -1445,7 +1376,7 @@ function UserManagementSection() {
 							<tr key={u.id}>
 								<td style={{ fontSize: 12 }}>{u.email}</td>
 								<td style={{ fontSize: 12, color: "var(--text-2)" }}>
-									{u.full_name || "—"}
+									{u.full_name || "–"}
 								</td>
 								<td>
 									<span className="pill">{u.role}</span>
@@ -1569,7 +1500,7 @@ function CveDatabaseSection() {
 						className="mono"
 						style={{ fontSize: 13, fontWeight: 600, color: "var(--text-0)" }}
 					>
-						{status?.kev_count ?? "—"}
+						{status?.kev_count ?? "–"}
 					</div>
 				</div>
 				<div style={{ gridColumn: "1 / -1" }}>
@@ -1617,86 +1548,86 @@ function CveDatabaseSection() {
 
 /* ── API Keys ─────────────────────────────────────────────── */
 const ALL_SCOPES = [
-	{ value: "scans:read", label: "Scans — read", desc: "List and view scans" },
+	{ value: "scans:read", label: "Scans – read", desc: "List and view scans" },
 	{
 		value: "scans:write",
-		label: "Scans — write",
+		label: "Scans – write",
 		desc: "Create, launch, cancel, delete scans",
 	},
 	{
 		value: "findings:read",
-		label: "Findings — read",
+		label: "Findings – read",
 		desc: "List and view findings",
 	},
 	{
 		value: "findings:triage",
-		label: "Findings — triage",
+		label: "Findings – triage",
 		desc: "Mark false positives, update status",
 	},
 	{
 		value: "reports:read",
-		label: "Reports — read",
+		label: "Reports – read",
 		desc: "List and download existing reports",
 	},
 	{
 		value: "reports:create",
-		label: "Reports — create",
+		label: "Reports – create",
 		desc: "Generate new reports (runs a background job)",
 	},
 	{
 		value: "ai:generate",
-		label: "AI — generate",
+		label: "AI – generate",
 		desc: "Run AI summaries, report narratives and false-positive testing (uses LLM credit)",
 	},
 	{
 		value: "ai:agent",
-		label: "AI — agent",
+		label: "AI – agent",
 		desc: "Launch and control guided or autonomous AI agent runs",
 	},
 	{
 		value: "ai:aggressive",
-		label: "AI — aggressive (admin)",
+		label: "AI – aggressive (admin)",
 		desc: "Allow agent exploitation, command execution and target egress; also requires AI agent and scans write",
 	},
 	{
 		value: "ai:configure",
-		label: "AI — configure (admin)",
+		label: "AI – configure (admin)",
 		desc: "Manage provider keys, defaults and model selection",
 	},
 	{
 		value: "credentials:read",
-		label: "Credentials — read",
+		label: "Credentials – read",
 		desc: "List credentials",
 	},
 	{
 		value: "credentials:write",
-		label: "Credentials — write",
+		label: "Credentials – write",
 		desc: "Create/delete credentials",
 	},
-	{ value: "agents:read", label: "Agents — read", desc: "List scan agents" },
+	{ value: "agents:read", label: "Agents – read", desc: "List scan agents" },
 	{
 		value: "agents:write",
-		label: "Agents — write",
+		label: "Agents – write",
 		desc: "Register/remove agents",
 	},
 	{
 		value: "plugins:write",
-		label: "Plugins — configure (admin)",
+		label: "Plugins – configure (admin)",
 		desc: "Enable, disable and configure scanner plugins",
 	},
 	{
 		value: "users:manage",
-		label: "Users — manage (admin)",
+		label: "Users – manage (admin)",
 		desc: "List, create, update and delete user accounts",
 	},
 	{
 		value: "integrations:manage",
-		label: "Integrations — manage (admin)",
+		label: "Integrations – manage (admin)",
 		desc: "Read and change global integration configuration",
 	},
 	{
 		value: "system:manage",
-		label: "System — manage (admin)",
+		label: "System – manage (admin)",
 		desc: "Manage update status and CVE feed refresh; self-update remains session-only",
 	},
 	{
@@ -1776,7 +1707,6 @@ function ApiKeysSection() {
 						background: "var(--sev-high)",
 						color: "#fff",
 						padding: "6px 10px",
-						borderRadius: 4,
 						fontSize: 12,
 					}}
 				>
@@ -1806,7 +1736,6 @@ function ApiKeysSection() {
 				<div
 					style={{
 						padding: 14,
-						borderRadius: 8,
 						background: "oklch(0.22 0.05 145 / 0.3)",
 						border: "1px solid var(--ok)",
 					}}
@@ -1819,7 +1748,7 @@ function ApiKeysSection() {
 							marginBottom: 8,
 						}}
 					>
-						API key created — copy it now, it won't be shown again:
+						API key created – copy it now, it won't be shown again:
 					</p>
 					<div
 						style={{
@@ -1828,7 +1757,6 @@ function ApiKeysSection() {
 							gap: 8,
 							background: "var(--bg-0)",
 							border: "1px solid var(--border)",
-							borderRadius: 6,
 							padding: "8px 12px",
 							marginBottom: 8,
 						}}
@@ -1917,7 +1845,6 @@ function ApiKeysSection() {
 									gap: 8,
 									cursor: "pointer",
 									padding: "6px 8px",
-									borderRadius: 6,
 									background:
 										selectedScopes.includes(s.value) ||
 										selectedScopes.includes("*")
@@ -2009,7 +1936,6 @@ function ApiKeysSection() {
 													background: "var(--accent-soft)",
 													color: "var(--accent)",
 													padding: "2px 5px",
-													borderRadius: 4,
 												}}
 											>
 												{s}
@@ -2133,7 +2059,6 @@ function WebhooksSection() {
 						background: "var(--sev-high)",
 						color: "#fff",
 						padding: "6px 10px",
-						borderRadius: 4,
 						fontSize: 12,
 					}}
 				>
@@ -2285,7 +2210,6 @@ function WebhooksSection() {
 											style={{
 												fontSize: 10,
 												padding: "1px 5px",
-												borderRadius: 4,
 												background:
 													w.last_status < 300
 														? "oklch(0.22 0.05 145 / 0.4)"
@@ -2326,7 +2250,6 @@ function WebhooksSection() {
 												background: "var(--accent-soft)",
 												color: "var(--accent)",
 												padding: "2px 5px",
-												borderRadius: 4,
 											}}
 										>
 											{ev}
@@ -2430,7 +2353,7 @@ function IntegrationsSection() {
 		mutationFn: integrationsApi.testTopdesk,
 		onSuccess: () => {
 			setErr(null);
-			setMsg("Connected — credentials accepted.");
+			setMsg("Connected – credentials accepted.");
 		},
 		onError: onErr,
 	});
@@ -2458,7 +2381,7 @@ function IntegrationsSection() {
 			<div style={{ padding: 14, display: "flex", flexDirection: "column", gap: 10 }}>
 				<p style={{ fontSize: 11.5, color: "var(--text-2)", margin: 0, lineHeight: 1.6 }}>
 					File findings into TOPdesk as incidents. Authenticate with an{" "}
-					<strong>application password</strong>, not an operator password — TOPdesk
+					<strong>application password</strong>, not an operator password – TOPdesk
 					issues these per integration under the user's settings. The password is
 					encrypted at rest and never shown again.
 				</p>
@@ -2491,7 +2414,7 @@ function IntegrationsSection() {
 					          onChange={(e) => setDefaultsText(e.target.value)}
 					          style={{ fontFamily: "var(--font-mono)", fontSize: 11 }} />
 					<span style={{ fontSize: 10.5, color: "var(--text-3)" }}>
-						e.g. {'{"category":"Security","caller_email":"sec@example.com"}'} — anything
+						e.g. {'{"category":"Security","caller_email":"sec@example.com"}'} – anything
 						left out is omitted rather than guessed, so incidents do not need re-filing.
 					</span>
 				</label>

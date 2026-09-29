@@ -2,31 +2,10 @@ import { useState, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Upload, Trash2, Eye, X } from 'lucide-react'
 import { wordlistsApi, type Wordlist, type WordlistPreview } from '@/api/wordlists'
-
-const TYPE_COLOR: Record<string, string> = {
-  usernames:   'var(--accent)',
-  passwords:   'var(--sev-medium)',
-  credentials: 'var(--sev-high)',
-  paths:       'var(--text-3)',
-}
-const TYPE_BG: Record<string, string> = {
-  usernames:   'var(--accent-soft)',
-  passwords:   'oklch(0.24 0.08 85 / 0.25)',
-  credentials: 'oklch(0.24 0.08 30 / 0.25)',
-  paths:       'var(--bg-3)',
-}
+import './ConfigCatalog.css'
 
 function TypePill({ type }: { type: Wordlist['type'] }) {
-  return (
-    <span className="mono" style={{
-      fontSize: 10.5, fontWeight: 600,
-      padding: '2px 7px', borderRadius: 4,
-      background: TYPE_BG[type] ?? 'var(--bg-3)',
-      color: TYPE_COLOR[type] ?? 'var(--text-3)',
-    }}>
-      {type}
-    </span>
-  )
+  return <span className="mono wordlist-type">{type}</span>
 }
 
 function WordlistTable({ wordlists, showDelete, onPreview, onDelete }: {
@@ -36,7 +15,7 @@ function WordlistTable({ wordlists, showDelete, onPreview, onDelete }: {
   onDelete?: (id: string) => void
 }) {
   return (
-    <div className="panel" style={{ overflow: 'hidden' }}>
+    <div className="panel wordlist-table" style={{ overflow: 'hidden' }}>
       <table className="tbl">
         <thead>
           <tr>
@@ -53,7 +32,7 @@ function WordlistTable({ wordlists, showDelete, onPreview, onDelete }: {
               <td style={{ fontWeight: 500, color: 'var(--text-0)' }}>{w.name}</td>
               <td><TypePill type={w.type} /></td>
               <td className="mono" style={{ fontSize: 11.5, color: 'var(--text-2)' }}>{w.entry_count.toLocaleString()}</td>
-              <td className="dimmer" style={{ fontSize: 12 }}>{w.description ?? '—'}</td>
+              <td className="dimmer" style={{ fontSize: 12 }}>{w.description ?? '–'}</td>
               <td style={{ textAlign: 'right' }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 4 }}>
                   <button onClick={() => onPreview(w.id)} className="btn btn-ghost btn-icon btn-sm" title="Preview">
@@ -94,7 +73,7 @@ function PreviewModal({ preview, onClose }: { preview: WordlistPreview; onClose:
     >
       <div
         className="panel"
-        style={{ width: '100%', maxWidth: 640, overflow: 'hidden', boxShadow: '0 24px 80px #0009', padding: 0 }}
+        style={{ width: '100%', maxWidth: 640, overflow: 'hidden', padding: 0 }}
         onClick={e => e.stopPropagation()}
       >
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', borderBottom: '1px solid var(--border)', background: 'var(--bg-2)' }}>
@@ -104,7 +83,7 @@ function PreviewModal({ preview, onClose }: { preview: WordlistPreview; onClose:
           </div>
           <button onClick={onClose} className="btn btn-ghost btn-icon btn-sm"><X size={14} /></button>
         </div>
-        <div className="console" style={{ maxHeight: 400, overflowY: 'auto', borderRadius: 0 }}>
+        <div className="console" style={{ maxHeight: 400, overflowY: 'auto' }}>
           {preview.preview.map((line, i) => (
             <div key={i} className="ln" style={{ padding: '1px 14px' }}>
               <span className="mono" style={{ color: 'var(--text-1)', fontSize: 12 }}>{line}</span>
@@ -159,21 +138,13 @@ export default function Wordlists() {
   const custom   = wordlists.filter(w => !w.is_builtin)
 
   return (
-    <div className="page-pad" style={{ maxWidth: 960 }}>
+    <div className="catalog-page wordlists-page">
       {preview && <PreviewModal preview={preview} onClose={() => setPreview(null)} />}
 
-      {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 24 }}>
-        <div>
-          <h1 style={{ fontSize: 20, fontWeight: 700, color: 'var(--text-0)', margin: 0 }}>Wordlists</h1>
-          <p style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 4 }}>
-            Custom username, password and credential lists for brute-force testing
-          </p>
-        </div>
-        <button onClick={() => setShowUpload(v => !v)} className="btn btn-primary btn-sm">
-          <Upload size={13} /> Upload
-        </button>
-      </div>
+      <header className="catalog-header">
+        <div><h1>Wordlists</h1><p>Username, password, credential, and path lists used by scanner plugins.</p></div>
+        <div className="catalog-header-actions"><span className="catalog-count">{wordlists.length} LISTS</span><button onClick={() => setShowUpload(v => !v)} className="btn btn-primary btn-sm"><Upload size={13} /> Upload</button></div>
+      </header>
 
       {/* Upload form */}
       {showUpload && (
@@ -222,12 +193,12 @@ export default function Wordlists() {
         <div className="dimmer" style={{ fontSize: 13, padding: '20px 0' }}>Loading…</div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
-          <section>
-            <div style={{ fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-3)', marginBottom: 8 }}>Built-in</div>
+          <section className="catalog-section">
+            <div style={{ fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-3)', marginBottom: 8 }}>Built-in <span className="catalog-section-count">{builtins.length}</span></div>
             <WordlistTable wordlists={builtins} showDelete={false} onPreview={id => previewMut.mutate(id)} />
           </section>
-          <section>
-            <div style={{ fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-3)', marginBottom: 8 }}>My Wordlists</div>
+          <section className="catalog-section">
+            <div style={{ fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-3)', marginBottom: 8 }}>My wordlists <span className="catalog-section-count">{custom.length}</span></div>
             <WordlistTable wordlists={custom} showDelete onPreview={id => previewMut.mutate(id)} onDelete={id => deleteMut.mutate(id)} />
           </section>
         </div>

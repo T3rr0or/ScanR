@@ -1,8 +1,8 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Puzzle } from 'lucide-react'
 import { pluginsApi, type Plugin } from '@/api/plugins'
 import { SevTag } from '@/components/ui'
+import './ConfigCatalog.css'
 
 export default function Plugins() {
   const qc = useQueryClient()
@@ -33,23 +33,20 @@ export default function Plugins() {
   const enabledCount = (selectedCat ? visiblePlugins : plugins).filter(p => p.enabled).length
 
   return (
-    <div className="page-pad" style={{ maxWidth: 1000 }}>
-      {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 20 }}>
-        <Puzzle size={18} style={{ color: 'var(--accent)' }} />
-        <h1 style={{ fontSize: 20, fontWeight: 700, color: 'var(--text-0)' }}>Plugins</h1>
-        <span className="mono dimmer" style={{ fontSize: 11 }}>({plugins.length} total)</span>
-      </div>
+    <div className="catalog-page plugins-page">
+      <header className="catalog-header">
+        <div><h1>Plugins</h1></div>
+        <div className="catalog-header-stat"><strong>{plugins.length}</strong><span>AVAILABLE</span></div>
+      </header>
 
       {plugins.length === 0 ? (
         <div style={{ textAlign: 'center', padding: '48px 20px', color: 'var(--text-3)', fontSize: 13 }}>
-          <Puzzle size={32} style={{ margin: '0 auto 12px', opacity: 0.3 }} />
           No plugins found
         </div>
       ) : (
-        <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start' }}>
+        <div className="plugins-shell" style={{ display: 'flex', gap: 16, alignItems: 'flex-start' }}>
           {/* Category sidebar */}
-          <div className="panel" style={{ width: 180, flexShrink: 0, padding: 6, overflow: 'hidden' }}>
+          <nav className="plugins-categories" aria-label="Plugin categories">
             {sortedCats.map(cat => {
               const active = cat === selectedCat
               const count = grouped[cat]?.length ?? 0
@@ -57,10 +54,12 @@ export default function Plugins() {
               return (
                 <button
                   key={cat}
+                  className="plugins-category"
+                  aria-current={active ? "page" : undefined}
                   onClick={() => setActiveCategory(cat)}
                   style={{
                     display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                    width: '100%', padding: '7px 10px', borderRadius: 6,
+                    width: '100%', padding: '7px 10px',
                     background: active ? 'var(--bg-3)' : 'transparent',
                     border: 'none', cursor: 'pointer', textAlign: 'left',
                     color: active ? 'var(--text-0)' : 'var(--text-2)',
@@ -71,7 +70,7 @@ export default function Plugins() {
                     {cat.replace(/_/g, ' ')}
                   </span>
                   <span className="mono" style={{
-                    fontSize: 10, padding: '1px 5px', borderRadius: 4,
+                    fontSize: 10, padding: '1px 5px',
                     background: active ? 'var(--accent-soft)' : 'var(--bg-3)',
                     color: active ? 'var(--accent)' : 'var(--text-3)',
                   }}>
@@ -80,10 +79,10 @@ export default function Plugins() {
                 </button>
               )
             })}
-          </div>
+          </nav>
 
           {/* Plugin list */}
-          <div style={{ flex: 1, minWidth: 0 }}>
+          <div className="plugins-list" style={{ flex: 1, minWidth: 0 }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
               <div style={{ fontSize: 12, color: 'var(--text-3)' }}>
                 <span style={{ textTransform: 'capitalize', fontWeight: 500, color: 'var(--text-1)' }}>
@@ -93,10 +92,11 @@ export default function Plugins() {
               </div>
             </div>
 
-            <div className="panel" style={{ padding: 0, overflow: 'hidden' }}>
+            <div className="plugins-rows" style={{ padding: 0, overflow: 'hidden' }}>
               {visiblePlugins.map((p, i) => (
                 <div
                   key={p.id}
+                  className="plugins-row"
                   style={{
                     display: 'flex', alignItems: 'center', padding: '10px 14px', gap: 12,
                     borderBottom: i < visiblePlugins.length - 1 ? '1px solid var(--border-subtle)' : 'none',
@@ -106,17 +106,19 @@ export default function Plugins() {
                   {/* Toggle */}
                   <button
                     role="switch"
+                    className="plugins-toggle"
+                    aria-label={`${p.enabled ? "Disable" : "Enable"} ${p.name}`}
                     aria-checked={p.enabled}
                     onClick={() => toggleMut.mutate({ id: p.id, enabled: !p.enabled })}
                     style={{
-                      width: 36, height: 20, borderRadius: 10, border: 'none', cursor: 'pointer',
+                      width: 36, height: 20,  border: 'none', cursor: 'pointer',
                       background: p.enabled ? 'var(--accent)' : 'var(--bg-3)',
                       position: 'relative', flexShrink: 0, transition: 'background 0.15s',
                     }}
                   >
                     <span style={{
                       position: 'absolute', top: 3, left: p.enabled ? 19 : 3,
-                      width: 14, height: 14, borderRadius: '50%', background: '#fff',
+                      width: 14, height: 14,  background: '#fff',
                       transition: 'left 0.15s',
                     }} />
                   </button>

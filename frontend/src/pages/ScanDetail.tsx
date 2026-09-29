@@ -1,5 +1,5 @@
 /**
- * ScanDetail — full-page scan view
+ * ScanDetail: full-page scan view
  * Tabs: Console | Findings | Hosts | Topology | Screenshots | Exclusions
  */
 import { useState } from "react";
@@ -7,13 +7,6 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
 	X,
 	RefreshCw,
-	Terminal,
-	AlertTriangle,
-	Camera,
-	Server,
-	Network,
-	Route,
-	Shield,
 	ChevronLeft,
 	GitCompare,
 	StopCircle,
@@ -23,7 +16,6 @@ import {
 	Copy,
 	Link2,
 	RotateCcw,
-	Sparkles,
 } from "lucide-react";
 import { scansApi } from "@/api/scans";
 import { findingsApi, type Finding } from "@/api/findings";
@@ -47,6 +39,7 @@ import {
 	fmtDuration,
 } from "@/components/ui";
 import { safeUrl } from "@/utils/safeUrl"
+import "./ScanDetail.css";
 
 interface Props {
 	scanId: string;
@@ -167,6 +160,7 @@ export default function ScanDetail({ scanId, onBack }: Props) {
 
 	return (
 		<div
+			className="scan-detail"
 			style={{
 				display: "flex",
 				flexDirection: "column",
@@ -182,217 +176,47 @@ export default function ScanDetail({ scanId, onBack }: Props) {
 					onClose={() => setShowDelta(false)}
 				/>
 			)}
-			{/* Header */}
-			<div
-				style={{
-					padding: "14px 20px 12px",
-					borderBottom: "1px solid var(--border)",
-					background: "var(--bg-1)",
-					flexShrink: 0,
-				}}
-			>
-				<div
-					style={{
-						display: "flex",
-						alignItems: "center",
-						gap: 10,
-						marginBottom: 10,
-					}}
-				>
-					<button className="btn btn-ghost btn-sm" onClick={onBack}>
-						<ChevronLeft size={13} /> Back
-					</button>
-					<span className="mono dim" style={{ fontSize: 11 }}>
-						{scanId.slice(0, 8)}
-					</span>
-					<div style={{ flex: 1 }} />
-					{scan?.status === "paused" && (
-						<button
-							className="btn btn-primary btn-sm"
-							onClick={() => resumeMut.mutate()}
-							disabled={resumeMut.isPending}
-						>
-							▶ {resumeMut.isPending ? "Resuming…" : "Resume"}
-						</button>
-					)}
-					{scan?.status === "running" && (
-						<button
-							className="btn btn-sm"
-							onClick={() => pauseMut.mutate()}
-							disabled={pauseMut.isPending}
-						>
-							⏸ {pauseMut.isPending ? "Pausing…" : "Pause"}
-						</button>
-					)}
-					{isActive && (
-						<button
-							className="btn btn-danger btn-sm"
-							onClick={() => cancelMut.mutate()}
-							disabled={cancelMut.isPending}
-						>
-							<StopCircle size={11} />{" "}
-							{cancelMut.isPending ? "Cancelling…" : "Cancel"}
-						</button>
-					)}
-					{!isActive && scan?.status === "completed" && (
-						<button className="btn btn-sm" onClick={() => setShowDelta(true)}>
-							<GitCompare size={12} /> Compare
-						</button>
-					)}
-					{!isActive &&
-						(scan?.status === "completed" ||
-							scan?.status === "failed" ||
-							scan?.status === "cancelled") && (
-							<>
-								<button
-									className="btn btn-sm"
-									onClick={() => {
-										if (confirm("Rerun this scan with the same config?"))
-											rerunMut.mutate();
-									}}
-									disabled={rerunMut.isPending}
-									style={{ color: "var(--ok)" }}
-								>
-									<RotateCcw size={12} />{" "}
-									{rerunMut.isPending ? "Rerunning…" : "Rerun"}
-								</button>
-							</>
-						)}
-					<button className="btn btn-sm" onClick={() => refetch()}>
-						<RefreshCw size={12} /> Refresh
-					</button>
-				</div>
-				<div style={{ display: "flex", alignItems: "flex-start", gap: 16 }}>
-					<div style={{ flex: 1, minWidth: 0 }}>
-						<div
-							style={{
-								display: "flex",
-								alignItems: "center",
-								gap: 10,
-								marginBottom: 6,
-							}}
-						>
-							<h1 style={{ margin: 0, fontSize: 20, fontWeight: 600 }}>
-								{scan?.name ?? "…"}
-							</h1>
-							{scan && <StatusPill status={scan.status} />}
-						</div>
-						<div className="mono dim" style={{ fontSize: 11.5 }}>
-							profile: {scan?.profile}
-						</div>
+			<header className="scan-detail-header">
+				<div className="scan-detail-utility">
+					<button className="scan-detail-back" onClick={onBack}><ChevronLeft size={14} /> All scans</button>
+					<span className="scan-detail-id">SCAN / {scanId.slice(0, 8)}</span>
+					<div className="scan-detail-actions">
+						{scan?.status === "paused" && <button className="btn btn-primary btn-sm" onClick={() => resumeMut.mutate()} disabled={resumeMut.isPending}>{resumeMut.isPending ? "Resuming…" : "Resume scan"}</button>}
+						{scan?.status === "running" && <button className="btn btn-sm" onClick={() => pauseMut.mutate()} disabled={pauseMut.isPending}>{pauseMut.isPending ? "Pausing…" : "Pause scan"}</button>}
+						{isActive && <button className="btn btn-danger btn-sm" onClick={() => cancelMut.mutate()} disabled={cancelMut.isPending}><StopCircle size={12} /> {cancelMut.isPending ? "Cancelling…" : "Cancel"}</button>}
+						{!isActive && scan?.status === "completed" && <button className="btn btn-sm" onClick={() => setShowDelta(true)}><GitCompare size={12} /> Compare</button>}
+						{!isActive && ["completed", "failed", "cancelled"].includes(scan?.status ?? "") && <button className="btn btn-sm" onClick={() => { if (confirm("Rerun this scan with the same config?")) rerunMut.mutate(); }} disabled={rerunMut.isPending}><RotateCcw size={12} /> {rerunMut.isPending ? "Rerunning…" : "Rerun"}</button>}
+						<button className="btn btn-sm" onClick={() => refetch()}><RefreshCw size={12} /> Refresh</button>
 					</div>
-					<div style={{ display: "flex", gap: 20, flexShrink: 0 }}>
-						<DStat
-							label="Hosts up"
-							value={`${scan?.hosts_up ?? 0}/${scan?.hosts_total ?? 0}`}
-						/>
+				</div>
+				<div className="scan-detail-hero">
+					<div className="scan-detail-identity">
+						<div className="scan-detail-profile">{scan?.profile ?? "Loading"} profile</div>
+						<h1>{scan?.name ?? "Loading scan"}</h1>
+						<div className="scan-detail-state">{scan && <StatusPill status={scan.status} />}<span>{isActive ? "Live scan activity" : scan?.status === "completed" ? "Assessment complete" : scan?.status === "failed" ? "Assessment interrupted" : "Scan record"}</span></div>
+					</div>
+					<div className="scan-detail-metrics">
+						<DStat label="Hosts up" value={`${scan?.hosts_up ?? 0} / ${scan?.hosts_total ?? 0}`} />
 						<DStat label="Findings" value={totalFindings} />
-						<DStat
-							label="Duration"
-							value={fmtDuration(scan?.duration_s)}
-						/>
+						<DStat label="Duration" value={fmtDuration(scan?.duration_s)} />
 						<DStat label="Started" value={relTime(scan?.started_at)} />
 					</div>
 				</div>
-				{scan?.status === "running" && (
-					<div
-						style={{
-							marginTop: 10,
-							display: "flex",
-							alignItems: "center",
-							gap: 10,
-						}}
-					>
-						<Meter
-							value={scan?.progress ?? 0.5}
-							color="var(--accent-2)"
-						/>
-					</div>
-				)}
-				{scan?.status === "failed" && scan?.error_message && (
-					<div
-						style={{
-							marginTop: 10,
-							padding: "8px 12px",
-							borderRadius: 6,
-							background: "oklch(0.25 0.05 20 / 0.4)",
-							border: "1px solid oklch(0.5 0.15 20 / 0.4)",
-							fontSize: 12,
-							color: "var(--sev-high)",
-							fontFamily: "var(--font-mono)",
-						}}
-					>
-						{scan.error_message}
-					</div>
-				)}
-			</div>
+				{scan?.status === "running" && <div className="scan-detail-progress"><span>SCAN IN PROGRESS</span><Meter value={scan?.progress ?? 0.5} color="var(--accent)" /><span>{Math.round((scan?.progress ?? 0.5) * 100)}%</span></div>}
+				{scan?.status === "failed" && scan?.error_message && <div className="scan-detail-error">{scan.error_message}</div>}
+			</header>
 
-			{/* Tabs */}
-			<div className="tabs">
-				<TabBtn
-					active={tab === "console"}
-					onClick={() => setTab("console")}
-					icon={<Terminal size={12} />}
-					label="Console"
-					count={events.length || undefined}
-					liveColor={isActive ? "var(--accent-2)" : undefined}
-				/>
-				<TabBtn
-					active={tab === "findings"}
-					onClick={() => setTab("findings")}
-					icon={<AlertTriangle size={12} />}
-					label="Findings"
-					count={totalFindings || undefined}
-				/>
-				<TabBtn
-					active={tab === "hosts"}
-					onClick={() => setTab("hosts")}
-					icon={<Server size={12} />}
-					label="Hosts"
-					count={hosts.length || undefined}
-				/>
-				<TabBtn
-					active={tab === "topology"}
-					onClick={() => setTab("topology")}
-					icon={<Network size={12} />}
-					label="Topology"
-				/>
-				<TabBtn
-					active={tab === "attack-paths"}
-					onClick={() => setTab("attack-paths")}
-					icon={<Route size={12} />}
-					label="Attack Paths"
-				/>
-				<TabBtn
-					active={tab === "screenshots"}
-					onClick={() => setTab("screenshots")}
-					icon={<Camera size={12} />}
-					label="Screenshots"
-				/>
-				<TabBtn
-					active={tab === "ai"}
-					onClick={() => setTab("ai")}
-					icon={<Sparkles size={12} />}
-					label="AI"
-				/>
-				{isPending && (
-					<TabBtn
-						active={tab === "exclusions"}
-						onClick={() => setTab("exclusions")}
-						icon={<Shield size={12} />}
-						label="Exclusions"
-					/>
-				)}
-				{chains.length > 0 && (
-					<TabBtn
-						active={tab === "chains"}
-						onClick={() => setTab("chains")}
-						icon={<Link2 size={12} />}
-						label="Chains"
-						count={chains.length}
-					/>
-				)}
-			</div>
+			<nav className="scan-detail-tabs" aria-label="Scan sections">
+				<TabBtn active={tab === "console"} onClick={() => setTab("console")} label="Console" count={events.length || undefined} liveColor={isActive ? "var(--accent)" : undefined} />
+				<TabBtn active={tab === "findings"} onClick={() => setTab("findings")} label="Findings" count={totalFindings || undefined} />
+				<TabBtn active={tab === "hosts"} onClick={() => setTab("hosts")} label="Hosts" count={hosts.length || undefined} />
+				<TabBtn active={tab === "topology"} onClick={() => setTab("topology")} label="Topology" />
+				<TabBtn active={tab === "attack-paths"} onClick={() => setTab("attack-paths")} label="Attack paths" />
+				<TabBtn active={tab === "screenshots"} onClick={() => setTab("screenshots")} label="Screenshots" />
+				<TabBtn active={tab === "ai"} onClick={() => setTab("ai")} label="AI analysis" />
+				{isPending && <TabBtn active={tab === "exclusions"} onClick={() => setTab("exclusions")} label="Exclusions" />}
+				{chains.length > 0 && <TabBtn active={tab === "chains"} onClick={() => setTab("chains")} label="Chains" count={chains.length} />}
+			</nav>
 
 			{/* Content */}
 			<div
@@ -477,7 +301,7 @@ export default function ScanDetail({ scanId, onBack }: Props) {
 									]),
 								)}
 								onSelectHost={(h) => {
-									// Look up full ScannedHost to get service/version data —
+									// Look up full ScannedHost to get service/version data,
 									// HostNode only carries {number, state}, stripping service info.
 									const full = hosts.find((host) => host.id === h.id);
 									if (!full) return;
@@ -532,7 +356,7 @@ function AiTab({ scanId, findings }: { scanId: string; findings: Finding[] }) {
 
 	return (
 		<div
-			className="page-pad"
+			className="page-pad scan-ai-layout"
 			style={{ display: "flex", gap: 14, height: "100%", minHeight: 0 }}
 		>
 			{/* Left: Agent Chat */}
@@ -563,61 +387,22 @@ function AiTab({ scanId, findings }: { scanId: string; findings: Finding[] }) {
 	);
 }
 
-function TabBtn({
-	active,
-	onClick,
-	icon,
-	label,
-	count,
-	liveColor,
-}: {
+function TabBtn({ active, onClick, label, count, liveColor }: {
 	active: boolean;
 	onClick: () => void;
-	icon: React.ReactNode;
 	label: string;
 	count?: number;
 	liveColor?: string;
 }) {
-	return (
-		<button className={`tab ${active ? "active" : ""}`} onClick={onClick}>
-			{liveColor ? (
-				<span
-					className="live-dot"
-					style={{
-						width: 5,
-						height: 5,
-						boxShadow: "none",
-						background: liveColor,
-					}}
-				/>
-			) : (
-				icon
-			)}
-			{label}
-			{count != null && <span className="count">{count}</span>}
-		</button>
-	);
+	return <button className={`scan-detail-tab ${active ? "active" : ""}`} onClick={onClick} aria-current={active ? "page" : undefined}>
+		<span>{label}</span>
+		{liveColor && <span className="scan-detail-tab-live" style={{ background: liveColor }} />}
+		{count != null && <span className="scan-detail-tab-count">{count}</span>}
+	</button>;
 }
 
 function DStat({ label, value }: { label: string; value: string | number }) {
-	return (
-		<div style={{ textAlign: "right" }}>
-			<div className="panel-title" style={{ fontSize: 9.5 }}>
-				{label}
-			</div>
-			<div
-				className="mono"
-				style={{
-					fontSize: 14,
-					fontWeight: 500,
-					color: "var(--text-0)",
-					marginTop: 2,
-				}}
-			>
-				{value ?? "—"}
-			</div>
-		</div>
-	);
+	return <div className="scan-detail-metric"><span>{label}</span><strong>{value ?? "–"}</strong></div>;
 }
 
 /* ── Findings tab ──────────────────────────────────────────── */
@@ -701,7 +486,7 @@ function FindingsTab({
 	}
 
 	return (
-		<div style={{ display: "flex", height: "100%", minHeight: 0 }}>
+		<div className="scan-findings" style={{ display: "flex", height: "100%", minHeight: 0 }}>
 			<div
 				style={{
 					flex: 1,
@@ -729,10 +514,10 @@ function FindingsTab({
 						return (
 							<button
 								key={s}
+								aria-pressed={sevFilter === s}
 								onClick={() => setSevFilter(s)}
 								style={{
 									padding: "4px 10px",
-									borderRadius: 6,
 									fontSize: 11,
 									textTransform: "capitalize",
 									cursor: "pointer",
@@ -765,10 +550,10 @@ function FindingsTab({
 							(f) => (
 								<button
 									key={f}
+									aria-pressed={triageFilter === f}
 									onClick={() => setTriageFilter(f)}
 									style={{
 										padding: "4px 8px",
-										borderRadius: 4,
 										fontSize: 10.5,
 										cursor: "pointer",
 										background:
@@ -832,7 +617,7 @@ function FindingsTab({
 
 				{/* Table */}
 				<div style={{ flex: 1, overflow: "auto", minHeight: 0 }}>
-					<table className="tbl">
+					<table className="tbl scan-data-table">
 						<thead>
 							<tr>
 								<th style={{ width: 4 }}></th>
@@ -925,13 +710,13 @@ function FindingsTab({
 												{f.host_ip}
 											</button>
 										) : (
-											<span className="dimmer">—</span>
+											<span className="dimmer">–</span>
 										)}
 									</td>
 									<td className="mono dim">
 										{f.port_number
 											? `${f.port_number}/${f.protocol ?? "tcp"}`
-											: "—"}
+											: "–"}
 									</td>
 									<td className="mono dim" style={{ fontSize: 11 }}>
 										{f.plugin_id}
@@ -948,7 +733,7 @@ function FindingsTab({
 														: "var(--text-1)",
 										}}
 									>
-										{f.cvss_score?.toFixed(1) ?? "—"}
+										{f.cvss_score?.toFixed(1) ?? "–"}
 									</td>
 									<td>
 										{(() => {
@@ -967,8 +752,7 @@ function FindingsTab({
 													style={{
 														fontSize: 10,
 														padding: "1px 5px",
-														borderRadius: 3,
-														background: "oklch(0.68 0.21 27 / 0.12)",
+														background: "transparent",
 														color: "var(--sev-high)",
 														border: "1px solid oklch(0.68 0.21 27 / 0.25)",
 														whiteSpace: "nowrap",
@@ -977,7 +761,7 @@ function FindingsTab({
 													{ids[0]}
 												</span>
 											) : (
-												<span className="dimmer">—</span>
+												<span className="dimmer">–</span>
 											);
 										})()}
 									</td>
@@ -1027,6 +811,7 @@ function FindingDrawer({
 
 	return (
 		<div
+			className="scan-finding-drawer"
 			style={{
 				width: 420,
 				flexShrink: 0,
@@ -1095,13 +880,13 @@ function FindingDrawer({
 							</div>
 						</div>
 					)}
-					<MiniField label="Host" value={finding.host_ip ?? "—"} mono accent />
+					<MiniField label="Host" value={finding.host_ip ?? "–"} mono accent />
 					<MiniField
 						label="Port"
 						value={
 							finding.port_number
 								? `${finding.port_number}/${finding.protocol ?? "tcp"}`
-								: "—"
+								: "–"
 						}
 						mono
 					/>
@@ -1145,10 +930,9 @@ function FindingDrawer({
 								fontSize: 12,
 								lineHeight: 1.5,
 								color: "var(--text-1)",
-								background: "oklch(0.75 0.15 145 / 0.08)",
-								border: "1px solid oklch(0.75 0.15 145 / 0.25)",
-								borderLeft: "3px solid var(--ok)",
-								borderRadius: 4,
+								background: "transparent",
+								border: "1px solid var(--border)",
+								borderLeft: "2px solid var(--accent)",
 							}}
 						>
 							{finding.remediation}
@@ -1252,7 +1036,6 @@ function EvidenceBlock({ evidence }: { evidence: string }) {
 		background: "oklch(0.12 0.008 255)",
 		color: "var(--text-1)",
 		padding: 10,
-		borderRadius: 6,
 		border: "1px solid var(--border)",
 		whiteSpace: "pre-wrap",
 		overflow: "auto",
@@ -1353,8 +1136,7 @@ function TagRow({ items, color }: { items: string[]; color: string }) {
 					style={{
 						fontSize: 10.5,
 						padding: "2px 7px",
-						borderRadius: 3,
-						background: `color-mix(in oklch, ${color} 14%, transparent)`,
+						background: "transparent",
 						color,
 						border: `1px solid color-mix(in oklch, ${color} 30%, transparent)`,
 					}}
@@ -1457,9 +1239,9 @@ function HostsTab({
 
 	return (
 		<>
-			<div style={{ padding: 20 }}>
+			<div className="scan-hosts-list" style={{ padding: 20 }}>
 				<div className="panel" style={{ overflow: "hidden" }}>
-					<table className="tbl">
+					<table className="tbl scan-data-table">
 						<thead>
 							<tr>
 								<th style={{ width: 4 }}></th>
@@ -1502,10 +1284,10 @@ function HostsTab({
 											{h.ip}
 										</td>
 										<td style={{ fontSize: 12.5 }}>
-											{h.hostname ?? <span className="dimmer">—</span>}
+											{h.hostname ?? <span className="dimmer">–</span>}
 										</td>
 										<td className="dim" style={{ fontSize: 11.5 }}>
-											{h.os_name ?? "—"}
+											{h.os_name ?? "–"}
 										</td>
 										<td
 											className="mono"
@@ -1521,7 +1303,7 @@ function HostsTab({
 												<span className="dim">+{openPorts.length - 6}</span>
 											)}
 											{openPorts.length === 0 && (
-												<span className="dimmer">—</span>
+												<span className="dimmer">–</span>
 											)}
 										</td>
 										<td
@@ -1541,7 +1323,7 @@ function HostsTab({
 											{hf.length > 0 ? (
 												<SevTag severity={maxSev} />
 											) : (
-												<span className="dimmer">—</span>
+												<span className="dimmer">–</span>
 											)}
 										</td>
 									</tr>
@@ -1716,7 +1498,7 @@ function ChainsPanel({ chains }: { chains: AttackChain[] }) {
 
 	return (
 		<div
-			className="page-pad"
+			className="page-pad scan-chains"
 			style={{
 				maxWidth: 800,
 				display: "flex",
@@ -1802,7 +1584,6 @@ function ChainsPanel({ chains }: { chains: AttackChain[] }) {
 											style={{
 												width: 18,
 												height: 18,
-												borderRadius: "50%",
 												background: sevColor(c.severity),
 												color: "#fff",
 												display: "flex",
@@ -1835,7 +1616,6 @@ function ChainsPanel({ chains }: { chains: AttackChain[] }) {
 									color: "var(--text-2)",
 									background: "var(--bg-0)",
 									padding: "6px 10px",
-									borderRadius: 4,
 									border: "1px solid var(--border)",
 									whiteSpace: "pre-wrap",
 								}}
@@ -1888,12 +1668,12 @@ function ExclusionsPanel({ scanId }: { scanId: string }) {
 	}
 
 	return (
-		<div style={{ padding: 20, maxWidth: 640 }}>
+		<div className="scan-exclusions" style={{ padding: 20, maxWidth: 640 }}>
 			<div className="panel">
 				<div className="panel-head">
 					<span className="panel-title">Exclusions</span>
 					<span className="dim" style={{ fontSize: 11, marginLeft: "auto" }}>
-						Applied at scan time — IPs, CIDRs, ports, or hostnames to skip
+						Applied at scan time. Skip IPs, CIDRs, ports, or hostnames.
 					</span>
 				</div>
 				<div
@@ -1959,7 +1739,7 @@ function ExclusionsPanel({ scanId }: { scanId: string }) {
 						Add
 					</button>
 				</div>
-				<table className="tbl">
+				<table className="tbl scan-data-table">
 					<thead>
 						<tr>
 							<th>Type</th>
@@ -1978,7 +1758,7 @@ function ExclusionsPanel({ scanId }: { scanId: string }) {
 								</td>
 								<td className="mono">{e.value}</td>
 								<td className="dim" style={{ fontSize: 11.5 }}>
-									{e.reason ?? <span className="dimmer">—</span>}
+									{e.reason ?? <span className="dimmer">–</span>}
 								</td>
 								<td>
 									<button
@@ -2001,7 +1781,7 @@ function ExclusionsPanel({ scanId }: { scanId: string }) {
 										fontSize: 12,
 									}}
 								>
-									No exclusions — all targets will be scanned
+									No exclusions. All targets will be scanned.
 								</td>
 							</tr>
 						)}

@@ -58,14 +58,7 @@ export default function ScanTimeline({ timings, isRunning }: { timings: PhaseTim
               <div style={{ fontSize: 9, color: 'var(--text-3)', marginBottom: 3, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                 {PHASE_LABELS[p.id]}
               </div>
-              <div style={{ height: 6, borderRadius: 3, background: color, opacity: p.state === 'running' ? 1 : 0.7, position: 'relative', overflow: 'hidden' }}>
-                {p.state === 'running' && (
-                  <div style={{
-                    position: 'absolute', inset: 0, background: `linear-gradient(90deg, transparent 0%, ${color} 50%, transparent 100%)`,
-                    animation: 'shimmer 1.4s ease-in-out infinite',
-                  }} />
-                )}
-              </div>
+              <div style={{ height: 3, background: color, opacity: p.state === 'running' ? 1 : 0.7 }} />
               {p.ms > 0 && (
                 <div style={{ fontSize: 9, color: 'var(--text-3)', marginTop: 3, whiteSpace: 'nowrap' }}>
                   {fmtDur(p.ms)}{p.state === 'running' ? '…' : ''}
@@ -75,12 +68,6 @@ export default function ScanTimeline({ timings, isRunning }: { timings: PhaseTim
           )
         })}
       </div>
-      <style>{`
-        @keyframes shimmer {
-          0% { transform: translateX(-100%); }
-          100% { transform: translateX(100%); }
-        }
-      `}</style>
     </div>
   )
 }
