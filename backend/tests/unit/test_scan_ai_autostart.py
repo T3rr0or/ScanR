@@ -60,6 +60,8 @@ async def test_scan_worker_build_does_not_resolve_provider_secret(monkeypatch):
     assert run is db.added
     assert run.provider == "openai"
     assert run.status == "queued"
+    assert run.max_iterations == 0
+    assert run.max_tokens == 0
 
 
 @pytest.mark.asyncio

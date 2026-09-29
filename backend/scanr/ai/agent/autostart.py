@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +45,20 @@ async def build_scan_agent_run(
     if not getattr(scan, "ai_agent_enabled", False):
         return None
 
+    # A scan can be stopped before the worker reaches this phase. Lock its row
+    # while checking and creating the run, so the stop endpoint can serialize
+    # against the launch and then see any run it needs to stop.
+    from scanr.models import Scan
+
+    if isinstance(scan, Scan):
+        enabled = (
+            await db.execute(
+                select(Scan.ai_agent_enabled).where(Scan.id == scan.id).with_for_update()
+            )
+        ).scalar_one_or_none()
+        if not enabled:
+            return None
+
     from scanr.ai import settings_store as store
     from scanr.models.ai_agent_run import AiAgentRun
     from scanr.models.base import new_uuid
@@ -64,6 +79,8 @@ async def build_scan_agent_run(
         objective=(objective or scan.ai_agent_objective or "").strip() or _DEFAULT_LIVE_OBJECTIVE,
         provider=provider_name,
         model=scan.ai_agent_model,
+        max_iterations=0,
+        max_tokens=0,
         capabilities=scan.ai_agent_capabilities,  # already a JSON string (or None)
     )
     db.add(run)

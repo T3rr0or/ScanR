@@ -11,6 +11,8 @@ export interface ScanSummary {
   progress?: number
   error_message?: string | null
   profile_json?: string | null
+  ai_agent_enabled?: boolean
+  ai_agent_mode?: string | null
 }
 
 /* ── Scan delta (see backend core/delta_engine.compute_delta) ─────────────── */
@@ -110,6 +112,8 @@ export const scansApi = {
     api.patch<ScanSummary>(`/scans/${id}`, body).then(r => r.data),
   launch: (id: string) => api.post(`/scans/${id}/launch`).then(r => r.data),
   cancel: (id: string) => api.post(`/scans/${id}/cancel`).then(r => r.data),
+  stopAi: (id: string) =>
+    api.post<{ ok: boolean; stopped_runs: number; ai_agent_enabled: boolean }>(`/ai/scans/${id}/agent/stop`).then(r => r.data),
   delete: (id: string) => api.delete(`/scans/${id}`),
   rerun: (id: string) => api.post<ScanSummary>(`/scans/${id}/rerun`).then(r => r.data),
   clone: (id: string) => api.post<ScanSummary>(`/scans/${id}/clone`).then(r => r.data),

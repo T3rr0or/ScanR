@@ -23,9 +23,9 @@ class AiAgentRun(Base, TimestampMixin):
     # has gone stale (worker died mid-run) so they don't hang "running" forever.
     last_heartbeat: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     mode: Mapped[str] = mapped_column(String(20), nullable=False)  # guided | autonomous
-    # Max reasoning iterations before the run stops (None = engine default).
+    # Optional operator-set ceiling. 0/None = unlimited.
     max_iterations: Mapped[int | None] = mapped_column(nullable=True)
-    # Token safety cap before the run stops (None = engine default ~200k).
+    # Optional operator-set ceiling. 0/None = unlimited.
     max_tokens: Mapped[int | None] = mapped_column(nullable=True)
     # Per-minute input token rate cap (None = engine/global default, 0 = unlimited).
     rate_limit_tokens_per_min: Mapped[int | None] = mapped_column(nullable=True)

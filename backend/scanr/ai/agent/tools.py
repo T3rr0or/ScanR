@@ -770,6 +770,8 @@ class ToolRegistry:
         tool = self._tools.get(name)
         if tool is None:
             return f"ERROR: unknown tool {name!r}"
+        if await ctx.should_stop():
+            return "DENIED: agent stopped by operator."
 
         # 1. scope — targets must be neither forbidden infra NOR outside the
         #    scan's authorized scope (so the agent can't GET/POST to arbitrary
@@ -801,6 +803,11 @@ class ToolRegistry:
             approved = await ctx.request_approval(name, args, reason="intrusive action")
             if not approved:
                 return f"DENIED: operator did not approve {name}."
+
+        # An approval wait can last minutes. The operator may press Stop while
+        # it is pending or as it resolves, so re-check before any side effect.
+        if await ctx.should_stop():
+            return "DENIED: agent stopped by operator."
 
         try:
             return await tool.handler(ctx, args)

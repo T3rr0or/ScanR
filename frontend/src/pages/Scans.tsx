@@ -277,7 +277,7 @@ export default function Scans({ onOpenScan, openNewScan, onNewScanOpened }: Prop
       }
       return scan
     },
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['scans'] }); setShowForm(false) },
+    onSuccess: (scan) => { qc.invalidateQueries({ queryKey: ['scans'] }); setShowForm(false); onOpenScan?.(scan.id) },
     onError: _onErr,
   })
 
@@ -969,7 +969,7 @@ function NewScanModal({
                   <Zap size={12} color="var(--accent)" /> Use AI during this scan
                 </label>
                 <p className="mono" style={{ margin: '4px 0 0 22px', fontSize: 10.5, color: 'var(--text-3)' }}>
-                  Launches an AI agent that investigates concurrently while the scan runs (requires a provider key in Settings → AI).
+                  Starts an AI investigation after scan checks finish. Open the scan console to follow or stop it. Requires a provider key in Settings → AI.
                 </p>
                 {ai.enabled && (
                   <div style={{ paddingLeft: 22, marginTop: 8, display: 'flex', flexDirection: 'column', gap: 8 }}>

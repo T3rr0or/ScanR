@@ -91,10 +91,16 @@ async def run_agent(
         if wait > 0:
             logger.info("rate limit: waiting %.1fs before next API call", wait)
             await ctx.log(f"⏳ rate limit — waiting {wait:.0f}s before next LLM call")
-            await asyncio.sleep(wait)
-            if await ctx.should_stop():
-                run.stop_reason = "stopped"
-                await ctx.log("agent stopped by user")
+            remaining = wait
+            while remaining > 0:
+                if await ctx.should_stop():
+                    run.stop_reason = "stopped"
+                    await ctx.log("agent stopped by user")
+                    break
+                pause = min(remaining, 1.0)
+                await asyncio.sleep(pause)
+                remaining -= pause
+            if run.stop_reason == "stopped":
                 break
 
         completion = await provider.complete(
@@ -105,6 +111,13 @@ async def run_agent(
         )
         ctx.budget.add(completion.usage)
         run.usage = run.usage + completion.usage
+
+        # Stop may arrive during a slow provider request. Do not dispatch the
+        # returned tools once the operator has asked the agent to stop.
+        if await ctx.should_stop():
+            run.stop_reason = "stopped"
+            await ctx.log("agent stopped by user")
+            break
 
         # Record the assistant turn (text + any tool calls) so the model sees
         # its own prior actions on the next iteration.
@@ -120,6 +133,11 @@ async def run_agent(
             break
 
         for call in completion.tool_calls:
+            if await ctx.should_stop():
+                # Keep provider message history valid: every tool call in this
+                # assistant turn needs a matching response on resume.
+                messages.append(Msg(role="tool", content="Skipped: agent stopped by operator.", tool_call_id=call.id, name=call.name))
+                continue
             # Full, exact command line for the audit trail — every tool, including
             # the built-ins (fetch_url, run_port_scan, …), with complete arguments
             # so an auditor/customer can see precisely what was executed.
@@ -136,6 +154,11 @@ async def run_agent(
         # live instead of only when the whole run finishes.
         if on_step is not None:
             await on_step(messages)
+
+        if await ctx.should_stop():
+            run.stop_reason = "stopped"
+            await ctx.log("agent stopped by user")
+            break
 
     return run, messages
 

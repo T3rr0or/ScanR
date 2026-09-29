@@ -567,6 +567,35 @@ async def test_loop_stops_when_should_stop():
     assert run.iterations == 0  # stopped before the first model call
 
 
+@pytest.mark.asyncio
+async def test_stop_during_provider_call_prevents_tool_dispatch():
+    class StoppingCtx(FakeContext):
+        stopped = False
+
+        async def should_stop(self):
+            return self.stopped
+
+    class StopOnComplete(ScriptedProvider):
+        async def complete(self, **kwargs):
+            response = await super().complete(**kwargs)
+            ctx.stopped = True
+            return response
+
+    ctx = StoppingCtx(AgentPolicy(mode=AutonomyMode.autonomous))
+    response = Completion(
+        text="",
+        tool_calls=[ToolCall(id="t", name="list_hosts", arguments={})],
+        usage=Usage(input_tokens=1, output_tokens=1),
+        stop_reason="tool_use",
+    )
+    run, messages = await run_agent(
+        StopOnComplete([response]), ctx, ToolRegistry(read_only_tools()), objective="scan"
+    )
+    assert run.stop_reason == "stopped"
+    assert run.actions == []
+    assert not any(message.role == "tool" for message in messages)
+
+
 def test_budget_zero_means_unlimited():
     # 0 disables a ceiling so a run only ends on completion or operator Stop.
     b = Budget(max_iterations=0, max_tokens=0)

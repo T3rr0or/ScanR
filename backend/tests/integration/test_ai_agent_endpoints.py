@@ -139,3 +139,39 @@ async def test_agent_stop_noop_when_not_running(client, auth_headers, db):
     r = await client.post(f"/api/v1/ai/agent/runs/{run.id}/stop", headers=auth_headers)
     assert r.status_code == 200
     assert r.json()["id"] == run.id
+
+
+@pytest.mark.asyncio
+async def test_queued_agent_can_be_stopped_before_worker_claims_it(client, auth_headers, db):
+    scan_id = await _make_scan(client, auth_headers, ["192.0.2.23"])
+    run = _seed_run(scan_id, status="queued")
+    db.add(run)
+    await db.commit()
+
+    response = await client.post(f"/api/v1/ai/agent/runs/{run.id}/stop", headers=auth_headers)
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "completed"
+    assert response.json()["stop_reason"] == "stopped"
+    await db.refresh(run)
+    assert run.status == "completed"
+
+
+@pytest.mark.asyncio
+async def test_scan_agent_stop_disables_auto_launch_and_queued_runs(client, auth_headers, db):
+    from scanr.models import Scan
+
+    scan_id = await _make_scan(client, auth_headers, ["192.0.2.24"])
+    scan = await db.get(Scan, scan_id)
+    scan.ai_agent_enabled = True
+    run = _seed_run(scan_id, status="queued")
+    db.add(run)
+    await db.commit()
+
+    response = await client.post(f"/api/v1/ai/scans/{scan_id}/agent/stop", headers=auth_headers)
+    assert response.status_code == 200, response.text
+    assert response.json() == {"ok": True, "stopped_runs": 1, "ai_agent_enabled": False}
+    await db.refresh(scan)
+    await db.refresh(run)
+    assert scan.ai_agent_enabled is False
+    assert run.status == "completed"
+    assert run.stop_reason == "stopped"

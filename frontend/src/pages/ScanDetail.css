@@ -92,9 +92,20 @@
 .scan-detail .sev-tag, .scan-detail .pill { background: transparent; border: 1px solid var(--scan-rule); font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
 .scan-detail .sev-bar { border-radius: 0; }
 .scan-detail a { color: var(--scan-accent); }
-.scan-detail .scan-ai-layout > div + div { border-left: 1px solid var(--scan-rule); padding-left: 18px; }
-@media (max-width: 900px) {
-  .scan-detail .scan-ai-layout { display: flex !important; flex-direction: column; height: auto !important; min-height: 100%; }
-  .scan-detail .scan-ai-layout > div { flex: none !important; min-width: 0 !important; min-height: 440px; }
-  .scan-detail .scan-ai-layout > div + div { border-left: 0; border-top: 1px solid var(--scan-rule); padding-left: 0; padding-top: 20px; }
+.scan-detail .scan-ai-layout { display: flex; flex-direction: column; flex: 1; min-height: 0; height: 100%; }
+.scan-ai-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 66px; padding: 11px clamp(16px, 2vw, 30px); border-bottom: 1px solid var(--scan-rule); }
+.scan-ai-head > div:first-child > span { color: var(--scan-muted); font-size: 9px; font-weight: 700; letter-spacing: .12em; }
+.scan-ai-head h2 { margin: 3px 0 0; font-size: 21px; font-weight: 700; letter-spacing: -.025em; }
+.scan-ai-view-switch { display: flex; align-items: center; gap: 5px; }
+.scan-ai-view-switch button { min-height: 32px; padding: 0 12px; border: 1px solid var(--scan-rule); color: var(--scan-muted); font-size: 11px; font-weight: 700; }
+.scan-ai-view-switch button:hover, .scan-ai-view-switch button.active { border-color: var(--scan-accent); color: var(--scan-ink); }
+.scan-ai-view-switch button.active { background: #19130f; }
+.scan-ai-content { flex: 1; min-height: 0; padding: 16px clamp(16px, 2vw, 30px); }
+.scan-ai-quick { width: min(100%, 1050px); height: 100%; min-height: 0; margin: 0 auto; }
+.scan-ai-quick > .panel { height: 100%; }
+@media (max-width: 720px) {
+  .scan-ai-head { align-items: flex-start; flex-direction: column; }
+  .scan-ai-view-switch { width: 100%; }
+  .scan-ai-view-switch button { flex: 1; }
+  .scan-ai-content { padding: 12px; }
 }

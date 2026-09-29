@@ -45,7 +45,7 @@ def reap_stale_agent_runs() -> dict:
 async def _reap_stale_agent_runs_async() -> dict:
     from datetime import timedelta
 
-    from sqlalchemy import or_, select, update
+    from sqlalchemy import func, select, update
 
     from scanr.config import get_settings
     from scanr.models import AiAgentRun
@@ -57,16 +57,24 @@ async def _reap_stale_agent_runs_async() -> dict:
     engine, SessionLocal = _make_engine_and_session()
     try:
         async with SessionLocal() as db:
+            last_seen = func.coalesce(AiAgentRun.last_heartbeat, AiAgentRun.created_at)
             result = await db.execute(
-                select(AiAgentRun.id).where(
-                    AiAgentRun.status.in_(("running", "queued")),
-                    or_(
-                        AiAgentRun.last_heartbeat < cutoff,
-                        (AiAgentRun.last_heartbeat.is_(None)) & (AiAgentRun.created_at < cutoff),
-                    ),
-                )
+                select(AiAgentRun.id).where(AiAgentRun.status == "running", last_seen < cutoff)
             )
             stale_ids = [row[0] for row in result.all()]
+            # Runs are unbounded, so a queued run may legitimately wait behind
+            # long-running agents on a busy AI worker. Only treat it as lost
+            # when no live run is occupying the queue.
+            live = await db.execute(
+                select(AiAgentRun.id)
+                .where(AiAgentRun.status == "running", last_seen >= cutoff)
+                .limit(1)
+            )
+            if live.first() is None:
+                result = await db.execute(
+                    select(AiAgentRun.id).where(AiAgentRun.status == "queued", last_seen < cutoff)
+                )
+                stale_ids += [row[0] for row in result.all()]
             if stale_ids:
                 await db.execute(
                     update(AiAgentRun)
@@ -94,30 +102,23 @@ async def _run_agent_async(run_id: str, resume: bool = False) -> dict:
     from scanr.config import get_settings
     from scanr.core.scan_logger import ScanLogger
     from scanr.models import AiAgentRun, Scan
+    from sqlalchemy import update
 
     engine, SessionLocal = _make_engine_and_session()
     try:
         async with SessionLocal() as db:
-            run = await db.get(AiAgentRun, run_id)
-            if run is None:
-                return {"error": "run not found"}
-            run.status = "running"
-            run.last_heartbeat = datetime.now(tz=timezone.utc)
+            # Claim only a queued run. Stop can complete a queued run before
+            # this worker starts; it must never be revived by a late task.
+            claimed = await db.execute(
+                update(AiAgentRun)
+                .where(AiAgentRun.id == run_id, AiAgentRun.status == "queued")
+                .values(status="running", last_heartbeat=datetime.now(tz=timezone.utc))
+            )
             await db.commit()
-
-            # Drop any stale cancel flag from a prior run so a fresh/resumed run
-            # isn't stopped on its first iteration. Stop sets this flag.
-            # NOTE: get_redis()'s pool only exists in the API process lifespan —
-            # in this Celery worker it always raises RuntimeError. Open a throwaway
-            # client instead (same pattern as the post-run cleanup below).
-            try:
-                import redis.asyncio as aioredis
-
-                r = aioredis.from_url(get_settings().redis_url, decode_responses=True)
-                await r.delete(f"scanr:ai:cancel:{run_id}")
-                await r.aclose()
-            except Exception:  # noqa: BLE001 - best-effort
-                pass
+            if claimed.rowcount != 1:
+                run = await db.get(AiAgentRun, run_id)
+                return {"run_id": run_id, "status": run.status if run else "not_found"}
+            run = await db.get(AiAgentRun, run_id)
 
             scan = await db.get(Scan, run.scan_id)
             slog = ScanLogger(run.scan_id)
@@ -147,14 +148,8 @@ async def _run_agent_async(run_id: str, resume: bool = False) -> dict:
                     else max(settings.ai_rate_limit_tokens_per_min, 0)
                 )
                 budget = Budget(
-                    max_tokens=(
-                        run.max_tokens
-                        if run.max_tokens is not None
-                        else max(settings.ai_max_tokens * 20, 100_000)
-                    ),
-                    max_iterations=(
-                        run.max_iterations if run.max_iterations is not None else Budget.max_iterations
-                    ),
+                    max_tokens=run.max_tokens or 0,
+                    max_iterations=run.max_iterations or 0,
                     max_input_tokens_per_minute=rpm_cap,
                 )
                 ctx = DbAgentContext(
@@ -207,18 +202,41 @@ async def _run_agent_async(run_id: str, resume: bool = False) -> dict:
                     prev_iterations = len(prev_actions)
                     acc = list(prev_actions)
 
-                result, all_messages = await run_agent(
-                    provider,
-                    ctx,
-                    default_registry(policy),
-                    objective=run.objective,
-                    scan_summary=_scan_summary(scan),
-                    on_action=_on_action,
-                    on_step=_on_step,
-                    messages=all_messages if all_messages else None,
-                    usage=prev_usage,
-                    iterations=prev_iterations,
-                )
+                # Runs have no step or token ceiling, so a single tool call,
+                # provider request, or rate-limit pause can outlast the watchdog
+                # timeout. Beat independently of steps while this worker is alive.
+                # Uses its own session: the main one is shared with the callbacks.
+                async def _heartbeat() -> None:
+                    interval = max(min(settings.ai_agent_heartbeat_timeout // 4, 60), 5)
+                    while True:
+                        await asyncio.sleep(interval)
+                        try:
+                            async with SessionLocal() as hb_db:
+                                await hb_db.execute(
+                                    update(AiAgentRun)
+                                    .where(AiAgentRun.id == run_id, AiAgentRun.status == "running")
+                                    .values(last_heartbeat=datetime.now(tz=timezone.utc))
+                                )
+                                await hb_db.commit()
+                        except Exception:  # noqa: BLE001 - best-effort; retry next beat
+                            logger.warning("agent run %s heartbeat failed", run_id, exc_info=True)
+
+                heartbeat = asyncio.create_task(_heartbeat())
+                try:
+                    result, all_messages = await run_agent(
+                        provider,
+                        ctx,
+                        default_registry(policy),
+                        objective=run.objective,
+                        scan_summary=_scan_summary(scan),
+                        on_action=_on_action,
+                        on_step=_on_step,
+                        messages=all_messages if all_messages else None,
+                        usage=prev_usage,
+                        iterations=prev_iterations,
+                    )
+                finally:
+                    heartbeat.cancel()
 
                 # Serialize the full conversation so future resumes see all history.
                 run.conversation = json.dumps(_serialize_conversation(all_messages))
@@ -230,9 +248,7 @@ async def _run_agent_async(run_id: str, resume: bool = False) -> dict:
                 run.model = provider.model
                 run.stop_reason = result.stop_reason
                 run.final_text = result.final_text
-                run.actions = json.dumps(
-                    [{"tool": a.tool, "arguments": a.arguments, "result": a.result[:4000]} for a in result.actions]
-                )
+                run.actions = json.dumps(acc)
                 run.token_usage = json.dumps(
                     {
                         "input_tokens": result.usage.input_tokens,

@@ -101,6 +101,14 @@ export default function ScanDetail({ scanId, onBack }: Props) {
 		},
 	});
 
+	const stopAiMut = useMutation({
+		mutationFn: () => scansApi.stopAi(scanId),
+		onSuccess: () => {
+			refetch();
+			qc.invalidateQueries({ queryKey: ["ai-agent-runs", scanId] });
+		},
+	});
+
 	const pauseMut = useMutation({
 		mutationFn: () => api.post(`/scans/${scanId}/pause`),
 		onSuccess: () => refetch(),
@@ -181,6 +189,7 @@ export default function ScanDetail({ scanId, onBack }: Props) {
 					<button className="scan-detail-back" onClick={onBack}><ChevronLeft size={14} /> All scans</button>
 					<span className="scan-detail-id">SCAN / {scanId.slice(0, 8)}</span>
 					<div className="scan-detail-actions">
+						{scan?.ai_agent_enabled && <button className="btn btn-danger btn-sm" onClick={() => stopAiMut.mutate()} disabled={stopAiMut.isPending} title="Stop this scan's AI agent or cancel its pending start. The scan continues."><StopCircle size={12} /> {stopAiMut.isPending ? "Stopping AI…" : "Stop AI"}</button>}
 						{scan?.status === "paused" && <button className="btn btn-primary btn-sm" onClick={() => resumeMut.mutate()} disabled={resumeMut.isPending}>{resumeMut.isPending ? "Resuming…" : "Resume scan"}</button>}
 						{scan?.status === "running" && <button className="btn btn-sm" onClick={() => pauseMut.mutate()} disabled={pauseMut.isPending}>{pauseMut.isPending ? "Pausing…" : "Pause scan"}</button>}
 						{isActive && <button className="btn btn-danger btn-sm" onClick={() => cancelMut.mutate()} disabled={cancelMut.isPending}><StopCircle size={12} /> {cancelMut.isPending ? "Cancelling…" : "Cancel"}</button>}
@@ -204,6 +213,7 @@ export default function ScanDetail({ scanId, onBack }: Props) {
 				</div>
 				{scan?.status === "running" && <div className="scan-detail-progress"><span>SCAN IN PROGRESS</span><Meter value={scan?.progress ?? 0.5} color="var(--accent)" /><span>{Math.round((scan?.progress ?? 0.5) * 100)}%</span></div>}
 				{scan?.status === "failed" && scan?.error_message && <div className="scan-detail-error">{scan.error_message}</div>}
+				{stopAiMut.isError && <div className="scan-detail-error" role="alert">Could not stop AI. Try again.</div>}
 			</header>
 
 			<nav className="scan-detail-tabs" aria-label="Scan sections">
@@ -330,7 +340,7 @@ export default function ScanDetail({ scanId, onBack }: Props) {
 				{tab === "screenshots" && <ScreenshotGallery scanId={scanId} />}
 				{tab === "exclusions" && <ExclusionsPanel scanId={scanId} />}
 				{tab === "chains" && <ChainsPanel chains={chains} />}
-				{tab === "ai" && <AiTab scanId={scanId} findings={findings} />}
+				{tab === "ai" && <AiTab scanId={scanId} findings={findings} autoScheduled={Boolean(scan?.ai_agent_enabled && isActive)} />}
 
 				{/* Topology host modal */}
 				{topoSelectedHost && (
@@ -346,7 +356,8 @@ export default function ScanDetail({ scanId, onBack }: Props) {
 	);
 }
 
-function AiTab({ scanId, findings }: { scanId: string; findings: Finding[] }) {
+function AiTab({ scanId, findings, autoScheduled }: { scanId: string; findings: Finding[]; autoScheduled: boolean }) {
+	const [view, setView] = useState<"agent" | "analysis">("agent");
 	const { data: status } = useQuery({
 		queryKey: ["ai-status"],
 		queryFn: () => api.get("/ai/status").then((r) => r.data),
@@ -355,33 +366,16 @@ function AiTab({ scanId, findings }: { scanId: string; findings: Finding[] }) {
 	const enabled = status?.enabled ?? false;
 
 	return (
-		<div
-			className="page-pad scan-ai-layout"
-			style={{ display: "flex", gap: 14, height: "100%", minHeight: 0 }}
-		>
-			{/* Left: Agent Chat */}
-			<div
-				style={{
-					flex: 1.5,
-					minWidth: 0,
-					display: "flex",
-					flexDirection: "column",
-				}}
-			>
-				<AgentPanel scanId={scanId} enabled={enabled} />
+		<div className="scan-ai-layout">
+			<div className="scan-ai-head">
+				<div><span>SCAN INTELLIGENCE</span><h2>AI analysis</h2></div>
+				<div className="scan-ai-view-switch" role="group" aria-label="AI analysis view">
+					<button type="button" className={view === "agent" ? "active" : ""} onClick={() => setView("agent")} aria-pressed={view === "agent"}>Agent workspace</button>
+					<button type="button" className={view === "analysis" ? "active" : ""} onClick={() => setView("analysis")} aria-pressed={view === "analysis"}>Quick analysis</button>
+				</div>
 			</div>
-
-			{/* Right: Analysis */}
-			<div
-				style={{
-					flex: 1,
-					minWidth: 300,
-					display: "flex",
-					flexDirection: "column",
-					overflow: "auto",
-				}}
-			>
-				<AssistPanel scanId={scanId} findings={findings} enabled={enabled} />
+			<div className="scan-ai-content">
+				{view === "agent" ? <AgentPanel scanId={scanId} enabled={enabled} autoScheduled={autoScheduled} /> : <div className="scan-ai-quick"><AssistPanel scanId={scanId} findings={findings} enabled={enabled} /></div>}
 			</div>
 		</div>
 	);
