@@ -81,6 +81,31 @@ export interface AttackPathGraph {
   }
 }
 
+export function parseAttackPathGraph(value: unknown): AttackPathGraph {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('Attack Paths received an invalid API response. Check that the backend is up to date.')
+  }
+
+  const graph = value as Partial<AttackPathGraph>
+  if (
+    !Array.isArray(graph.nodes) ||
+    !Array.isArray(graph.edges) ||
+    !Array.isArray(graph.paths) ||
+    !Array.isArray(graph.chokepoints) ||
+    !graph.paths.every(path => Array.isArray(path.nodes) && Array.isArray(path.steps)) ||
+    !graph.summary ||
+    typeof graph.summary.path_count !== 'number' ||
+    typeof graph.summary.host_count !== 'number' ||
+    typeof graph.summary.confirmed_path_count !== 'number' ||
+    !graph.totals ||
+    typeof graph.totals.edges !== 'number'
+  ) {
+    throw new Error('Attack Paths received an incomplete API response. Check that the backend is up to date.')
+  }
+
+  return graph as AttackPathGraph
+}
+
 export const attackPathsApi = {
   get: (scanId: string, opts?: { includeInferred?: boolean; maxPaths?: number }) =>
     api
@@ -92,5 +117,5 @@ export const attackPathsApi = {
           max_paths: opts?.maxPaths ?? 25,
         },
       })
-      .then(r => r.data),
+      .then(r => parseAttackPathGraph(r.data)),
 }
