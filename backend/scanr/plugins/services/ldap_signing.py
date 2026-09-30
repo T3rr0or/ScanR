@@ -1,13 +1,4 @@
-"""LDAP channel binding and LDAP signing enforcement check.
-
-On Windows domains, LDAP channel binding + signing is the #1 Active Directory
-hardening control against NTLM relay attacks. This plugin checks whether the
-domain controller enforces these settings.
-
-References:
-  - ADV190023 / CVE-2020-1472 mitigation guidance
-  - MS-ADTS §3.1.1.3.4.1.15 (LDAP Server Policy)
-"""
+"""Conservative, unauthenticated LDAP signing probe."""
 from __future__ import annotations
 
 import asyncio
@@ -25,16 +16,11 @@ logger = logging.getLogger(__name__)
 
 LDAP_PORTS = [389, 636, 3268, 3269]
 
-# LDAP extended operation OID for getting server policy
-LDAP_SERVER_POLICY_OID = "1.2.840.113556.1.4.2254"  # LdapPolicyOperation
-
-
 class LdapSigningPlugin(PluginBase):
     id = "services.ldap_signing"
-    name = "LDAP Signing / Channel Binding Check"
+    name = "LDAP Signing Enforcement Check"
     description = (
-        "Check if domain controllers enforce LDAP signing and channel binding "
-        "— the primary defense against NTLM relay attacks"
+        "Check whether domain controllers reject unsigned LDAP binds"
     )
     category = PluginCategory.services
     severity = Severity.high
@@ -43,7 +29,8 @@ class LdapSigningPlugin(PluginBase):
     async def check(self, context: "ScanContext", host: "Host") -> list[FindingData]:
         findings: list[FindingData] = []
         for port in host.ports:
-            if port.number not in (LDAP_PORTS if self.ports is None else self.ports):
+            # Raw LDAP BER must not be sent to TLS listeners.
+            if port.number not in (389, 3268) or port.state != "open":
                 continue
             result = await self._check_ldap(host.ip, port.number)
             if result:
@@ -54,11 +41,10 @@ class LdapSigningPlugin(PluginBase):
         """Probe LDAP server via raw TCP to detect signing requirements."""
 
         try:
-            # Build a minimal LDAP search request (no bind — anonymous probe)
-            # This is a simplified check: we connect and test whether an
-            # unsigned simple bind is rejected.
+            # Anonymous binds cannot establish that authenticated binds are
+            # allowed without signing. Only explicit strongerAuthRequired is
+            # treated as conclusive; other results remain unknown.
             signing_required = await self._test_simple_bind(ip, port)
-            channel_binding = await self._test_channel_binding(ip, port)
 
             if signing_required is None:
                 return None  # couldn't connect
@@ -75,36 +61,25 @@ class LdapSigningPlugin(PluginBase):
             else:
                 issues.append("LDAP signing is enforced.")
 
-            if channel_binding is False:
-                issues.append(
-                    "LDAP channel binding is NOT enforced. EPA/TLS channel "
-                    "binding would add an additional layer of relay protection."
-                )
-                if severity != Severity.high:
-                    severity = Severity.medium
-
             if severity == Severity.low:
                 return None  # all good
 
             return FindingData(
                 plugin_id=self.id,
                 severity=severity,
-                title="LDAP Signing / Channel Binding Weakness",
+                title="LDAP Signing Not Required",
                 description="\n".join(issues),
                 evidence=(
                     f"Host: {ip}:{port}\n"
                     f"LDAP signing required: {signing_required}\n"
-                    f"Channel binding enforced: {channel_binding}\n"
+                    "Channel binding policy: not assessed\n"
                 ),
                 remediation=(
                     "Configure Domain Controller: LDAP Server Signing Requirements "
-                    "to 'Require signing' via GPO. Enable LDAP channel binding "
-                    "(set LdapEnforceChannelBinding to 2).\n"
+                    "to 'Require signing' via GPO.\n"
                     "GPO path: Computer Configuration > Policies > Windows Settings > "
                     "Security Settings > Local Policies > Security Options > "
-                    "\"Domain controller: LDAP server signing requirements\"\n"
-                    "Registry: HKLM\\SYSTEM\\CurrentControlSet\\Services\\NTDS\\Parameters\\"
-                    "LdapEnforceChannelBinding = 2"
+                    "\"Domain controller: LDAP server signing requirements\"."
                 ),
                 references=[
                     "https://support.microsoft.com/en-us/topic/use-the-ldapenforcechannelbinding-registry-entry-to-make-ldap-authentication-over-ssl-tls-more-secure-e9ee2e0a-7c3d-4bed-9c7c-86e1c1d3c60",
@@ -121,7 +96,9 @@ class LdapSigningPlugin(PluginBase):
     async def _test_simple_bind(self, ip: str, port: int) -> bool | None:
         """Attempt unsigned simple bind. Returns True if signing is required (bind rejected)."""
         try:
-            reader, writer = await asyncio.open_connection(ip, port)
+            reader, writer = await asyncio.wait_for(
+                asyncio.open_connection(ip, port), timeout=5.0
+            )
             try:
                 # LDAP simple bind with null DN (anonymous fails if signing required)
                 # MS AD returns resultCode=8 (strongerAuthRequired) when signing enforced
@@ -149,36 +126,10 @@ class LdapSigningPlugin(PluginBase):
                 # resultCode == 49 means invalidCredentials (signing likely not required)
                 if result_code == 8:
                     return True  # signing required
-                return False  # anonymous bind succeeded or invalid creds → no signing
-            finally:
-                writer.close()
-                await writer.wait_closed()
-        except Exception:
-            return None
-
-    async def _test_channel_binding(self, ip: str, port: int) -> bool | None:
-        """Check if channel binding is enforced.
-        
-        We can't fully test this without a valid TLS session + token,
-        but we check if LDAPS (636) or StartTLS is available and test
-        the server's policy response via rootDSE attributes.
-        """
-        try:
-            reader, writer = await asyncio.open_connection(ip, port)
-            try:
-                # Query rootDSE for supported capabilities
-                search_request = self._build_rootdse_search(msg_id=1)
-                writer.write(search_request)
-                await writer.drain()
-
-                response = await asyncio.wait_for(reader.read(8192), timeout=5.0)
-
-                # Check for supportedCapabilities in the response
-                # Channel binding support indicated by OID 1.3.6.1.4.1.311.25
-                resp_str = response.decode("latin-1", errors="replace")
-                if "1.3.6.1.4.1.311.25" in resp_str:
-                    return True  # channel binding capability present
-                # Can't definitively determine → report as unknown
+                # Anonymous success does not prove that an authenticated
+                # simple/SASL bind can proceed without signing. The probe has
+                # no valid credentials, so only strongerAuthRequired is a
+                # conclusive result; every other response remains unknown.
                 return None
             finally:
                 writer.close()
@@ -206,35 +157,6 @@ class LdapSigningPlugin(PluginBase):
             b"\x30" + LdapSigningPlugin._encode_length(full_len - 2)
             + b"\x02\x01" + struct.pack("B", msg_id)
             + bind_pdu
-        )
-        return msg
-
-    @staticmethod
-    def _build_rootdse_search(msg_id: int) -> bytes:
-        """Build LDAP search for rootDSE attributes."""
-        import struct
-
-        # SearchRequest baseObject scope, null base DN, present filter
-        base = b""
-        search_body = (
-            base + b"\x00"  # base DN (null → rootDSE)
-            + b"\x0a\x01\x00"  # scope = baseObject
-            + b"\x0a\x01\x00"  # derefAliases = neverDerefAliases
-            + b"\x02\x01\x00"  # sizeLimit = 0
-            + b"\x02\x01\x00"  # timeLimit = 0
-            + b"\x01\x01\x00"  # typesOnly = False
-            + b"\x87\x0bobjectClass"  # filter: (objectClass=*)
-        )
-        # Attributes: supportedLDAPVersion, supportedCapabilities
-        attrs = b"\x04\x14supportedLDAPVersion\x04\x15supportedCapabilities"
-        attr_seq = b"\x30" + LdapSigningPlugin._encode_length(len(attrs)) + attrs
-        search_body += attr_seq
-        search_pdu = b"\x63" + LdapSigningPlugin._encode_length(len(search_body)) + search_body
-        full_len = len(search_pdu) + 4
-        msg = (
-            b"\x30" + LdapSigningPlugin._encode_length(full_len - 2)
-            + b"\x02\x01" + struct.pack("B", msg_id)
-            + search_pdu
         )
         return msg
 

@@ -93,3 +93,15 @@ async def test_unreachable_host_produces_nothing_not_an_exception(monkeypatch):
     _install(monkeypatch, {})
     findings = await cm.CronMisconfigPlugin().check(_Ctx(_CRED), _host())
     assert findings == []
+
+
+def test_non_root_spools_and_submission_policy_files_are_not_root_jobs():
+    raw = "\n".join([
+        "-rw-rw-rw- 1 0 0 10 Jan 6 2022 /etc/cron.allow",
+        "-rw-rw-rw- 1 0 0 10 Jan 6 2022 /etc/cron.deny",
+        "-rw-rw-rw- 1 1000 1000 10 Jan 6 2022 /var/spool/cron/alice",
+    ])
+    assert cm.CronMisconfigPlugin._writable_config(raw) == []
+    assert "/etc/cron.allow" not in cm._PERM_CMD
+    assert "/etc/cron.deny" not in cm._PERM_CMD
+    assert "/var/spool/cron" not in cm._PERM_CMD

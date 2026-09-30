@@ -107,7 +107,7 @@ class SubdomainEnumPlugin(PluginBase):
             ))
 
             # Check each discovered subdomain for takeover potential
-            takeovers = await self._check_takeovers([sub for sub, _ in found])
+            takeovers = await self._check_takeovers(context, [sub for sub, _ in found])
             findings.extend(takeovers)
 
         return findings
@@ -132,14 +132,14 @@ class SubdomainEnumPlugin(PluginBase):
         return [r for r in raw if r is not None]
 
 
-    async def _check_takeovers(self, subdomains: list[str]) -> list[FindingData]:
+    async def _check_takeovers(self, context: "ScanContext", subdomains: list[str]) -> list[FindingData]:
         """Follow CNAME chains and check for dangling cloud service pointers."""
         import httpx
         findings = []
         sem = asyncio.Semaphore(10)
         loop = asyncio.get_running_loop()
 
-        async def check_one(self, context, fqdn: str) -> FindingData | None:
+        async def check_one(fqdn: str) -> FindingData | None:
             async with sem:
                 try:
                     # Resolve CNAME chain

@@ -55,8 +55,8 @@ class GmsaReadablePlugin(PluginBase):
         bind_user = f"{domain}\\{username}" if "\\" not in username else username
 
         try:
-            server = ldap3.Server(ip, port=389, get_info=ldap3.ALL, connect_timeout=10)
-            conn = ldap3.Connection(server, user=bind_user, password=password, auto_bind=True, receive_timeout=15)
+            from scanr.plugins.services._ldap_secure import secure_ldap_connection
+            conn = secure_ldap_connection(ldap3, ip, 389, bind_user, password)
 
             # Find gMSA accounts
             conn.search(

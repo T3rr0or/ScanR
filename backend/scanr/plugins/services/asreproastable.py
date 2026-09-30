@@ -49,9 +49,9 @@ class AsreproastablePlugin(PluginBase):
             return []
 
         try:
-            server = ldap3.Server(dc_ip, port=389, get_info=ldap3.ALL, connect_timeout=10)
             bind_user = f"{domain}\\{username}" if "\\" not in username else username
-            conn = ldap3.Connection(server, user=bind_user, password=password, auto_bind=True, receive_timeout=15)
+            from scanr.plugins.services._ldap_secure import secure_ldap_connection
+            conn = secure_ldap_connection(ldap3, dc_ip, 389, bind_user, password)
 
             base_dn = ",".join(f"DC={p}" for p in domain.replace("\\", "").split(".") if p)
             # UAC flag 0x400000 = DONT_REQUIRE_PREAUTH

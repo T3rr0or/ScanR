@@ -18,19 +18,16 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# OpenSSH versions with known high/critical CVEs (version_tuple: [cve_list, severity, description])
-_VULNERABLE_OPENSSH: list[tuple[tuple[int, int], list[str], Severity, str]] = [
-    # Format: (max_vulnerable_version, cves, severity, short_desc)
-    ((9, 7), ["CVE-2024-6387"], Severity.critical,
+# OpenSSH server versions with known CVEs. The lower bound matters: CVE-2024-6387
+# was reintroduced in 8.5 and does not affect older OpenSSH releases.
+_VULNERABLE_OPENSSH: list[tuple[tuple[int, int], tuple[int, int], list[str], Severity, str]] = [
+    # Format: (min_vulnerable_version, max_vulnerable_version, cves, severity, description)
+    ((8, 5), (9, 7), ["CVE-2024-6387"], Severity.critical,
      "regreSSHion: unauthenticated remote code execution via signal handler race condition"),
-    ((8, 5), ["CVE-2021-41617"], Severity.high,
+    ((6, 2), (8, 7), ["CVE-2021-41617"], Severity.high,
      "Privilege escalation via AuthorizedKeysCommand/AuthorizedPrincipalsCommand"),
-    ((7, 7), ["CVE-2018-15473"], Severity.medium,
+    ((0, 0), (7, 7), ["CVE-2018-15473"], Severity.medium,
      "Username enumeration via timing difference in authentication"),
-    ((7, 2), ["CVE-2016-0777", "CVE-2016-0778"], Severity.high,
-     "Roaming feature memory leak exposing private key material"),
-    ((6, 8), ["CVE-2015-5600"], Severity.high,
-     "MaxAuthTries bypass via keyboard-interactive authentication"),
 ]
 
 
@@ -101,15 +98,15 @@ class SshVersionPlugin(PluginBase):
             },
         }
 
-        for (max_maj, max_min), cves, sev, desc in _VULNERABLE_OPENSSH:
-            if (major, minor) <= (max_maj, max_min):
+        for (min_maj, min_min), (max_maj, max_min), cves, sev, desc in _VULNERABLE_OPENSSH:
+            if (min_maj, min_min) <= (major, minor) <= (max_maj, max_min):
                 # Check if distribution has backported the fix
                 if distro and distro in _DISTRO_PATCHED:
                     patches = _DISTRO_PATCHED[distro]
-                    if (max_maj, max_min) in patches and distro_release in patches[(max_maj, max_min)]:
+                    if (major, minor) in patches and distro_release in patches[(major, minor)]:
                         logger.debug("SSH %s on %s %s is patched — skipping", version, distro, distro_release)
                         return None
-                    elif (max_maj, max_min) in patches:
+                    elif (major, minor) in patches:
                         # Distro has patches for this CVE but this specific release is unknown
                         sev = Severity.medium
                         desc = f"{desc} (distribution patch status unknown for {distro} {distro_release})"

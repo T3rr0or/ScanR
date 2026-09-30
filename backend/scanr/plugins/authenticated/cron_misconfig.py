@@ -36,12 +36,12 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Directories cron reads jobs from. /var/spool/cron holds per-user crontabs
-# directly on RHEL and under a crontabs/ subdirectory on Debian, so both depths
-# are covered by -maxdepth 2.
+# These system-wide paths can install or modify jobs that run as root. The
+# per-user spool and cron.allow/deny files are omitted: writable per-user
+# crontabs run as their owner, while allow/deny only controls submission.
 _CRON_PATHS = (
     "/etc/crontab /etc/cron.d /etc/cron.hourly /etc/cron.daily /etc/cron.weekly "
-    "/etc/cron.monthly /etc/cron.allow /etc/cron.deny /var/spool/cron"
+    "/etc/cron.monthly"
 )
 
 _PERM_CMD = (
@@ -226,6 +226,10 @@ class CronMisconfigPlugin(PluginBase):
             if parsed is None:
                 continue
             mode, uid, gid, path = parsed
+            if path in ("/etc/cron.allow", "/etc/cron.deny"):
+                continue
+            if path == "/var/spool/cron" or path.startswith("/var/spool/cron/"):
+                continue
             kind = "directory" if mode[0] == "d" else "file"
             entries.append(f"{path} ({mode}, {kind}, owner uid {uid}, gid {gid})")
         return entries

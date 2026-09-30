@@ -20,6 +20,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 HTTP_PORTS = [80, 443, 8080, 8443, 8000, 3000, 5000]
+_HEAPDUMP_PROBE_LIMIT = 64 * 1024
 
 
 class Spring4ShellCheckPlugin(PluginBase):
@@ -187,23 +188,34 @@ class Spring4ShellCheckPlugin(PluginBase):
         except Exception:
             pass
 
-        # /actuator/heapdump — CRITICAL: heap dump contains full JVM memory including secrets
+        # /actuator/heapdump — read only a bounded prefix: actual heap dumps can
+        # be hundreds of megabytes, and downloading one would needlessly consume
+        # scanner memory and bandwidth.
         try:
-            resp = await client.get(f"{base_url}/actuator/heapdump", timeout=5.0)
-            content_type = resp.headers.get("content-type", "").lower()
-            body_start = resp.content[:32].lstrip()
-            looks_like_heapdump = (
-                not resp.history
-                and resp.status_code == 200
-                and len(resp.content) > 1000
-                and not body_start.startswith((b"<!doctype html", b"<html"))
-                and (
-                    resp.content.startswith(b"JAVA PROFILE")
-                    or "application/octet-stream" in content_type
-                    or "application/x-hprof" in content_type
-                    or "application/vnd.spring-boot.actuator" in content_type
+            async with client.stream("GET", f"{base_url}/actuator/heapdump", timeout=5.0) as resp:
+                content_type = resp.headers.get("content-type", "").lower()
+                prefix = bytearray()
+                async for chunk in resp.aiter_bytes(chunk_size=8192):
+                    remaining = _HEAPDUMP_PROBE_LIMIT - len(prefix)
+                    prefix.extend(chunk[:remaining])
+                    if len(prefix) >= _HEAPDUMP_PROBE_LIMIT or len(prefix) > 1000:
+                        # >1KB is enough to reject a tiny error page. Stop as soon
+                        # as we have a useful signature or a bounded prefix.
+                        break
+                body_start = bytes(prefix[:32]).lstrip().lower()
+                looks_like_heapdump = (
+                    not resp.history
+                    and resp.status_code == 200
+                    and len(prefix) > 1000
+                    and not body_start.startswith((b"<!doctype html", b"<html"))
+                    and (
+                        bytes(prefix).startswith(b"JAVA PROFILE")
+                        or "application/octet-stream" in content_type
+                        or "application/x-hprof" in content_type
+                        or "application/vnd.spring-boot.actuator" in content_type
+                    )
                 )
-            )
+                response_size = resp.headers.get("content-length") or f">={len(prefix)} (probe capped)"
             if looks_like_heapdump:
                 findings.append(FindingData(
                     plugin_id=self.id,
@@ -216,7 +228,7 @@ class Spring4ShellCheckPlugin(PluginBase):
                     ),
                     evidence=(
                         f"GET /actuator/heapdump → {resp.status_code} "
-                        f"({len(resp.content) // 1024}KB response)"
+                        f"(Content-Length: {response_size}; read at most {_HEAPDUMP_PROBE_LIMIT} bytes)"
                     ),
                     remediation=(
                         "Disable heapdump endpoint immediately: management.endpoints.web.exposure.include=health. "

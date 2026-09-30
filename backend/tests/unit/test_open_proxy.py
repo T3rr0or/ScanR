@@ -5,7 +5,8 @@ relay our canary request (502/503/504, or a body describing a resolution
 failure) is reported, while a proxy that *refused* the request outright
 (403/407/400/401/405 — rejected before it ever looked at the URL) must never
 be reported, or every access-controlled proxy on the internet would fire.
-Also pins the SOCKS5 no-auth greeting check.
+Also ensures generic gateway errors do not get mistaken for forward-proxy
+relay attempts and pins the SOCKS5 no-auth greeting check.
 """
 from types import SimpleNamespace
 
@@ -90,7 +91,7 @@ def _patch_probes(monkeypatch, http_result=None, http_exc=None, socks_result=Non
 
 @pytest.mark.asyncio
 async def test_http_proxy_that_attempted_the_relay_is_reported(monkeypatch):
-    """502 after our unresolvable canary host proves the proxy tried to fetch it."""
+    """An explicit DNS failure for our canary shows the proxy tried to relay."""
     _patch_probes(monkeypatch, http_result=_http(502, "Bad Gateway", "Unable to resolve host"))
     host = _host([_port(3128)])
 
@@ -183,7 +184,7 @@ async def test_http_finding_takes_priority_over_socks_probe(monkeypatch):
     (even garbage) must not change or duplicate the outcome."""
     _patch_probes(
         monkeypatch,
-        http_result=_http(504, "Gateway Timeout"),
+        http_result=_http(504, "Gateway Timeout", "DNS lookup failed for canary"),
         socks_result=b"garbage-not-socks",
     )
     host = _host([_port(3128)])
@@ -191,6 +192,17 @@ async def test_http_finding_takes_priority_over_socks_probe(monkeypatch):
     findings = await OpenProxyPlugin().check(None, host)
     assert len(findings) == 1
     assert findings[0].title == "Open HTTP Forward Proxy"
+
+
+@pytest.mark.parametrize("status", [502, 503, 504])
+@pytest.mark.asyncio
+async def test_generic_gateway_error_is_not_proof_of_forward_proxy(monkeypatch, status):
+    _patch_probes(
+        monkeypatch,
+        http_result=_http(status, "Gateway Error", "upstream application unavailable"),
+        socks_result=None,
+    )
+    assert await OpenProxyPlugin().check(None, _host([_port(8080)])) == []
 
 
 @pytest.mark.asyncio

@@ -11,6 +11,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
+import shlex
+import socket
 from typing import TYPE_CHECKING
 
 from scanr.core.plugin_base import FindingData, PluginBase, PluginCategory, Severity
@@ -32,12 +35,6 @@ class SshAuditPlugin(PluginBase):
     ports = [22, 2222]
 
     CHECKS = [
-        ("grep -i '^PermitRootLogin yes' /etc/ssh/sshd_config 2>/dev/null", "PermitRootLogin yes", Severity.high,
-         "SSH Root Login Permitted", "sshd_config allows direct root login.",
-         "Set PermitRootLogin no in /etc/ssh/sshd_config and restart sshd."),
-        ("grep -i '^PasswordAuthentication yes' /etc/ssh/sshd_config 2>/dev/null", "PasswordAuthentication yes", Severity.medium,
-         "SSH Password Authentication Enabled", "Password auth enabled — brute-force risk.",
-         "Use key-based auth only: set PasswordAuthentication no in sshd_config."),
         ("sudo -l 2>/dev/null | grep NOPASSWD", "NOPASSWD", Severity.high,
          "Sudo NOPASSWD Entries Found", "User can run commands without password via sudo.",
          "Remove NOPASSWD sudo entries or restrict to specific commands."),
@@ -60,6 +57,21 @@ class SshAuditPlugin(PluginBase):
         for port in host.ports:
             if port.number not in (22, 2222) or port.state != "open":
                 continue
+            config_cmd = self._effective_config_command(host.ip, port.number, cred)
+            config = await self._run_command(host.ip, port.number, cred, config_cmd)
+            effective = self._parse_sshd_t(config or "")
+            if effective.get("permitrootlogin") == "yes":
+                findings.append(self._config_finding(
+                    port.number, Severity.high, "SSH Root Login Permitted",
+                    "The effective sshd configuration permits direct root login.",
+                    "Set PermitRootLogin no in sshd_config or an included file and restart sshd.",
+                ))
+            if effective.get("passwordauthentication") == "yes":
+                findings.append(self._config_finding(
+                    port.number, Severity.medium, "SSH Password Authentication Enabled",
+                    "The effective sshd configuration permits password authentication.",
+                    "Use key-based authentication and set PasswordAuthentication no in sshd_config or an included file.",
+                ))
             for cmd, indicator, sev, title, desc, remediation in self.CHECKS:
                 output = await self._run_command(host.ip, port.number, cred, cmd)
                 if output and indicator in output:
@@ -74,6 +86,50 @@ class SshAuditPlugin(PluginBase):
                         protocol="tcp",
                     ))
         return findings
+
+    @staticmethod
+    def _effective_config_command(ip: str, port: int, cred: dict) -> str:
+        """Ask sshd to resolve includes and the Match context for this session."""
+        source_ip = "127.0.0.1"
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as route:
+                route.connect((ip, port))
+                source_ip = route.getsockname()[0]
+        except OSError:
+            pass
+        username = str(cred.get("username", "root"))
+        # sshd parses commas inside -C as field separators. Shell quoting does
+        # not protect that grammar, so skip Match evaluation for unusual names.
+        if not re.fullmatch(r"[A-Za-z0-9._@\\-]+", username):
+            return "sshd -T 2>/dev/null"
+        # The target-side host criterion is approximated by the source address;
+        # Match User/Address/LocalAddress/LocalPort are evaluated explicitly.
+        context = (
+            f"user={username},host={source_ip},addr={source_ip},"
+            f"laddr={ip},lport={port}"
+        )
+        return f"sshd -T -C {shlex.quote(context)} 2>/dev/null"
+
+    @staticmethod
+    def _parse_sshd_t(output: str) -> dict[str, str]:
+        values = {}
+        for line in output.lower().splitlines():
+            fields = line.split(None, 1)
+            if len(fields) == 2:
+                values[fields[0]] = fields[1]
+        return values
+
+    def _config_finding(self, port, severity, title, description, remediation):
+        return FindingData(
+            plugin_id=self.id,
+            severity=severity,
+            title=title,
+            description=description,
+            evidence=f"Effective sshd setting reported by sshd -T -C on port {port}.",
+            remediation=remediation,
+            port_number=port,
+            protocol="tcp",
+        )
 
     async def _run_command(self, ip: str, port: int, cred: dict, cmd: str) -> str | None:
         loop = asyncio.get_running_loop()
