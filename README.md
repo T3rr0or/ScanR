@@ -135,7 +135,7 @@ permissions:
 
 steps:
   # Pin a release tag or, for maximum supply-chain stability, a full commit SHA.
-  - uses: T3rr0or/ScanR/.github/actions/scanr-scan@v0.22.0
+  - uses: T3rr0or/ScanR/.github/actions/scanr-scan@v0.23.0
     with:
       url: ${{ secrets.SCANR_URL }}
       token: ${{ secrets.SCANR_API_KEY }}
