@@ -96,6 +96,12 @@ class ScanContext:
     hosts_discovered: int = 0
     hosts_scanned: int = 0
     findings_count: int = 0
+    # Live host IP -> why every port-scan attempt on it errored. Distinguishes
+    # "nmap could not run" from "host answered with no open ports".
+    port_scan_errors: dict[str, str] = field(default_factory=dict)
+    # Ports the loaded plugins target, set by the engine. Top-N scans add them
+    # so a plugin's service is scanned even when nmap-services does not rank it.
+    plugin_ports: list[int] = field(default_factory=list)
 
     # Live log emitter (initialised by engine)
     log: ScanLogger = field(default_factory=lambda: ScanLogger(""))
@@ -373,19 +379,31 @@ class ScanContext:
             custom = None
         if custom:
             if custom == "top-1000":
-                return "--top-ports 1000"
+                return self._top_ports_spec(1000)
             if custom == "top-10000":
-                return "--top-ports 10000"
+                return self._top_ports_spec(10000)
             if custom == "all":
                 return "-p-"
             # Custom spec like "80,443" or "1-1024"
             return f"-p {custom}"
         match self.profile:
             case "quick":
-                return "--top-ports 1000"
+                return self._top_ports_spec(1000)
             case "standard":
-                return "--top-ports 10000"
+                return self._top_ports_spec(10000)
             case "full":
                 return "-p-"
             case _:
-                return "--top-ports 10000"
+                return self._top_ports_spec(10000)
+
+    def _top_ports_spec(self, n: int) -> str:
+        """``--top-ports n``, widened to an explicit list with the plugin ports."""
+        plugin_ports = getattr(self, "plugin_ports", None)
+        if not plugin_ports:
+            return f"--top-ports {n}"
+        from scanr.scanner.port_scanner.nmap_ports import compress_ports, top_tcp_ports
+
+        top = top_tcp_ports(n)
+        if not top:
+            return f"--top-ports {n}"
+        return f"-p {compress_ports([*top, *plugin_ports])}"

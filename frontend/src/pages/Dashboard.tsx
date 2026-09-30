@@ -81,13 +81,16 @@ function TimelineChart({ data }: { data: TimelinePoint[] }) {
   if (data.length === 0) return <div className="dashboard-chart-empty">Findings trend appears after scans complete.</div>
   const width = 640, height = 176, left = 30, right = 8, top = 12, bottom = 24
   const sevs = ['low', 'medium', 'high', 'critical'] as const
-  const max = Math.max(...data.flatMap(point => sevs.map(sev => point[sev] ?? 0)), 1) * 1.15
+  const peak = Math.max(...data.flatMap(point => sevs.map(sev => point[sev] ?? 0)), 0)
+  // Even integer headroom: the three axis labels (max, max/2, 0) stay distinct integers.
+  const headroom = Math.max(Math.ceil(peak * 1.15), 2)
+  const max = headroom + (headroom % 2)
   const x = (index: number) => data.length <= 1 ? left + (width - left - right) / 2 : left + index / (data.length - 1) * (width - left - right)
   const y = (value: number) => height - bottom - value / max * (height - top - bottom)
   const path = (sev: typeof sevs[number]) => data.map((point, index) => `${index ? 'L' : 'M'}${x(index).toFixed(1)},${y(point[sev] ?? 0).toFixed(1)}`).join(' ')
   return <svg className="dashboard-chart" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Findings over the last 30 days">
     {[0, .25, .5, .75, 1].map(tick => <line key={tick} x1={left} x2={width - right} y1={top + tick * (height - top - bottom)} y2={top + tick * (height - top - bottom)} stroke="var(--border)" />)}
-    {[0, .5, 1].map(tick => <text key={tick} x={left - 7} y={top + tick * (height - top - bottom) + 3} fontSize="10" fill="var(--text-2)" textAnchor="end">{Math.round(max - tick * max)}</text>)}
+    {[0, .5, 1].map(tick => <text key={tick} x={left - 7} y={top + tick * (height - top - bottom) + 3} fontSize="10" fill="var(--text-2)" textAnchor="end">{max - tick * max}</text>)}
     {sevs.map(sev => <path key={sev} d={path(sev)} fill="none" stroke={`var(--sev-${sev})`} strokeWidth="2" vectorEffect="non-scaling-stroke" />)}
     {[0, Math.floor((data.length - 1) / 2), data.length - 1].map((index, position) => <text key={position} x={x(index)} y={height - 3} fontSize="10" fill="var(--text-2)" textAnchor={position === 0 ? 'start' : position === 2 ? 'end' : 'middle'}>{position === 2 ? 'TODAY' : `-${data.length - 1 - index}D`}</text>)}
   </svg>

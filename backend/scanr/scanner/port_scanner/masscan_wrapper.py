@@ -10,17 +10,27 @@ Falls back gracefully if masscan is not installed.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import re
 import shutil
-import tempfile
 from typing import TYPE_CHECKING
+
+from scanr.scanner.port_scanner.nmap_ports import summarize_port_spec
 
 if TYPE_CHECKING:
     from scanr.core.context import ScanContext
 
 logger = logging.getLogger(__name__)
+
+# "rate: 10.00-kpps, 5.12% done, 0:12:30 remaining, found=47"
+_PROGRESS_RE = re.compile(
+    r"rate:\s*[\d.]+-kpps,\s*([\d.]+)%\s*done,\s*([\d:]+)\s*remaining,\s*found=(\d+)",
+    re.IGNORECASE,
+)
+# "rate: 0.00-kpps, 100.00% done, waiting -84-secs, found=2"
+_WAITING_RE = re.compile(r"done,\s*waiting\s+(-?\d+)-secs", re.IGNORECASE)
+# "Discovered open port 22/tcp on 10.0.0.5" (TCP only: nmap follows up on these)
+_DISCOVERED_RE = re.compile(r"Discovered open port (\d+)/tcp on (\S+)")
 
 
 class MasscanWrapper:
@@ -29,6 +39,14 @@ class MasscanWrapper:
     # Packets per second. 10 000 pps scans 65535 ports across 254 hosts in ~28 min.
     # Raise via profile_json: {"masscan_rate": 50000} for local LANs.
     DEFAULT_RATE = 10000
+
+    # Seconds masscan waits for late replies after sending its last probe.
+    WAIT_SECS = 3
+    # masscan 1.3.2 with libpcap 1.10 can finish that wait and then block
+    # forever in its receive thread, counting "waiting -N-secs" until a packet
+    # happens to arrive. Past this many seconds beyond its own deadline,
+    # results are complete and the process is stopped.
+    _HANG_GRACE_SECS = 5
 
     # When the profile requests all ports (-p-), masscan still only sweeps this
     # range for initial discovery. nmap then scans known-open ports per host, so
@@ -136,10 +154,6 @@ class MasscanWrapper:
             return {}
 
         effective_rate = rate or self._rate_from_profile(context)
-        open_ports: dict[str, list[int]] = {}
-
-        with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as tmp:
-            out_path = tmp.name
 
         excluded_ports = context.excluded_ports()
         port_args = self._without_excluded_ports(self._port_args(port_range), excluded_ports)
@@ -149,151 +163,131 @@ class MasscanWrapper:
                 phase="portscan",
             )
             return {}
+        # Results are read from stdout as masscan prints them, not from an
+        # output file: masscan buffers file output until a clean exit, and
+        # some masscan/libpcap builds never exit cleanly (see _HANG_GRACE_SECS).
         cmd = [
             "masscan",
             *targets,
             *port_args,
             "--rate", str(effective_rate),
-            "--output-format", "json",
-            "--output-filename", out_path,
-            "--wait", "3",
+            "--wait", str(self.WAIT_SECS),
         ]
 
         target_summary = targets[0] if len(targets) == 1 else f"{targets[0]} … ({len(targets)} hosts)"
         await context.log.info(
-            f"$ masscan {target_summary} {' '.join(port_args)} --rate {effective_rate} --output-format json --wait 3",
+            f"$ masscan {target_summary} {summarize_port_spec(' '.join(port_args))} "
+            f"--rate {effective_rate} --wait {self.WAIT_SECS}",
             phase="portscan",
         )
+        found: dict[str, set[int]] = {}
         proc = None
+        stalled = False
         try:
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
-                stdout=asyncio.subprocess.DEVNULL,
+                stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
 
-            # Regex to parse masscan progress lines:
-            # "rate: 10.00-kpps, 5.12% done, 0:12:30 remaining, found=47"
-            _progress_re = re.compile(
-                r"rate:\s*([\d.]+)-kpps,\s*([\d.]+)%\s*done,\s*([\d:]+)\s*remaining,\s*found=(\d+)",
-                re.IGNORECASE,
-            )
-            _last_pct_logged = [-5.0]  # emit at most every 5%
+            async def _read_stdout() -> None:
+                assert proc is not None and proc.stdout is not None
+                async for raw in proc.stdout:
+                    parsed = self.parse_discovery_line(raw.decode(errors="replace"))
+                    if parsed:
+                        ip, port = parsed
+                        found.setdefault(ip, set()).add(port)
 
-            async def _stream_stderr() -> bytes:
-                chunks: list[bytes] = []
-                assert proc is not None
-                assert proc.stderr is not None  # stderr=PIPE set at spawn
+            async def _read_stderr() -> None:
+                nonlocal stalled
+                assert proc is not None and proc.stderr is not None
+                last_pct_logged = -5.0
+                wait_logged = False
                 pending = ""
                 while True:
                     chunk = await proc.stderr.read(4096)
                     if not chunk:
                         break
-                    chunks.append(chunk)
                     pending += chunk.decode(errors="replace")
-
                     parts = re.split(r"[\r\n]+", pending)
                     pending = parts.pop() if parts else ""
                     for text in parts:
                         text = text.strip()
                         if not text:
                             continue
-
-                        m = _progress_re.search(text)
+                        m = _PROGRESS_RE.search(text)
                         if m:
-                            _rate_kpps, pct, remaining, found = (
-                                m.group(1),
-                                float(m.group(2)),
-                                m.group(3),
-                                m.group(4),
-                            )
+                            pct, remaining, count = float(m.group(1)), m.group(2), m.group(3)
                             # Emit progress every ~5% to give live feedback without spamming.
-                            if pct - _last_pct_logged[0] >= 5.0 or pct >= 99.0:
-                                _last_pct_logged[0] = pct
+                            if pct - last_pct_logged >= 5.0 or (pct >= 99.0 and last_pct_logged < 99.0):
+                                last_pct_logged = pct
                                 await context.log.info(
-                                    f"masscan: {pct:.1f}% done — {found} open port(s) found so far, {remaining} remaining",
+                                    f"masscan: {pct:.1f}% done — {count} open port(s) found so far, {remaining} remaining",
                                     phase="portscan",
                                 )
-                        elif "Scanning" in text and "hosts" in text:
+                            continue
+                        w = _WAITING_RE.search(text)
+                        if w:
+                            if not wait_logged:
+                                wait_logged = True
+                                await context.log.info(
+                                    f"masscan: sweep sent — waiting {self.WAIT_SECS}s for late replies",
+                                    phase="portscan",
+                                )
+                            if int(w.group(1)) <= -self._HANG_GRACE_SECS and not stalled:
+                                stalled = True
+                                await context.log.warn(
+                                    "masscan finished its sweep but did not exit — stopping it "
+                                    "(results already collected)",
+                                    phase="portscan",
+                                )
+                                proc.kill()
+                            continue
+                        if "Scanning" in text and "hosts" in text:
                             # "Scanning 254 hosts [65535 ports/host]"
                             await context.log.info(f"masscan: {text}", phase="portscan")
                         else:
                             await context.log.debug(f"masscan: {text}", phase="portscan")
-                return b"".join(chunks)
 
-            stderr_bytes, _ = await asyncio.wait_for(
-                asyncio.gather(_stream_stderr(), proc.wait()),
+            await asyncio.wait_for(
+                asyncio.gather(_read_stdout(), _read_stderr(), proc.wait()),
                 timeout=3600.0,
             )
-            stderr = stderr_bytes
-            if proc.returncode not in (0, None):
-                logger.warning("masscan exited %s: %s", proc.returncode, stderr.decode()[:200])
-
-            open_ports = self._parse_json(out_path)
+            if proc.returncode not in (0, None) and not stalled:
+                logger.warning("masscan exited %s", proc.returncode)
         except asyncio.TimeoutError:
             logger.warning("masscan timed out")
-            if proc:
-                try:
-                    proc.kill()
-                    # Reap the killed process so it doesn't linger as a zombie.
-                    await asyncio.wait_for(proc.wait(), timeout=5.0)
-                except Exception as exc:
-                    logger.warning("failed to reap masscan after timeout: %s", exc)
         except FileNotFoundError:
             logger.warning("masscan not found")
         except Exception as exc:
             logger.warning("masscan failed: %s", exc)
         finally:
-            import os
-            try:
-                os.unlink(out_path)
-            except OSError:
-                pass
+            if proc and proc.returncode is None:
+                try:
+                    proc.kill()
+                    # Reap the killed process so it doesn't linger as a zombie.
+                    await asyncio.wait_for(proc.wait(), timeout=5.0)
+                except Exception as exc:
+                    logger.warning("failed to reap masscan: %s", exc)
 
+        open_ports = {ip: sorted(ports) for ip, ports in found.items()}
         logger.info("masscan: %d hosts with open ports", len(open_ports))
         # Emit per-host port summary so console shows live results immediately
         for ip, ports in sorted(open_ports.items()):
             await context.log.info(
-                f"{ip} — {len(ports)} open port(s): {', '.join(str(p) for p in sorted(ports)[:20])}"
+                f"{ip} — {len(ports)} open port(s): {', '.join(str(p) for p in ports[:20])}"
                 + ("…" if len(ports) > 20 else ""),
                 phase="portscan",
             )
         return open_ports
 
-    def _parse_json(self, path: str) -> dict[str, list[int]]:
-        # Use sets to deduplicate — masscan reports the same port multiple times
-        # when a host has multiple interfaces or when retry packets get ACK'd twice.
-        result: dict[str, set[int]] = {}
-        try:
-            with open(path) as f:
-                content = f.read().strip()
-            if not content:
-                return {}
-            # masscan outputs JSONL (one object per line) or a JSON array with trailing comma
-            # Try array parse first, then fall back to JSONL
-            content = content.rstrip(",").strip()
-            if content.startswith("["):
-                records = json.loads(content)
-            else:
-                # JSONL: parse each non-empty line as a separate JSON object
-                records = []
-                for line in content.splitlines():
-                    line = line.strip().rstrip(",")
-                    if line:
-                        try:
-                            records.append(json.loads(line))
-                        except json.JSONDecodeError:
-                            continue
-            for rec in records:
-                ip = rec.get("ip")
-                for port_info in rec.get("ports", []):
-                    if port_info.get("status") == "open":
-                        port_num = port_info.get("port")
-                        if ip and port_num is not None:
-                            result.setdefault(ip, set()).add(int(port_num))
-        except Exception as exc:
-            logger.debug("masscan JSON parse error: %s", exc)
-        return {ip: sorted(ports) for ip, ports in result.items()}
+    @staticmethod
+    def parse_discovery_line(line: str) -> tuple[str, int] | None:
+        """Parse masscan's "Discovered open port 22/tcp on 10.0.0.5" line."""
+        m = _DISCOVERED_RE.search(line)
+        if not m:
+            return None
+        return m.group(2), int(m.group(1))
 
     def _rate_from_profile(self, context: "ScanContext") -> int:
         try:

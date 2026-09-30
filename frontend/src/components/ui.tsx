@@ -107,7 +107,8 @@ export function relTime(iso?: string | null): string {
 
 /* ── Format duration ─────────────────────────── */
 export function fmtDuration(s?: number | null): string {
-  if (!s) return '—'
+  if (s == null) return '—'
+  s = Math.round(s)
   if (s < 60) return `${s}s`
   const m = Math.floor(s / 60), sec = s % 60
   if (m < 60) return `${m}m ${sec}s`

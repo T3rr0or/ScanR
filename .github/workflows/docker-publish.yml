@@ -12,6 +12,15 @@ permissions:
   contents: read
   packages: write
 
+# Two master pushes close together (a PR merge, then the release commit) used
+# to publish in parallel, and whichever image job finished last owned
+# :latest — v0.23.1 shipped scanr-api:latest and scanr-sandbox:latest built
+# from the older commit. Queue runs per ref so the newest push always
+# publishes last. Never cancel in progress: a half-published matrix is worse.
+concurrency:
+  group: docker-publish-${{ github.ref }}
+  cancel-in-progress: false
+
 env:
   REGISTRY: ghcr.io
   IMAGE_OWNER: ${{ github.repository_owner }}
