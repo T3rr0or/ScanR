@@ -194,7 +194,7 @@ export default function ScanConsole({ events, connected, scanStatus }: Props) {
             <div key={i} className="ln">
               <span className="ts">{fmtTs(e.ts)}</span>
               <span className={`lvl ${lvlCls}`}>
-                {e.level === 'error' ? 'err' : e.level === 'finding' ? 'crit' : e.level ?? 'info'}
+                {e.level === 'error' ? 'err' : e.level ?? 'info'}
               </span>
               <span className="msg">
                 {e.msg ? <HighlightMsg msg={e.msg} /> : null}

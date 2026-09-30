@@ -227,6 +227,7 @@ async def stats(
         select(
             func.count(Scan.id).label("total"),
             func.sum(cast(Scan.status == ScanStatus.running, Integer)).label("running"),
+            func.sum(cast(Scan.status == ScanStatus.completed, Integer)).label("completed"),
             func.sum(Scan.hosts_up).label("hosts_total"),
             func.sum(
                 Scan.findings_info + Scan.findings_low + Scan.findings_medium +
@@ -239,6 +240,7 @@ async def stats(
     return {
         "scans_total": scan_row.total or 0,
         "scans_running": scan_row.running or 0,
+        "scans_completed": scan_row.completed or 0,
         "hosts_total": scan_row.hosts_total or 0,
         "findings_total": scan_row.findings_total or 0,
         "findings_critical": scan_row.findings_critical or 0,

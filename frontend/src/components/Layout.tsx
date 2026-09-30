@@ -136,7 +136,7 @@ export default function Layout() {
           ))}
         </nav>
         <div className="console-sidebar-bottom">
-          <div className="console-version mono">SCANR {versionData?.version ? `v${versionData.version}` : ""}</div>
+          <div className="console-version mono">SCANR {versionData?.current ? `v${versionData.current}` : ""}</div>
           <button className="console-logout" onClick={logout}><LogOut size={14} /> Sign out</button>
         </div>
       </aside>
