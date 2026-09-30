@@ -4,6 +4,10 @@ import { pluginsApi, type Plugin } from '@/api/plugins'
 import { SevTag } from '@/components/ui'
 import './ConfigCatalog.css'
 
+const CATEGORY_LABEL: Record<string, string> = { ssl_tls: 'SSL/TLS', cve: 'CVE', ssh: 'SSH' }
+const categoryLabel = (cat: string) =>
+  CATEGORY_LABEL[cat] ?? cat.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
+
 export default function Plugins() {
   const qc = useQueryClient()
   const { data: plugins = [] } = useQuery({ queryKey: ['plugins'], queryFn: pluginsApi.list })
@@ -66,8 +70,8 @@ export default function Plugins() {
                     marginBottom: 2,
                   }}
                 >
-                  <span style={{ fontSize: 12, fontWeight: active ? 600 : 400, textTransform: 'capitalize' }}>
-                    {cat.replace(/_/g, ' ')}
+                  <span style={{ fontSize: 12, fontWeight: active ? 600 : 400 }}>
+                    {categoryLabel(cat)}
                   </span>
                   <span className="mono" style={{
                     fontSize: 10, padding: '1px 5px',
@@ -85,8 +89,8 @@ export default function Plugins() {
           <div className="plugins-list" style={{ flex: 1, minWidth: 0 }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
               <div style={{ fontSize: 12, color: 'var(--text-3)' }}>
-                <span style={{ textTransform: 'capitalize', fontWeight: 500, color: 'var(--text-1)' }}>
-                  {selectedCat?.replace(/_/g, ' ')}
+                <span style={{ fontWeight: 500, color: 'var(--text-1)' }}>
+                  {selectedCat && categoryLabel(selectedCat)}
                 </span>
                 {' · '}{enabledCount} of {visiblePlugins.length} enabled
               </div>

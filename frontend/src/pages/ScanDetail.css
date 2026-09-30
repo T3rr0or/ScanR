@@ -92,7 +92,8 @@
 .scan-detail .sev-tag, .scan-detail .pill { background: transparent; border: 1px solid var(--scan-rule); font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
 .scan-detail .sev-bar { border-radius: 0; }
 .scan-detail a { color: var(--scan-accent); }
-.scan-detail .scan-ai-layout { display: flex; flex-direction: column; flex: 1; min-height: 0; height: 100%; }
+/* Keep the agent transcript usable on short screens: the tab panel scrolls instead. */
+.scan-detail .scan-ai-layout { display: flex; flex-direction: column; flex: 1; min-height: 640px; height: 100%; }
 .scan-ai-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 66px; padding: 11px clamp(16px, 2vw, 30px); border-bottom: 1px solid var(--scan-rule); }
 .scan-ai-head > div:first-child > span { color: var(--scan-muted); font-size: 9px; font-weight: 700; letter-spacing: .12em; }
 .scan-ai-head h2 { margin: 3px 0 0; font-size: 21px; font-weight: 700; letter-spacing: -.025em; }

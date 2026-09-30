@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, type Dispatch, type ReactNode, type SetStateAction } from 'react'
+import { useState, useMemo, useEffect, useRef, type Dispatch, type ReactNode, type SetStateAction } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Plus, Download, Search,
@@ -537,6 +537,9 @@ function NewScanModal({
   initialScan?: { id: string; name: string; targets?: string[]; profile_json?: string | null }
 }) {
   const [step, setStep] = useState(1)
+  const panelRef = useRef<HTMLDivElement>(null)
+  // Each step starts at its top; the panel otherwise keeps the previous step's scroll.
+  useEffect(() => { panelRef.current?.scrollTo({ top: 0 }) }, [step])
   const [selectedDesignTemplate, setSelectedDesignTemplate] = useState('external-vulnerability-scan')
   const [selectedApiTemplate, setSelectedApiTemplate]       = useState<ScanTemplate | null>(null)
   const [baseProfileJson, setBaseProfileJson]               = useState<Record<string, unknown>>({})
@@ -807,6 +810,7 @@ function NewScanModal({
       // Closing is explicit: the header's X or the Cancel button.
     >
       <div
+        ref={panelRef}
         className="panel"
         style={{ width: 640, maxHeight: '92vh', overflow: 'auto', background: 'var(--bg-1)' }}
       >
@@ -1453,10 +1457,7 @@ function ReviewStep({
               const port = profileConfig.port_range
               const portArg = port.startsWith('top-') ? `--top-ports ${port.slice(4)}` : `-p ${port}`
               const scannerFlags = scanners.map(s => s === 'tcp_connect' ? '-sT' : s === 'syn' ? '-sS' : '-sU').join(' ')
-              if (scanners.length > 1) {
-                return `$ nmap ${scannerFlags} -sV -T${timing} ${pn}${portArg} &lt;target&gt;`
-              }
-              return `$ nmap ${scannerFlags} -sV -T${timing} ${pn}${portArg} &lt;target&gt;`
+              return `$ nmap ${scannerFlags} -sV -T${timing} ${pn}${portArg} <target>`
             })()}
           </div>
         </div>

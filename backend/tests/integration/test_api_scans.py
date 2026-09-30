@@ -214,6 +214,8 @@ async def test_system_stats(client, auth_headers):
     data = resp.json()
     assert "scans_total" in data
     assert "findings_total" in data
+    # The dashboard's "Completed scans" metric reads this field.
+    assert data["scans_completed"] == 0
 
 
 @pytest.mark.asyncio

@@ -36,7 +36,16 @@ ScanR is a self-hosted vulnerability scanner for authorized internal and externa
 
 ![Scans list](docs/screenshots/scans.png)
 
+Click any row to open that scan's live console: every discovery, port, and
+finding event streams in as it happens and is kept for replay.
+
+![Scan console](docs/screenshots/scan-console.png)
+
 ### New Scan Flow
+
+Start from a template, then adjust anything before launch.
+
+![New scan templates](docs/screenshots/new-scan-template.png)
 
 Targets are previewed before launch so a tester can see how ScanR interprets each line.
 
@@ -53,6 +62,14 @@ The review step summarizes scope, selected capabilities, credentials, warnings, 
 ### Findings
 
 ![Findings](docs/screenshots/findings.png)
+
+### AI Agent Workspace
+
+The **AI analysis** tab gives each scan a full agent workspace: session history,
+the conversation with every tool call's command and result, and a Stop control
+that is always visible.
+
+![AI agent workspace](docs/screenshots/ai-agent.png)
 
 ### Retest
 
@@ -217,7 +234,8 @@ Templates are presets, not hard modes. Users can edit context, target handling, 
 
 ![Wordlists](docs/screenshots/wordlists.png)
 
-All screenshots above use documentation-safe mock data such as `192.0.2.x`, `198.51.100.x`, `example.com`, and `demo.internal`.
+All screenshots use documentation-safe demo data: `example.com` hosts and the
+`203.0.113.0/24` and `198.51.100.0/24` documentation ranges.
 
 ---
 
@@ -227,6 +245,7 @@ All screenshots above use documentation-safe mock data such as `192.0.2.x`, `198
 
 - Docker Engine 24+
 - Docker Compose v2 (`docker compose`)
+- Git and Python 3.10+ (for the setup helper; no packages needed)
 - Ports `80` and `8000` available on the host loopback interface
 
 ### 1. Clone
@@ -295,7 +314,14 @@ services, and both images must exist before an agent can start a shell session.
 
 ### 3. Open
 
-Open **http://localhost** and log in with the admin credentials from `.env`.
+Open **http://localhost** and sign in with the admin email you passed to
+setup (default `admin@example.com`). The generated password is in `.env`:
+
+```bash
+grep '^ADMIN_PASSWORD=' .env
+```
+
+Change it after the first sign-in under **Settings → Profile**.
 
 This plaintext URL is for same-host access only. Both published ports bind to
 `127.0.0.1` by default.
@@ -485,7 +511,7 @@ curl -X POST -H "X-API-Key: sk_..." -H 'Content-Type: application/json' \
 ScanR can use an LLM to augment a scan. AI is **off unless you configure a
 provider key**. Enter a key two ways:
 
-- **In the web app** (recommended): **Settings → AI** — paste a key for
+- **In the web app** (recommended): **Settings → AI providers** — paste a key for
   Anthropic, OpenAI, or DeepSeek and pick the default provider. Keys are
   encrypted at rest (Fernet, requires `VAULT_KEY`) and never shown again.
 - **Via environment**: set `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, or
@@ -495,8 +521,8 @@ provider key**. Enter a key two ways:
 The Docker image bundles the provider SDKs; for a source install add the AI
 extra (`pip install -e "backend[ai]"`). The base install runs fine without them.
 
-**Available now (assist mode — read-only):** open a scan and use the **AI** tab,
-or call the API directly.
+**Quick analysis (read-only):** open a scan, choose **AI analysis → Quick
+analysis**, or call the API directly.
 
 - **Findings summary** - executive + technical narrative of a scan's findings:
   `POST /api/v1/scans/{scan_id}/summary`.
@@ -516,14 +542,15 @@ untrusted data (never as instructions).
 
 ### AI agent (guided / autonomous)
 
-The scan's **AI** tab can run an **agent** that actively investigates the
+The scan's **AI analysis → Agent workspace** can run an **agent** that actively investigates the
 scan: it drives a bounded, gated tool set, reasons about what it finds, and
 writes a prioritized assessment. Launch it with an optional objective and a mode:
 
 - **Guided** — investigates and pauses for operator approval before any
   intrusive action; the run surfaces the pending action with Approve / Deny in
   the AI tab (decision signalled to the running agent, which times out to deny).
-- **Autonomous** — runs hands-off within scope, capability, and budget limits.
+- **Autonomous** — runs hands-off within scope and capability limits until it
+  finishes or you stop it.
 
 **Use AI during the scan.** You can also enable the agent when *creating* a
 scan ("Use AI during this scan", with mode/objective and admin-gated aggressive
@@ -531,19 +558,21 @@ opt-ins). The scan engine then runs the agent at the enumeration phase boundary
 — once hosts, services, and findings exist — so the AI performs high-value
 follow-up checks (targeted plugins / port scans) that become part of the scan,
 rather than requiring a manual launch afterward. The same safety gating applies.
+While the scan runs, **Stop AI** in the scan header stops that agent — or
+cancels it before it starts — without stopping the scan.
 
 Safety is enforced in code, not by the model: every tool call is scope-checked —
 targets are confined to the scan's own targets and discovered hosts, and
 forbidden infra (loopback / link-local / metadata / scanner) is always blocked —
-aggressive capabilities each require their own opt-in, the run has token +
-iteration + per-minute rate budgets, and every action (with its full arguments)
+aggressive capabilities each require their own opt-in, an optional per-minute
+token rate cap (`AI_RATE_LIMIT_TOKENS_PER_MIN`) paces provider calls, and every action (with its full arguments)
 is streamed to the scan console and persisted for audit.
 
-The AI tab exposes the run's limits directly — **Max steps** (reasoning
-iterations) and **Max tokens** (safety cap) — and a **Stop** button cancels an
-in-flight run after its current step, keeping the partial transcript. Reaching
-either limit ends the run cleanly and is labelled as such (e.g. "Reached step
-limit").
+Runs have no step or session-token cap: an agent keeps working until it
+finishes its assessment or you press **Stop agent**. Stop takes effect during a
+slow model call or a rate-limit pause too, and tool calls the model requested
+after you pressed it are not run. The partial transcript is kept, and you can
+continue a stopped session by sending another message.
 
 Tools available to the agent today: read the scan's hosts/findings/evidence,
 `create_finding` (record what it discovers), `fetch_url` (HTTP GET,
