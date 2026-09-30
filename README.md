@@ -826,6 +826,7 @@ to turn them on. A local `make dev` run has them on by default.
 | `DEVELOPMENT_MODE` | `false` | Explicitly permits local HTTP-only development settings; never enable in production |
 | `TRUSTED_PROXIES` | empty | Comma-separated proxy IPs/CIDRs allowed to set `X-Forwarded-For` for rate limiting |
 | `SCAN_TARGET_DENYLIST` | infra defaults | Hostnames/IPs that can never be scanned (merged with built-in loopback/link-local/metadata denylist) |
+| `LDAP_CA_FILE` | empty | PEM CA bundle trusted for authenticated LDAP, e.g. `/app/certs/ldap-ca.pem` (see `certs/README.md`). Certificates are always validated; DCs may be named by IP or hostname |
 | `SCAN_HEARTBEAT_TIMEOUT` | `300` | Seconds before a heartbeat-stale running scan is auto-failed |
 | `AI_PROVIDER` | `anthropic` | Default AI provider: `anthropic`, `openai`, or `deepseek` |
 | `AI_MODEL` | provider default | Override the model id used for AI features |

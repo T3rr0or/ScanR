@@ -4,10 +4,10 @@ These accounts' AS-REP responses can be captured and cracked offline
 without any credentials.
 """
 from __future__ import annotations
-import asyncio
 import logging
 from typing import TYPE_CHECKING
 from scanr.core.plugin_base import FindingData, PluginBase, PluginCategory, Severity
+from scanr.plugins.services._ldap_secure import LdapTlsError, run_ldap_check
 
 if TYPE_CHECKING:
     from scanr.core.context import ScanContext
@@ -36,12 +36,12 @@ class AsreproastablePlugin(PluginBase):
         if not domain:
             return []
 
-        results = await asyncio.get_running_loop().run_in_executor(
-            None, self._find_asrep, host.ip, creds.get("username", ""), creds.get("password", ""), domain
+        results = await run_ldap_check(
+            context, self.id, host.ip, self._find_asrep, host.ip, creds.get("username", ""), creds.get("password", ""), domain, host.hostname
         )
         return results
 
-    def _find_asrep(self, dc_ip: str, username: str, password: str, domain: str) -> list[FindingData]:
+    def _find_asrep(self, dc_ip: str, username: str, password: str, domain: str, hostname: str | None = None) -> list[FindingData]:
         try:
             import ldap3
         except ImportError:
@@ -51,7 +51,7 @@ class AsreproastablePlugin(PluginBase):
         try:
             bind_user = f"{domain}\\{username}" if "\\" not in username else username
             from scanr.plugins.services._ldap_secure import secure_ldap_connection
-            conn = secure_ldap_connection(ldap3, dc_ip, 389, bind_user, password)
+            conn = secure_ldap_connection(ldap3, dc_ip, 389, bind_user, password, hostnames=(hostname,))
 
             base_dn = ",".join(f"DC={p}" for p in domain.replace("\\", "").split(".") if p)
             # UAC flag 0x400000 = DONT_REQUIRE_PREAUTH
@@ -81,6 +81,8 @@ class AsreproastablePlugin(PluginBase):
                 remediation="Enable Kerberos pre-authentication on all accounts (remove DONT_REQUIRE_PREAUTH flag). "
                             "Use strong, unique passwords for any accounts that require this setting.",
             )]
+        except LdapTlsError:
+            raise
         except Exception as exc:
             logger.debug("AS-REP roast check failed on %s: %s", dc_ip, exc)
             return []

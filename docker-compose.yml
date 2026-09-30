@@ -148,12 +148,15 @@ services:
       BROWSER_SERVICE_URL: http://browser:8091
       BROWSER_SERVICE_TOKEN: ${BROWSER_SERVICE_TOKEN:?BROWSER_SERVICE_TOKEN must be set in .env}
       SCANR_REQUIRE_BROWSER_SERVICE: "true"
+      # Extra CA trusted for authenticated LDAP, e.g. /app/certs/ldap-ca.pem
+      LDAP_CA_FILE: ${LDAP_CA_FILE:-}
     cap_add:
       - NET_RAW
     volumes:
       - reports_data:/app/reports
       - nvd_data:/app/nvd_cache
       - wordlists_data:/app/wordlists
+      - ./certs:/app/certs:ro
     networks:
       - data
       - browser_control

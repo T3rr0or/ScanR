@@ -6,11 +6,11 @@ enabling them to replicate all domain credentials via DCSync.
 """
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import TYPE_CHECKING
 
 from scanr.core.plugin_base import FindingData, PluginBase, PluginCategory, Severity
+from scanr.plugins.services._ldap_secure import LdapTlsError, run_ldap_check
 
 if TYPE_CHECKING:
     from scanr.core.context import ScanContext
@@ -40,11 +40,11 @@ class DcSyncCheckPlugin(PluginBase):
         if not username or not domain:
             return []
 
-        return await asyncio.get_running_loop().run_in_executor(
-            None, self._check_dcsync, host.ip, username, password, domain
+        return await run_ldap_check(
+            context, self.id, host.ip, self._check_dcsync, host.ip, username, password, domain, host.hostname
         )
 
-    def _check_dcsync(self, ip: str, username: str, password: str, domain: str) -> list[FindingData]:
+    def _check_dcsync(self, ip: str, username: str, password: str, domain: str, hostname: str | None = None) -> list[FindingData]:
         try:
             import ldap3
             from ldap3.protocol.microsoft import security_descriptor_control
@@ -57,7 +57,7 @@ class DcSyncCheckPlugin(PluginBase):
 
         try:
             from scanr.plugins.services._ldap_secure import secure_ldap_connection
-            conn = secure_ldap_connection(ldap3, ip, 389, bind_user, password)
+            conn = secure_ldap_connection(ldap3, ip, 389, bind_user, password, hostnames=(hostname,))
 
             # Request nTSecurityDescriptor with DACL
             # Use SD_FLAGS control to get DACL only (flag 0x04)
@@ -111,6 +111,8 @@ class DcSyncCheckPlugin(PluginBase):
                 port_number=389,
                 protocol="tcp",
             )]
+        except LdapTlsError:
+            raise
         except Exception as exc:
             logger.debug("DCSync check failed on %s: %s", ip, exc)
             return []
