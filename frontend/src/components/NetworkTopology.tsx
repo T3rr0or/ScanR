@@ -37,9 +37,15 @@ interface SimLink extends d3.SimulationLinkDatum<SimNode> {
   _kind: 'trunk' | 'branch'
 }
 
-/** Post-simulation coordinate read, for the tick handler. */
-function xy(end: string | SimNode | number | undefined, fallback: number): number {
-  return typeof end === 'object' && end !== null ? (end.x ?? fallback) : fallback
+/** Post-simulation coordinate read of one link end, for the tick handler.
+ *  Takes the axis explicitly: reading `.x` for both axes put every edge on the
+ *  y = x diagonal, detached from the nodes it joins. */
+export function linkEnd(
+  end: string | SimNode | number | undefined,
+  axis: 'x' | 'y',
+  fallback: number,
+): number {
+  return typeof end === 'object' && end !== null ? (end[axis] ?? fallback) : fallback
 }
 
 interface Props {
@@ -266,7 +272,10 @@ export default function NetworkTopology({ hosts, findingsByHost, onSelectHost, s
       }))
       .alphaDecay(0.018)
 
-    const g = svg.append('g')
+    // The SVG element keeps its zoom state across rebuilds; apply it to the new
+    // layer so the graph does not snap back to 1x while the next wheel or drag
+    // continues from the old transform.
+    const g = svg.append('g').attr('transform', d3.zoomTransform(svgRef.current).toString())
     svg.call(d3.zoom<SVGSVGElement, unknown>()
       .scaleExtent([0.1, 8])
       .on('zoom', e => g.attr('transform', e.transform.toString())))
@@ -397,10 +406,10 @@ export default function NetworkTopology({ hosts, findingsByHost, onSelectHost, s
       scannerG.attr('transform', `translate(${cx},${cy})`)
 
       edges
-        .attr('x1', d => xy(d.source, cx))
-        .attr('y1', d => xy(d.source, cy))
-        .attr('x2', d => xy(d.target, 0))
-        .attr('y2', d => xy(d.target, 0))
+        .attr('x1', d => linkEnd(d.source, 'x', cx))
+        .attr('y1', d => linkEnd(d.source, 'y', cy))
+        .attr('x2', d => linkEnd(d.target, 'x', 0))
+        .attr('y2', d => linkEnd(d.target, 'y', 0))
 
       if (subnetNodeEls) {
         subnetNodeEls.attr('transform', d => `translate(${d.x ?? cx},${d.y ?? cy})`)

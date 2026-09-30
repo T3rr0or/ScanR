@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { escapeHtml } from './NetworkTopology'
+import { escapeHtml, linkEnd } from './NetworkTopology'
 
 // Regression: the print/PDF window interpolates the user-controlled scan name
 // into raw HTML of a same-origin window — without escaping this is stored XSS
@@ -18,5 +18,20 @@ describe('escapeHtml', () => {
 
   it('leaves safe text untouched', () => {
     expect(escapeHtml('Weekly internal scan 2024-06-01')).toBe('Weekly internal scan 2024-06-01')
+  })
+})
+
+// Regression: both axes read `.x`, so every edge ran along the y = x diagonal
+// instead of joining the nodes it connects.
+describe('linkEnd', () => {
+  it('reads each axis from the resolved node', () => {
+    const node = { id: 'h', _kind: 'host' as const, x: 120, y: 480 }
+    expect(linkEnd(node, 'x', 0)).toBe(120)
+    expect(linkEnd(node, 'y', 0)).toBe(480)
+  })
+
+  it('falls back before the simulation resolves ids to nodes', () => {
+    expect(linkEnd('__scanner__', 'y', 250)).toBe(250)
+    expect(linkEnd({ id: 'h', _kind: 'host' as const }, 'y', 7)).toBe(7)
   })
 })

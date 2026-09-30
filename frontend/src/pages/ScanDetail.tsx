@@ -2,7 +2,7 @@
  * ScanDetail: full-page scan view
  * Tabs: Console | Findings | Hosts | Topology | Screenshots | Exclusions
  */
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
 	X,
@@ -158,6 +158,16 @@ export default function ScanDetail({ scanId, onBack }: Props) {
 	const isActive = ["running", "pending"].includes(scan?.status ?? "");
 	const isPending = scan?.status === "pending";
 	const chains = computeChains(findings);
+	// Stable across renders: NetworkTopology rebuilds its whole force layout
+	// when this changes, so a fresh object per render (console events, a host
+	// click) re-ran the layout and reshuffled the graph under the user.
+	const findingsByHost = useMemo(
+		() =>
+			Object.fromEntries(
+				hosts.map((h) => [h.ip, findings.filter((f) => f.host_ip === h.ip)]),
+			),
+		[hosts, findings],
+	);
 
 	const totalFindings =
 		(scan?.findings_critical ?? 0) +
@@ -304,12 +314,7 @@ export default function ScanDetail({ scanId, onBack }: Props) {
 							<NetworkTopology
 								hosts={hosts}
 								scanName={scan?.name}
-								findingsByHost={Object.fromEntries(
-									hosts.map((h) => [
-										h.ip,
-										findings.filter((f) => f.host_ip === h.ip),
-									]),
-								)}
+								findingsByHost={findingsByHost}
 								onSelectHost={(h) => {
 									// Look up full ScannedHost to get service/version data,
 									// HostNode only carries {number, state}, stripping service info.
