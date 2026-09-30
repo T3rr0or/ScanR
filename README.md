@@ -236,32 +236,29 @@ git clone https://github.com/T3rr0or/ScanR.git
 cd ScanR
 ```
 
-### 2. Configure
+### 2. Configure and start
+
+Run the setup helper with Python 3.10+ (standard library only):
 
 ```bash
-cp .env.example .env
+python3 scripts/setup.py --admin-email you@example.com --start
 ```
 
-Set these 6 required values in `.env`:
+It creates a private `.env`, generates all six required secrets, validates the
+Compose configuration, pulls the application and sandbox images, and waits for
+services to start. No Python packages or manual key-generation commands are
+needed. The initial admin password is stored in `.env`; open that file locally
+to retrieve it. Keep it private and backed up, especially `VAULT_KEY`, which is
+needed to decrypt saved credentials.
 
-```bash
-# Generate secrets:
-python3 -c "import secrets; print(secrets.token_urlsafe(32))"  # → SECRET_KEY
-python3 -c "import secrets; print(secrets.token_urlsafe(16))"  # → ADMIN_PASSWORD
-python3 -c "import secrets; print(secrets.token_urlsafe(24))"  # → POSTGRES_PASSWORD
-python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"  # → VAULT_KEY
-openssl rand -hex 32  # → SANDBOX_TOKEN
-openssl rand -hex 32  # → BROWSER_SERVICE_TOKEN (generate independently)
-```
+To review configuration before starting, omit `--start`. Running with `--start`
+again reuses the existing `.env` without changing credentials. For an HTTPS
+reverse proxy, add `--origin https://scanr.example.com` on the first run and
+configure the proxy as described below. Setup does not configure TLS for you.
 
-Compose refuses to start when any required secret is empty. Everything else has
-safe defaults.
-
-### 3. Start
-
-```bash
-docker compose up -d
-```
+If you prefer manual configuration, copy `.env.example` to `.env` and set
+`SECRET_KEY`, `VAULT_KEY`, `POSTGRES_PASSWORD`, `ADMIN_PASSWORD`, `SANDBOX_TOKEN`,
+and `BROWSER_SERVICE_TOKEN`. Compose rejects empty required secrets.
 
 Services:
 
@@ -296,7 +293,7 @@ runner spawns one of each per agent run through the Docker API, so Compose never
 starts shared instances — but a plain `docker compose build` skips profiled
 services, and both images must exist before an agent can start a shell session.
 
-### 4. Open
+### 3. Open
 
 Open **http://localhost** and log in with the admin credentials from `.env`.
 
@@ -871,12 +868,21 @@ FastAPI backend
 
 ## Updating
 
-For normal Docker installs:
+Updates are administrator-triggered. ScanR checks for releases, but does not
+schedule or install them automatically. Let active scans and AI sessions finish
+and back up the database and `.env` before updating.
+
+From your installation directory, the setup helper also refreshes an existing
+installation without replacing its configuration:
 
 ```bash
-docker compose pull
-docker compose up -d
+python3 scripts/setup.py --start
 ```
+
+This pulls all configured images, including the per-run sandbox images, and
+waits for services to start. It respects `SCANR_VERSION` in `.env`: a pinned tag
+stays pinned until you change it. Check release notes for Compose/configuration
+changes before upgrading; pulling images does not update checkout files.
 
 Database migrations run automatically on API startup.
 
@@ -890,6 +896,14 @@ docker compose up -d
 ```
 
 This enables the **Update now** button when a newer GitHub release is available.
+The in-app updater runs inside the API container it replaces, so the final
+restart ends the process running the update. The status shows `restarting` until
+the replacement API responds, then reports success with the running version. If
+the API restarts while images are still being pulled, the update is reported as
+failed. If no replacement API comes up, the status stays `restarting` and expires
+to failed after an hour; run the host-side command above and inspect
+`docker compose ps`.
+
 The self-update overlay mounts the host Docker socket and project directory into
 the API container — use only for trusted admin deployments.
 

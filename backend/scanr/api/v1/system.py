@@ -6,6 +6,7 @@ import json
 import os
 import shlex
 import subprocess
+import uuid
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
@@ -27,6 +28,11 @@ router = APIRouter(prefix="/system", tags=["system"])
 logger = logging.getLogger(__name__)
 settings = get_settings()
 UPDATE_STATUS_KEY = "scanr:update:status"
+UPDATE_LOCK_KEY = "scanr:update:lock"
+UPDATE_LOCK_TTL = 3600
+# Identifies this API process. An update started by a different process that is
+# still marked in progress was interrupted by an API restart.
+_API_INSTANCE = uuid.uuid4().hex
 
 
 def _utc_now() -> str:
@@ -53,13 +59,33 @@ async def _get_update_status() -> dict:
         if raw:
             data = json.loads(raw)
             data["enabled"] = settings.self_update_enabled
-            # Stale "running" guard: if running for >15 min the process died
-            if data.get("state") in ("running", "queued") and data.get("started_at"):
+            owner = data.get("api_instance")
+            if data.get("state") in ("running", "queued", "restarting") and owner and owner != _API_INSTANCE:
+                # This API process is not the one that ran the update, so the
+                # API was replaced. After "restarting", the replacement serving
+                # this request verifies the restart; earlier, the job was killed.
+                if data["state"] == "restarting":
+                    data.update({
+                        "state": "succeeded",
+                        "exit_code": 0,
+                        "message": f"Services restarted. ScanR v{settings.app_version} is running.",
+                    })
+                else:
+                    data.update({
+                        "state": "failed",
+                        "message": "The API restarted before the update finished.",
+                    })
+                data["finished_at"] = _utc_now()
+                await _set_update_status(data)
+                await r.delete(UPDATE_LOCK_KEY)
+            # A restart can terminate this process before it records completion.
+            elif data.get("state") in ("running", "queued", "restarting") and data.get("started_at"):
                 from datetime import datetime, timezone, timedelta
                 try:
                     started = datetime.fromisoformat(data["started_at"])
-                    if datetime.now(timezone.utc) - started > timedelta(minutes=15):
+                    if datetime.now(timezone.utc) - started > timedelta(seconds=UPDATE_LOCK_TTL):
                         data["state"] = "failed"
+                        data["finished_at"] = _utc_now()
                         data["message"] = "Update timed out (process likely died during container restart)."
                         await _set_update_status(data)
                 except Exception:
@@ -95,10 +121,11 @@ def _is_restart_cmd(argv: list[str]) -> bool:
     return any(a in ('up', 'restart') for a in argv)
 
 
-async def _run_self_update() -> None:
+async def _run_self_update(lock_token: str) -> None:
     status = {
         "enabled": settings.self_update_enabled,
         "state": "running",
+        "api_instance": _API_INSTANCE,
         "started_at": _utc_now(),
         "finished_at": None,
         "exit_code": None,
@@ -121,7 +148,6 @@ async def _run_self_update() -> None:
         env = {
             "PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"),
             "HOME": os.environ.get("HOME", "/app"),
-            "SCANR_VERSION": os.environ.get("SCANR_VERSION", "latest"),
         }
         commands = _split_update_command(settings.self_update_command)
 
@@ -130,24 +156,19 @@ async def _run_self_update() -> None:
             logs.append(f"$ {' '.join(shlex.quote(x) for x in argv)}")
 
             if is_last and _is_restart_cmd(argv):
-                # Persist "succeeded" before firing the restart — the restart
-                # will kill this container so we cannot write status after it.
+                # The API may be replaced by this command. Persist an honest
+                # intermediate state; dispatch is not evidence of success.
                 status.update({
-                    "state": "succeeded",
-                    "finished_at": _utc_now(),
-                    "exit_code": 0,
-                    "message": "Images pulled. Restarting services — ScanR will be back in a few seconds.",
+                    "state": "restarting",
+                    "message": "Restarting services. Waiting for the new API to respond.",
                     "log": "\n".join(logs)[-12000:],
                 })
                 await _set_update_status(status)
-                subprocess.Popen(
-                    argv, cwd=workdir, env=env,
-                    start_new_session=True,
-                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                )
-                return
 
-            proc = subprocess.run(
+            # subprocess.run is blocking. Keep it off the API event loop so
+            # health checks and status polling remain available during pulls.
+            proc = await asyncio.to_thread(
+                subprocess.run,
                 argv,
                 cwd=workdir,
                 env=env,
@@ -180,6 +201,13 @@ async def _run_self_update() -> None:
             "log": "\n".join(logs)[-12000:],
         })
     await _set_update_status(status)
+    from scanr.db.redis import get_redis
+    # Never remove a newer request's lock if this job outlived its lease.
+    await get_redis().eval(
+        "if redis.call('get', KEYS[1]) == ARGV[1] then "
+        "return redis.call('del', KEYS[1]) else return 0 end",
+        1, UPDATE_LOCK_KEY, lock_token,
+    )
 
 
 @router.get("/health")
@@ -288,7 +316,10 @@ async def update_status(
 async def reset_update_status(
     current_user: User = Depends(require_admin_scope("system:manage")),
 ):
-    """Clear stale update status back to idle."""
+    """Clear terminal status without allowing a second live update."""
+    from scanr.db.redis import get_redis
+    if await get_redis().exists(UPDATE_LOCK_KEY):
+        raise HTTPException(status_code=409, detail="An update is still active")
     await _set_update_status(_default_update_status())
     return {"state": "idle"}
 
@@ -304,20 +335,28 @@ async def start_update(
             detail="Self-update is disabled. Set SELF_UPDATE_ENABLED=true and configure SELF_UPDATE_WORKDIR/SELF_UPDATE_COMMAND.",
         )
 
-    status = await _get_update_status()
-    if status.get("state") == "running":
-        raise HTTPException(status_code=409, detail="Update already running")
+    from scanr.db.redis import get_redis
+    lock_token = uuid.uuid4().hex
+    try:
+        acquired = await get_redis().set(
+            UPDATE_LOCK_KEY, lock_token, nx=True, ex=UPDATE_LOCK_TTL,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Update coordination unavailable") from exc
+    if not acquired:
+        raise HTTPException(status_code=409, detail="Update already queued or running")
 
     await _set_update_status({
         "enabled": True,
         "state": "queued",
+        "api_instance": _API_INSTANCE,
         "started_at": _utc_now(),
         "finished_at": None,
         "exit_code": None,
         "message": "Update queued",
         "log": "",
     })
-    background_tasks.add_task(_run_self_update)
+    background_tasks.add_task(_run_self_update, lock_token)
     await asyncio.sleep(0)
     return await _get_update_status()
 
