@@ -8,6 +8,7 @@ from __future__ import annotations
 import logging
 import re
 from typing import TYPE_CHECKING
+from urllib.parse import urljoin, urlsplit
 
 import httpx
 
@@ -22,11 +23,33 @@ logger = logging.getLogger(__name__)
 
 HTTP_PORTS = [80, 443, 8080, 8443, 8000, 3000, 5000]
 
+
+def _same_origin(base_url: str, candidate: str) -> bool:
+    """Only fetch script resources served by the scanned web origin."""
+    resolved = urlsplit(urljoin(base_url.rstrip("/") + "/", candidate))
+    base = urlsplit(base_url)
+    try:
+        resolved_port = resolved.port
+        base_port = base.port
+        if resolved_port is None:
+            resolved_port = {"http": 80, "https": 443}.get(resolved.scheme.lower())
+        if base_port is None:
+            base_port = {"http": 80, "https": 443}.get(base.scheme.lower())
+    except ValueError:
+        return False
+    return (
+        resolved.scheme.lower() in {"http", "https"}
+        and resolved.scheme.lower() == base.scheme.lower()
+        and (resolved.hostname or "").lower() == (base.hostname or "").lower()
+        and resolved_port == base_port
+        and resolved.username is None
+        and resolved.password is None
+    )
+
 _PATTERNS = [
     ("AWS Access Key", re.compile(r"AKIA[0-9A-Z]{16}")),
     ("GitHub Token", re.compile(r"ghp_[a-zA-Z0-9]{36}|github_pat_[a-zA-Z0-9_]{82}")),
     ("Stripe Secret Key", re.compile(r"sk_live_[0-9a-zA-Z]{24,}")),
-    ("Stripe Public Key", re.compile(r"pk_live_[0-9a-zA-Z]{24,}")),
     ("Slack Token", re.compile(r"xox[baprs]-[0-9a-zA-Z\-]{10,48}")),
     ("Twilio API Key", re.compile(r"SK[0-9a-fA-F]{32}")),
     ("SendGrid API Key", re.compile(r"SG\.[a-zA-Z0-9]{22}\.[a-zA-Z0-9]{43}")),
@@ -82,8 +105,9 @@ class ApiKeyExposurePlugin(PluginBase):
 
             # Fetch and scan JS files
             for js_url in js_urls[:10]:
-                if not js_url.startswith("http"):
-                    js_url = base_url.rstrip("/") + "/" + js_url.lstrip("/")
+                js_url = urljoin(f"{base_url.rstrip('/')}/", js_url)
+                if not _same_origin(base_url, js_url):
+                    continue
                 if js_url in scanned_urls:
                     continue
                 scanned_urls.add(js_url)

@@ -15,13 +15,12 @@ to an unrelated third party. We refuse to do that.
 
 Instead we ask the proxy to fetch ``http://scanr-open-proxy-check.invalid/``.
 ``.invalid`` is reserved by RFC 2606 and can never resolve, so no packet leaves
-the proxy for anyone else. The reply still separates the two cases cleanly,
-because the *decision to try* happens before name resolution:
+the proxy for anyone else. An explicit DNS/name-resolution error in the reply can prove a relay attempt.
+Gateway status codes alone are ambiguous because reverse proxies can return
+them for their own upstreams:
 
-  * a proxy that accepted the relay must resolve the name first, fails, and
-    answers with its own error page — 502/503/504, or a body saying "unable to
-    resolve"/"unknown host"/"Bad Gateway". That is proof it attempted to relay
-    for us, which is exactly the capability we are testing for;
+  * a proxy that accepted the relay fails to resolve the reserved name and
+    returns an error body that explicitly identifies DNS/name resolution;
   * a proxy that refuses unauthenticated or off-net clients answers before it
     ever looks at the URL — 403 Forbidden, 407 Proxy Authentication Required,
     or 400 Bad Request — and never reaches resolution;
@@ -66,8 +65,6 @@ _HTTP_PROXY_REQUEST = (
 # Version 5, one method offered, method 0x00 = no authentication.
 _SOCKS5_GREETING = b"\x05\x01\x00"
 
-# Statuses a proxy returns once it has taken the request and failed upstream.
-_RELAY_ATTEMPTED_STATUS = {502, 503, 504}
 # Statuses that mean the request was rejected before any relay was attempted.
 _REFUSED_STATUS = {400, 401, 403, 405, 407}
 
@@ -81,8 +78,6 @@ _RESOLUTION_FAILURE_MARKERS = (
     "dns lookup",
     "dnserror",
     "host not found",
-    "bad gateway",
-    "gateway timeout",
     "err_name_not_resolved",
 )
 
@@ -176,7 +171,10 @@ class OpenProxyPlugin(PluginBase):
         if status in _REFUSED_STATUS:
             # Rejected before resolution — the proxy is not open to us.
             return None
-        relay_attempted = status in _RELAY_ATTEMPTED_STATUS or _looks_like_relay_attempt(raw)
+        # Gateway errors alone are ambiguous: reverse proxies and application
+        # gateways can return them for their own upstreams. Require explicit
+        # evidence that this request reached name resolution.
+        relay_attempted = _looks_like_relay_attempt(raw)
         if not relay_attempted:
             # 200/301/404 here means a normal web server answered for itself.
             return None
@@ -188,8 +186,9 @@ class OpenProxyPlugin(PluginBase):
             kind="HTTP",
             evidence=(
                 f"GET {_CANARY_URL} (absolute-form) to {ip}:{port} -> {first_line}. "
-                "The domain is RFC 2606 .invalid and cannot resolve, so an upstream "
-                "resolution failure proves the proxy accepted the request and tried to "
+                "The domain is RFC 2606 .invalid and cannot resolve, and the response "
+                "explicitly identifies a name-resolution failure, so the proxy accepted "
+                "the request and tried to "
                 "relay it rather than refusing it (a refusal would be 403/407/400)."
             ),
             detail=(

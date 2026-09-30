@@ -82,7 +82,11 @@ class NucleiRunnerPlugin(PluginBase):
                 continue
             cmd.extend(["-H", f"{name}: {value}"])
 
-        await context.log.info(f"$ {' '.join(cmd)}", phase="plugin")
+        logged_cmd = cmd.copy()
+        for index, arg in enumerate(logged_cmd[:-1]):
+            if arg == "-H":
+                logged_cmd[index + 1] = "<redacted>"
+        await context.log.info(f"$ {' '.join(logged_cmd)}", phase="plugin")
         try:
             proc = await asyncio.create_subprocess_exec(
                 *cmd,

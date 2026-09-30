@@ -68,7 +68,9 @@ class SshDefaultCredsPlugin(PluginBase):
             delay_s = cfg.get("delay_ms", 0) / 1000.0
             stop_on_success = cfg.get("stop_on_success", True)
 
-            found = await self._try_creds_list(host.ip, port.number, pairs, max_failures, delay_s)
+            found = await self._try_creds_list(
+                host.ip, port.number, pairs, max_failures, delay_s, stop_on_success
+            )
             for username, password in found:
                 findings.append(FindingData(
                     plugin_id=self.id,
@@ -87,11 +89,19 @@ class SshDefaultCredsPlugin(PluginBase):
                     break
         return findings
 
-    async def _try_creds_list(self, ip: str, port: int, pairs: list, max_failures: int, delay_s: float) -> list[tuple[str, str]]:
+    async def _try_creds_list(
+        self, ip: str, port: int, pairs: list, max_failures: int, delay_s: float,
+        stop_on_success: bool = True,
+    ) -> list[tuple[str, str]]:
         loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(None, self._ssh_sync_list, ip, port, pairs, max_failures, delay_s)
+        return await loop.run_in_executor(
+            None, self._ssh_sync_list, ip, port, pairs, max_failures, delay_s, stop_on_success
+        )
 
-    def _ssh_sync_list(self, ip: str, port: int, pairs: list, max_failures: int, delay_s: float) -> list[tuple[str, str]]:
+    def _ssh_sync_list(
+        self, ip: str, port: int, pairs: list, max_failures: int, delay_s: float,
+        stop_on_success: bool = True,
+    ) -> list[tuple[str, str]]:
         import paramiko
         import time
         found = []
@@ -109,7 +119,8 @@ class SshDefaultCredsPlugin(PluginBase):
                 )
                 client.close()
                 found.append((username, password))
-                return found  # stop on first success
+                if stop_on_success:
+                    return found
             except paramiko.AuthenticationException:
                 failures += 1
                 if delay_s > 0:

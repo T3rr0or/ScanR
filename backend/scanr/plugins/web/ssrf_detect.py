@@ -65,7 +65,6 @@ _SSRF_FLAG_COMBOS: list[tuple[str, str]] = [
 ]
 
 _INTERNAL_URL = "http://127.0.0.1/"
-_BENIGN_URL = "http://scanr-ssrf-probe.invalid/"
 
 
 class SsrfDetectPlugin(PluginBase):
@@ -128,33 +127,19 @@ class SsrfDetectPlugin(PluginBase):
                     if result:
                         return result
 
-                # Multi-param combos: compare response length vs benign baseline
-                # Replace only the URL-valued key to keep other params identical
+                # Multi-param combos: look for metadata signatures. A body-length
+                # difference alone is not evidence of a server-side fetch: apps
+                # routinely echo inputs or take different validation branches.
                 for path in paths:
                     for url_key, flag_key in _SSRF_FLAG_COMBOS:
                         combo = {url_key: _INTERNAL_URL}
-                        benign = {url_key: _BENIGN_URL}
                         if flag_key:
                             combo[flag_key] = "1"
-                            benign[flag_key] = "1"
                         try:
                             async with sem:
-                                r_benign = await client.get(f"{base_url}{path}", params=benign)
                                 r_ssrf = await client.get(f"{base_url}{path}", params=combo)
-                            # Signature check first (most reliable)
                             hit = self._check_signatures(r_ssrf)
                             if hit:
-                                return self._finding(base_url, port, str(r_ssrf.url), hit, r_ssrf)
-                            # Length delta: only flag if BOTH responses are 200 and non-trivial
-                            # and differ by >40%. Requiring 200 on both sides prevents firing
-                            # when the server returns a 403/404 error page for the unknown param
-                            # (error pages are smaller than normal pages, causing spurious deltas).
-                            b_len = len(r_benign.text)
-                            s_len = len(r_ssrf.text)
-                            if (r_benign.status_code == 200 and r_ssrf.status_code == 200
-                                    and b_len > 200 and s_len > 200
-                                    and abs(s_len - b_len) / max(b_len, 1) > 0.4):
-                                hit = "Response length changed significantly when internal target supplied — server likely fetched URL"
                                 return self._finding(base_url, port, str(r_ssrf.url), hit, r_ssrf)
                         except Exception:
                             continue

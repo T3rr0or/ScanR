@@ -36,12 +36,14 @@ class LdapUserEnumPlugin(PluginBase):
         password = creds.get("password", "")
         domain = creds.get("domain", "")
 
+        open_ports = [p.number for p in host.ports if p.number in (389, 636) and p.state == "open"]
         results = await asyncio.get_running_loop().run_in_executor(
-            None, self._enumerate_ldap, host.ip, username, password, domain
+            None, self._enumerate_ldap, host.ip, username, password, domain, open_ports
         )
         return results
 
-    def _enumerate_ldap(self, ip: str, username: str, password: str, domain: str) -> list[FindingData]:
+    def _enumerate_ldap(self, ip: str, username: str, password: str, domain: str,
+                        open_ports: list[int] | None = None) -> list[FindingData]:
         try:
             import ldap3
         except ImportError:
@@ -55,17 +57,18 @@ class LdapUserEnumPlugin(PluginBase):
         else:
             base_dn = ""
 
-        # Try both LDAP and LDAPS
-        for port, use_ssl in [(636, True), (389, False)]:
+        from scanr.plugins.services._ldap_secure import secure_ldap_connection
+        # Prefer LDAPS, then use LDAP only after StartTLS succeeds. Never bind
+        # with a password on an unencrypted LDAP connection.
+        for port in (p for p in (636, 389) if open_ports is None or p in open_ports):
             try:
-                server = ldap3.Server(ip, port=port, use_ssl=use_ssl, get_info=ldap3.ALL, connect_timeout=10)
                 # Build UPN or domain\user bind
                 bind_user = f"{domain}\\{username}" if domain and "\\" not in username else username
-                conn = ldap3.Connection(server, user=bind_user, password=password, auto_bind=True, receive_timeout=15)
+                conn = secure_ldap_connection(ldap3, ip, port, bind_user, password)
 
                 if not base_dn:
                     # Try to get base DN from rootDSE
-                    base_dn = server.info.other.get("defaultNamingContext", [""])[0] if server.info else ""
+                    base_dn = conn.server.info.other.get("defaultNamingContext", [""])[0] if conn.server.info else ""
 
                 if not base_dn:
                     conn.unbind()

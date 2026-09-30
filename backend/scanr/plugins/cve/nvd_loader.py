@@ -357,9 +357,18 @@ def search_by_product(product: str, version: str) -> list[dict]:
         cpes = json.loads(cpe_json) if cpe_json else []
         for cpe in cpes:
             parts = cpe.split(":")
-            if len(parts) >= 5:
-                cpe_version = parts[5] if len(parts) > 5 else "*"
-                if cpe_version == "*" or not version or version in cpe_version:
+            if len(parts) > 5:
+                cpe_version = parts[5].strip().casefold()
+                detected_version = version.strip().casefold()
+                # The loader currently stores CPE criteria but discards NVD's
+                # versionStart/versionEnd bounds. A wildcard or pattern CPE
+                # therefore cannot safely establish that this exact version
+                # is affected; avoid turning it into an all-version match.
+                if (
+                    cpe_version not in {"", "*", "-"}
+                    and not any(marker in cpe_version for marker in ("*", "?"))
+                    and detected_version == cpe_version
+                ):
                     matches.append({
                         "cve_id": cve_id,
                         "description": desc,

@@ -37,6 +37,7 @@ class SshAlgosPlugin(PluginBase):
 
             weak_kex = [a for a in algos.get("kex_algorithms", []) if any(w in a for w in WEAK_KEX)]
             weak_ciphers = [a for a in algos.get("encryption_algorithms_server_to_client", []) if a in WEAK_CIPHERS]
+            weak_macs = [a for a in algos.get("mac_algorithms_server_to_client", []) if a in WEAK_MACS]
             if weak_kex:
                 findings.append(FindingData(
                     plugin_id=self.id,
@@ -56,6 +57,17 @@ class SshAlgosPlugin(PluginBase):
                     description="The SSH server supports deprecated or weak encryption ciphers.",
                     evidence=f"Weak ciphers: {', '.join(weak_ciphers)}",
                     remediation="Configure sshd to use only AES-GCM and ChaCha20 ciphers.",
+                    port_number=port.number,
+                    protocol="tcp",
+                ))
+            if weak_macs:
+                findings.append(FindingData(
+                    plugin_id=self.id,
+                    severity=Severity.medium,
+                    title="Weak SSH Message Authentication Codes",
+                    description="The SSH server supports deprecated or weak MAC algorithms.",
+                    evidence=f"Weak MACs: {', '.join(weak_macs)}",
+                    remediation="Remove MD5, truncated SHA-1, and 32-bit UMAC algorithms from sshd_config.",
                     port_number=port.number,
                     protocol="tcp",
                 ))

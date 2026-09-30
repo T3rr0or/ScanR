@@ -17,13 +17,12 @@ logger = logging.getLogger(__name__)
 
 class LlmnrNbnsCheckPlugin(PluginBase):
     id = "services.llmnr_nbns_check"
-    name = "LLMNR/NBT-NS Poisoning Risk"
+    name = "LLMNR/NBT-NS Responder Check"
     description = (
-        "Detect active LLMNR (UDP/5355) and NetBIOS Name Service (UDP/137) on Windows hosts, "
-        "which can be abused by Responder to capture NTLMv2 credentials"
+        "Record whether a Windows host answers direct LLMNR or NBT-NS queries"
     )
     category = PluginCategory.services
-    severity = Severity.medium
+    severity = Severity.low
     # Trigger on SMB-enabled hosts (Windows indicator); actual probes are UDP
     ports = [445, 139]
 
@@ -55,16 +54,15 @@ class LlmnrNbnsCheckPlugin(PluginBase):
         return [FindingData(
             plugin_id=self.id,
             severity=Severity.medium,
-            title="LLMNR/NBT-NS Enabled — Credential Poisoning Risk",
+            title="LLMNR/NBT-NS Responder Answered a Direct Query",
             description=(
-                f"The host has {protocols} active. These legacy name resolution protocols "
-                "broadcast queries on the local network and can be exploited by an attacker "
-                "running Responder: when a client fails to resolve a hostname via DNS, it falls "
-                "back to LLMNR/NBT-NS broadcasts. Responder answers those broadcasts with a "
-                "spoofed response, causing the victim to authenticate to the attacker's machine "
-                "and leaking NTLMv2 credential hashes that can be cracked offline or relayed."
+                f"The host answered a direct unicast probe for {protocols}. This confirms "
+                "that a responder handled this query, but does not establish whether client "
+                "machines use multicast/broadcast fallback or are exposed to credential "
+                "poisoning. Confirm endpoint policy and observe name-resolution traffic "
+                "before treating this as a credential-capture path."
             ),
-            evidence=f"Host responded to UDP probe(s): {protocols}",
+            evidence=f"Direct unicast UDP probe received a response from {host.ip}: {protocols}",
             remediation=(
                 "Disable LLMNR via Group Policy: "
                 "Computer Configuration → Administrative Templates → Network → DNS Client → "
