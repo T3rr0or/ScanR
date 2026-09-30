@@ -27,13 +27,15 @@ _SEVERITY_MAP: dict[str, Severity] = {
     "unknown": Severity.info,
 }
 
-# Nuclei template categories to use
+# Nuclei template directories to use. Paths are explicit so a template-repo
+# rename fails loudly instead of silently loading nothing (the old
+# "misconfigs" name resolved to zero templates).
 NUCLEI_TEMPLATES = [
-    "cves",
-    "exposures",
-    "misconfigs",
-    "default-logins",
-    "vulnerabilities",
+    "http/cves",
+    "http/exposures",
+    "http/misconfiguration",
+    "http/default-logins",
+    "http/vulnerabilities",
 ]
 
 

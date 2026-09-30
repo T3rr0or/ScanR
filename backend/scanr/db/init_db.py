@@ -346,6 +346,23 @@ async def seed_templates(session: AsyncSession) -> None:
             ),
         },
         {
+            "name": "Nuclei Network Vulnerability Scan",
+            "description": "Aggressive Nuclei network and javascript template checks against open non-HTTP services. Use only on targets you are authorized to test.",
+            "profile_json": profile(
+                scan_context="external",
+                target_type="ip",
+                safety_level="aggressive",
+                depth_level="balanced",
+                performance_profile="conservative",
+                port_range="top-1000",
+                plugins=["network.open_ports_info", "nuclei.network_runner"],
+                discovery=external_discovery,
+                port_scanning={"scanner": "tcp_connect", "firewall_strategy": "skip_ping"},
+                enumeration={"service_detection": True, "http_probing": False, "tls_checks": False, "security_headers": False, "screenshots": False, "nuclei": True, "directory_enum": False, "subdomain_enum": False, "dns_recon": False},
+                performance=slow_perf,
+            ),
+        },
+        {
             "name": "Internal Network Scan",
             "description": "Internal IP/CIDR scan with validated discovery, broader ports, service checks, SSH, TLS, and CVE matching.",
             "profile_json": profile(
