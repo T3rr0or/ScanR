@@ -65,8 +65,10 @@ class Budget:
 
     Also enforces a per-minute input-token rate limit via a rolling window.
     When the limit would be exceeded, the loop sleeps until tokens expire."""
-    max_tokens: int = 200_000
-    max_iterations: int = 12
+    # Operator-controlled runs have no arbitrary total token or step ceiling.
+    # The provider's per-call limit and explicit rate configuration still apply.
+    max_tokens: int = 0
+    max_iterations: int = 0
     used: Usage | None = None
     iterations: int = 0
     # Per-minute input token rate cap. 0 = no limit.

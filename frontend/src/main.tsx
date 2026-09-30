@@ -3,7 +3,9 @@ import ReactDOM from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import App from "./App";
 import ErrorBoundary from "./components/ErrorBoundary";
-import "@fontsource-variable/inter";
+import "@fontsource/archivo/500.css";
+import "@fontsource/archivo/700.css";
+import "@fontsource/archivo/900.css";
 import "@fontsource-variable/jetbrains-mono";
 import "./index.css";
 

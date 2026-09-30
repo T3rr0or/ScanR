@@ -1,10 +1,11 @@
 import { useState, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { ShieldAlert, Search, X, Users } from 'lucide-react'
+import { Search, X } from 'lucide-react'
 import { vulnerabilitiesApi, type VulnerabilityItem } from '@/api/vulnerabilities'
 import { findingsApi } from '@/api/findings'
 import { SevTag, relTime } from '@/components/ui'
 import FindingDetailPanel from '@/components/FindingDetailPanel'
+import './OperatorPages.css'
 
 const SEVERITIES = ['', 'critical', 'high', 'medium', 'low', 'info']
 const SEV_RANK: Record<string, number> = { critical: 5, high: 4, medium: 3, low: 2, info: 1 }
@@ -15,16 +16,18 @@ type VulnSortKey = 'severity' | 'title' | 'hosts' | 'open' | 'vpr' | 'cvss' | 'f
 function VTh({ label, sortKey, active, dir, onSort, style }: { label: string; sortKey: VulnSortKey; active: VulnSortKey; dir: 'asc' | 'desc'; onSort: (k: VulnSortKey) => void; style?: React.CSSProperties }) {
   const isActive = active === sortKey
   return (
-    <th onClick={() => onSort(sortKey)} style={{ cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap', color: isActive ? 'var(--accent)' : undefined, ...style }}>
-      {label}<span style={{ marginLeft: 4, opacity: isActive ? 1 : 0.25, fontSize: 9 }}>{isActive ? (dir === 'asc' ? '▲' : '▼') : '⇅'}</span>
+    <th aria-sort={isActive ? (dir === 'asc' ? 'ascending' : 'descending') : 'none'} style={style}>
+      <button type="button" className={`operator-sort ${isActive ? 'is-active' : ''}`} onClick={() => onSort(sortKey)}>
+        {label}<span aria-hidden="true">{isActive ? (dir === 'asc' ? '▲' : '▼') : '⇅'}</span>
+      </button>
     </th>
   )
 }
 
 function VprBadge({ score }: { score: number | null }) {
-  if (score == null) return <span className="dimmer" style={{ fontSize: 11 }}>—</span>
+  if (score == null) return <span className="dimmer" style={{ fontSize: 11 }}>n/a</span>
   const color = score >= 8 ? 'var(--sev-critical)' : score >= 5 ? 'var(--sev-high)' : 'var(--sev-medium)'
-  return <span className="mono" style={{ fontSize: 11, fontWeight: 700, color, background: `${color}20`, padding: '1px 5px', borderRadius: 3 }}>{score.toFixed(1)}</span>
+  return <span className="mono" style={{ fontSize: 11, fontWeight: 700, color, border: '1px solid var(--border)', padding: '1px 5px' }}>{score.toFixed(1)}</span>
 }
 
 function statusColor(s: string) {
@@ -86,35 +89,30 @@ export default function Vulnerabilities() {
 
   return (
     <>
-    <div className="page-pad" style={{ maxWidth: 1480, margin: '0 auto' }}>
+    <div className="page-pad operator-page vulnerabilities-page">
       {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, flexWrap: 'wrap', gap: 12 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <ShieldAlert size={18} style={{ color: 'var(--accent)' }} />
-          <div>
-            <h1 style={{ fontSize: 18, fontWeight: 700, color: 'var(--text-0)' }}>Vulnerabilities</h1>
-            <p style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 2 }}>All findings grouped by vulnerability type across all scans</p>
-          </div>
+      <div className="operator-head">
+        <div className="operator-heading">
+          <h1>Vulnerabilities <span>{vulns.length} loaded</span></h1>
         </div>
-        <div style={{ display: 'flex', gap: 8 }}>
+        <div className="operator-controls">
           <select value={severity} onChange={e => setSeverity(e.target.value)} className="select-field" style={{ width: 'auto' }}>
             {SEVERITIES.map(s => <option key={s} value={s}>{s || 'All severities'}</option>)}
           </select>
-          <div className="search" style={{ width: 220 }}>
+          <div className="search operator-search">
             <Search size={13} style={{ color: 'var(--text-3)', flexShrink: 0 }} />
-            <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search plugin or title…" style={{ minWidth: 0 }} />
+            <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search plugin or title" style={{ minWidth: 0 }} aria-label="Search vulnerabilities by plugin or title" />
           </div>
         </div>
       </div>
 
-      <div style={{ display: 'flex', gap: 16, height: 'calc(100vh - 180px)', minHeight: 0 }}>
+      <div className="operator-split" style={{ display: 'flex', gap: 16, height: 'calc(100vh - 150px)', minHeight: 0 }}>
         {/* Vuln table */}
-        <div className="panel" style={{ flex: selected ? '0 0 58%' : '1', overflow: 'auto' }}>
+        <div className="panel operator-table-panel" style={{ flex: selected ? '0 0 58%' : '1', overflow: 'auto' }}>
           {isLoading ? (
             <div className="dimmer" style={{ padding: 24, fontSize: 13 }}>Loading…</div>
           ) : vulns.length === 0 ? (
             <div style={{ padding: 48, textAlign: 'center', color: 'var(--text-3)' }}>
-              <ShieldAlert size={36} style={{ margin: '0 auto 12px', opacity: 0.3 }} />
               <p style={{ fontSize: 13 }}>No vulnerabilities found.</p>
             </div>
           ) : (
@@ -143,16 +141,16 @@ export default function Vulnerabilities() {
                       </td>
                       <td style={{ textAlign: 'center' }}>
                         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 12 }}>
-                          <Users size={11} style={{ opacity: 0.6 }} />{v.host_count}
+                          {v.host_count}
                         </span>
                       </td>
                       <td style={{ textAlign: 'center' }}>
                         <span style={{ fontSize: 12, color: v.open_count > 0 ? 'var(--sev-high)' : 'var(--ok)' }}>{v.open_count}</span>
                       </td>
                       <td><VprBadge score={v.max_vpr} /></td>
-                      <td className="mono dimmer" style={{ fontSize: 11 }}>{v.max_cvss?.toFixed(1) ?? '—'}</td>
-                      <td className="dimmer" style={{ fontSize: 11 }}>{v.first_seen_at ? relTime(v.first_seen_at) : '—'}</td>
-                      <td className="dimmer" style={{ fontSize: 11 }}>{v.last_seen_at ? relTime(v.last_seen_at) : '—'}</td>
+                      <td className="mono dimmer" style={{ fontSize: 11 }}>{v.max_cvss?.toFixed(1) ?? 'n/a'}</td>
+                      <td className="dimmer" style={{ fontSize: 11 }}>{v.first_seen_at ? relTime(v.first_seen_at) : 'n/a'}</td>
+                      <td className="dimmer" style={{ fontSize: 11 }}>{v.last_seen_at ? relTime(v.last_seen_at) : 'n/a'}</td>
                     </tr>
                   )
                 })}
@@ -163,9 +161,8 @@ export default function Vulnerabilities() {
 
         {/* Affected hosts panel */}
         {selected && (
-          <div className="panel" style={{ flex: '0 0 40%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+          <div className="panel operator-table-panel operator-detail-panel" style={{ flex: '0 0 40%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
             <div className="panel-head" style={{ gap: 8 }}>
-              <ShieldAlert size={13} style={{ color: 'var(--accent)' }} />
               <span className="panel-title" style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{selected.title}</span>
               <button onClick={() => setSelected(null)} className="btn btn-ghost btn-icon btn-sm"><X size={13} /></button>
             </div>
@@ -180,8 +177,8 @@ export default function Vulnerabilities() {
                 <tbody>
                   {hosts.map(h => (
                     <tr key={h.finding_id} onClick={() => setDetailFindingId(h.finding_id)} style={{ cursor: 'pointer' }} title="Click to view finding details">
-                      <td className="mono" style={{ fontSize: 12, color: 'var(--accent)' }}>{h.ip}</td>
-                      <td className="mono dimmer" style={{ fontSize: 11 }}>{h.port_number ?? '—'}</td>
+                      <td className="mono" style={{ fontSize: 12, color: 'var(--text-0)' }}>{h.ip}</td>
+                      <td className="mono dimmer" style={{ fontSize: 11 }}>{h.port_number ?? 'n/a'}</td>
                       <td style={{ fontSize: 11, color: 'var(--text-2)', maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{h.scan_name}</td>
                       <td>
                         <span style={{ fontSize: 10, fontWeight: 600, color: statusColor(h.remediation_status) }}>

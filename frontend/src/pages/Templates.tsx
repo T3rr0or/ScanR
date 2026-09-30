@@ -1,9 +1,10 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Trash2, Plus, Lock, User, FileText, Pencil, Check, X, Rocket } from 'lucide-react'
+import { Trash2, Plus, Lock, Pencil, Check, X, Rocket } from 'lucide-react'
 import { templatesApi, type ScanTemplate } from '@/api/templates'
 import { ProfileEditor, PORT_RANGES, configToJson, defaultProfileConfig, jsonToConfig, type ProfileConfig } from '@/components/ProfileEditor'
 import { scansApi } from '@/api/scans'
+import './ConfigCatalog.css'
 
 interface Props {
   onSelectTemplate?: (template: ScanTemplate) => void
@@ -62,7 +63,7 @@ export default function Templates({ onSelectTemplate }: Props) {
 
   function openUseTemplate(t: ScanTemplate) {
     setUseTemplate(t)
-    setScanName(`${t.name} — ${new Date().toLocaleDateString()}`)
+    setScanName(`${t.name} - ${new Date().toLocaleDateString()}`)
     setTargets('')
     setCreatedScanId(null)
     launchScanMut.reset()
@@ -80,13 +81,11 @@ export default function Templates({ onSelectTemplate }: Props) {
   const userTemplates = templates.filter(t => !t.is_system)
 
   return (
-    <div className="page-pad" style={{ maxWidth: 960 }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
-        <h1 style={{ fontSize: 20, fontWeight: 700, color: 'var(--text-0)' }}>Scan Templates</h1>
-        <button onClick={() => setShowCreate(true)} className="btn btn-primary btn-sm">
-          <Plus size={14} /> New Template
-        </button>
-      </div>
+    <div className="catalog-page templates-page">
+      <header className="catalog-header">
+        <div><h1>Scan templates</h1></div>
+        <div className="catalog-header-actions"><span className="catalog-count">{templates.length} TEMPLATES</span><button onClick={() => setShowCreate(true)} className="btn btn-primary btn-sm"><Plus size={13} /> New template</button></div>
+      </header>
 
       {showCreate && (
         <div className="panel" style={{ padding: 16, marginBottom: 20 }}>
@@ -120,11 +119,11 @@ export default function Templates({ onSelectTemplate }: Props) {
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
           {systemTemplates.length > 0 && (
-            <section>
+            <section className="catalog-section">
               <div style={{ fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-3)', marginBottom: 10, display: 'flex', alignItems: 'center', gap: 6 }}>
-                <Lock size={11} /> System Templates
+                System templates <span className="catalog-section-count">{systemTemplates.length}</span>
               </div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 12 }}>
+              <div className="template-rows">
                 {systemTemplates.map(t => (
                   <TemplateCard key={t.id} template={t} onSelect={onSelectTemplate} canEdit={false} canDelete={false} onUse={() => openUseTemplate(t)} />
                 ))}
@@ -133,11 +132,11 @@ export default function Templates({ onSelectTemplate }: Props) {
           )}
 
           {userTemplates.length > 0 && (
-            <section>
+            <section className="catalog-section">
               <div style={{ fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-3)', marginBottom: 10, display: 'flex', alignItems: 'center', gap: 6 }}>
-                <User size={11} /> My Templates
+                My templates <span className="catalog-section-count">{userTemplates.length}</span>
               </div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 12 }}>
+              <div className="template-rows">
                 {userTemplates.map(t => (
                   <TemplateCard
                     key={t.id} template={t} onSelect={onSelectTemplate}
@@ -164,7 +163,7 @@ export default function Templates({ onSelectTemplate }: Props) {
           style={{ position: 'fixed', inset: 0, zIndex: 50, background: 'oklch(0.05 0.01 255 / 0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}
           onClick={e => { if (e.target === e.currentTarget) closeUseTemplate() }}
         >
-          <div className="panel" style={{ maxWidth: 520, width: '100%', padding: 0, overflow: 'hidden', boxShadow: '0 24px 80px #0009' }}>
+          <div className="panel template-modal" style={{ maxWidth: 520, width: '100%', padding: 0, overflow: 'hidden' }}>
             {/* Header */}
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 18px', borderBottom: '1px solid var(--border)', background: 'var(--bg-2)' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -179,7 +178,7 @@ export default function Templates({ onSelectTemplate }: Props) {
             <div style={{ padding: '18px 20px', display: 'flex', flexDirection: 'column', gap: 14 }}>
               {createdScanId ? (
                 <>
-                  <div style={{ padding: 14, borderRadius: 8, background: 'oklch(0.22 0.05 145 / 0.3)', border: '1px solid var(--ok)' }}>
+                  <div style={{ padding: 14, background: 'transparent', border: '1px solid var(--ok)' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--ok)', fontWeight: 600, fontSize: 13, marginBottom: 4 }}>
                       <Check size={14} /> Scan created successfully
                     </div>
@@ -209,7 +208,7 @@ export default function Templates({ onSelectTemplate }: Props) {
                   </div>
                   <ProfilePreview profileJson={useTemplate.profile_json} />
                   {launchScanMut.isError && (
-                    <div style={{ padding: '8px 12px', borderRadius: 6, background: 'oklch(0.22 0.08 25 / 0.3)', border: '1px solid var(--sev-high)', fontSize: 12, color: 'var(--sev-high)' }}>
+                    <div style={{ padding: '8px 12px', background: 'transparent', border: '1px solid var(--sev-high)', fontSize: 12, color: 'var(--sev-high)' }}>
                       {launchScanMut.error instanceof Error ? launchScanMut.error.message : 'Failed to create scan'}
                     </div>
                   )}
@@ -242,7 +241,7 @@ function ProfilePreview({ profileJson }: { profileJson: Record<string, unknown> 
   const pluginDisplay = plugins.includes('*') ? 'All categories' : plugins.join(', ')
 
   return (
-    <div style={{ background: 'var(--bg-2)', border: '1px solid var(--border)', borderRadius: 6, padding: 12 }}>
+    <div className="template-profile-preview" style={{ background: 'transparent', border: '1px solid var(--border)', padding: 12 }}>
       <div className="dimmer" style={{ fontSize: 11, fontWeight: 600, marginBottom: 8 }}>Template profile</div>
       {[
         { label: 'Context', value: `${config.scan_context} / ${config.target_type === 'auto' ? 'auto target handling' : config.target_type}` },
@@ -304,7 +303,7 @@ function TemplateCard({
   // than casting the whole object away.
   const portRange = typeof pj?.port_range === 'string' ? pj.port_range : undefined
   const portLabel = pj
-    ? PORT_RANGES.find(r => r.value === portRange)?.label.split(' —')[0] ?? portRange ?? 'default'
+    ? PORT_RANGES.find(r => r.value === portRange)?.label.split(' \u2014')[0] ?? portRange ?? 'default'
     : 'default'
 
   if (editing) {
@@ -319,7 +318,7 @@ function TemplateCard({
           className="textarea"
           style={{ marginBottom: 10 }}
         />
-        <div style={{ background: 'var(--bg-2)', border: '1px solid var(--border)', borderRadius: 6, padding: 12, marginBottom: 12 }}>
+        <div style={{ background: 'transparent', border: '1px solid var(--border)', padding: 12, marginBottom: 12 }}>
           <ProfileEditor config={editProfile} onChange={setEditProfile} />
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
@@ -335,16 +334,15 @@ function TemplateCard({
   }
 
   return (
-    <div className="panel" style={{ padding: 14 }}>
+    <div className="panel template-row" style={{ padding: 14 }}>
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 }}>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-            <FileText size={13} style={{ color: 'var(--accent)', flexShrink: 0 }} />
             <span style={{ fontWeight: 600, fontSize: 13, color: 'var(--text-0)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {template.name}
             </span>
             {template.is_system && (
-              <span className="mono" style={{ fontSize: 10, padding: '1px 5px', borderRadius: 4, background: 'var(--bg-3)', color: 'var(--text-3)', display: 'inline-flex', alignItems: 'center', gap: 3, flexShrink: 0 }}>
+              <span className="mono" style={{ fontSize: 10, padding: '1px 5px', border: '1px solid var(--border)', color: 'var(--text-3)', display: 'inline-flex', alignItems: 'center', gap: 3, flexShrink: 0 }}>
                 <Lock size={8} /> system
               </span>
             )}

@@ -1,1033 +1,215 @@
-/**
- * AgentPanel — AI agent chat interface for the scan AI tab.
- * Extracted from ScanDetail.tsx so the tab layout stays clean.
- */
-import { useState, useRef, useEffect } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Plus } from "lucide-react";
-import api from "@/api/client";
-import { PROVIDER_LABEL } from "@/api/ai";
-import { useAuthStore } from "@/store/auth";
-import { isAdminToken } from "@/utils/jwt";
-import { StatusPill } from "@/components/ui";
-import Markdown from "@/components/Markdown";
+import { useEffect, useRef, useState } from 'react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { Download, Plus, Square, Send } from 'lucide-react'
+import api from '@/api/client'
+import { PROVIDER_LABEL } from '@/api/ai'
+import { useAuthStore } from '@/store/auth'
+import { isAdminToken } from '@/utils/jwt'
+import Markdown from '@/components/Markdown'
+import './AgentPanel.css'
 
-/* ── Types ──────────────────────────────────── */
 export interface AgentRun {
-	id: string;
-	scan_id: string;
-	status: string;
-	mode: string;
-	objective: string;
-	provider?: string | null;
-	model?: string | null;
-	stop_reason?: string | null;
-	final_text?: string | null;
-	actions: {
-		tool: string;
-		arguments: Record<string, unknown>;
-		result: string;
-	}[];
-	max_iterations?: number | null;
-	max_tokens?: number | null;
-	token_usage?: { input_tokens: number; output_tokens: number } | null;
-	error?: string | null;
-	pending_approval?: {
-		approval_id: string;
-		tool: string;
-		args: Record<string, unknown>;
-		reason: string;
-	} | null;
-	conversation?: {
-		role: string;
-		content?: string;
-		tool_calls?: {
-			id: string;
-			name: string;
-			arguments: Record<string, unknown>;
-		}[];
-		tool_call_id?: string;
-		name?: string;
-	}[];
-	created_at?: string | null;
+  id: string
+  scan_id: string
+  status: string
+  mode: string
+  objective: string
+  provider?: string | null
+  model?: string | null
+  stop_reason?: string | null
+  final_text?: string | null
+  actions: { tool: string; arguments: Record<string, unknown>; result: string }[]
+  max_iterations?: number | null
+  max_tokens?: number | null
+  token_usage?: { input_tokens: number; output_tokens: number } | null
+  error?: string | null
+  pending_approval?: { approval_id: string; tool: string; args: Record<string, unknown>; reason: string } | null
+  conversation?: {
+    role: string
+    content?: string
+    tool_calls?: { id: string; name: string; arguments: Record<string, unknown> }[]
+    tool_call_id?: string
+    name?: string
+  }[]
+  created_at?: string | null
 }
 
-/* ── Capability presets ─────────────────────── */
-const CAPS: Record<
-	string,
-	{
-		aggressive: boolean;
-		allow_exploitation: boolean;
-		allow_privilege_escalation: boolean;
-		allow_command_exec: boolean;
-		allow_target_egress: boolean;
-	}
-> = {
-	analyze: {
-		aggressive: false,
-		allow_exploitation: false,
-		allow_privilege_escalation: false,
-		allow_command_exec: false,
-		allow_target_egress: false,
-	},
-	active: {
-		aggressive: true,
-		allow_exploitation: false,
-		allow_privilege_escalation: false,
-		allow_command_exec: false,
-		allow_target_egress: false,
-	},
-	// Full grants the sandbox shell AND lets it reach the scan's authorized
-	// targets through the scope-enforcing relay. Without target egress the shell
-	// can only do local work.
-	full: {
-		aggressive: true,
-		allow_exploitation: true,
-		allow_privilege_escalation: true,
-		allow_command_exec: true,
-		allow_target_egress: true,
-	},
-};
+type Mode = 'guided' | 'autonomous'
+type Capability = 'analyze' | 'active' | 'full'
+const SETTINGS_KEY = 'scanr_agent_settings'
+const ACTIVE_STATUSES = ['queued', 'running']
+const CAPS: Record<Capability, Record<string, boolean>> = {
+  analyze: { aggressive: false, allow_exploitation: false, allow_privilege_escalation: false, allow_command_exec: false, allow_target_egress: false },
+  active: { aggressive: true, allow_exploitation: false, allow_privilege_escalation: false, allow_command_exec: false, allow_target_egress: false },
+  full: { aggressive: true, allow_exploitation: true, allow_privilege_escalation: true, allow_command_exec: true, allow_target_egress: true },
+}
+const CAP_LABEL: Record<Capability, string> = { analyze: 'Read-only', active: 'Active', full: 'Full access' }
 
-const CAP_LABEL: Record<string, string> = {
-	analyze: "Read-only",
-	active: "Active",
-	full: "Full",
-};
-
-const SETTINGS_KEY = "scanr_agent_settings";
-
-function loadSettings(): {
-	mode: "guided" | "autonomous";
-	capability: "analyze" | "active" | "full";
-	maxIterations: number;
-	maxTokens: number;
-	provider: string;
-} {
-	try {
-		const raw = localStorage.getItem(SETTINGS_KEY);
-		if (raw) return { provider: "", ...JSON.parse(raw) };
-	} catch {
-		/* ignore */
-	}
-	return {
-		mode: "guided",
-		capability: "analyze",
-		maxIterations: 25,
-		maxTokens: 200000,
-		provider: "",
-	};
+function loadSettings(): { mode: Mode; capability: Capability; provider: string } {
+  try {
+    const raw = JSON.parse(localStorage.getItem(SETTINGS_KEY) ?? '{}') as Record<string, unknown>
+    return {
+      mode: raw.mode === 'guided' ? 'guided' : 'autonomous',
+      capability: raw.capability === 'active' || raw.capability === 'full' ? raw.capability : 'analyze',
+      provider: typeof raw.provider === 'string' ? raw.provider : '',
+    }
+  } catch {
+    return { mode: 'autonomous', capability: 'analyze', provider: '' }
+  }
 }
 
-function saveSettings(s: {
-	mode: string;
-	capability: string;
-	maxIterations: number;
-	maxTokens: number;
-	provider: string;
-}) {
-	try {
-		localStorage.setItem(SETTINGS_KEY, JSON.stringify(s));
-	} catch {
-		/* ignore */
-	}
+function errorText(error: unknown): string | null {
+  if (!error) return null
+  const e = error as { response?: { data?: { detail?: string } }; message?: string }
+  return e.response?.data?.detail ?? e.message ?? 'Request failed'
 }
 
-/* ── Main component ─────────────────────────── */
-export default function AgentPanel({
-	scanId,
-	enabled,
-}: {
-	scanId: string;
-	enabled: boolean;
-}) {
-	const qc = useQueryClient();
-	const token = useAuthStore((s) => s.token);
-	const isAdmin = isAdminToken(token);
-
-	const [saved] = useState(loadSettings);
-	const [message, setMessage] = useState("");
-	const [mode, setMode] = useState<"guided" | "autonomous">(saved.mode);
-	const [maxIterations, setMaxIterations] = useState(saved.maxIterations);
-	const [maxTokens, setMaxTokens] = useState(saved.maxTokens);
-	const [capability, setCapability] = useState<"analyze" | "active" | "full">(
-		saved.capability,
-	);
-	const [provider, setProvider] = useState(saved.provider);
-	const [showSettings, setShowSettings] = useState(false);
-
-	// Configured providers, for the model switcher (provider with a key set).
-	const { data: aiStatus } = useQuery<{
-		providers: string[];
-		configured: Record<string, boolean>;
-		default_provider: string;
-	}>({
-		queryKey: ["ai-status"],
-		queryFn: () => api.get("/ai/status").then((r) => r.data),
-	});
-	const availableProviders = (aiStatus?.providers ?? []).filter(
-		(p) => aiStatus?.configured?.[p],
-	);
-	const [forceNew, setForceNew] = useState(false);
-	const [sending, setSending] = useState(false);
-	const chatRef = useRef<HTMLDivElement>(null);
-
-	// Persist settings whenever they change.
-	useEffect(() => {
-		saveSettings({ mode, capability, maxIterations, maxTokens, provider });
-	}, [mode, capability, maxIterations, maxTokens, provider]);
-
-	const { data: runs = [] } = useQuery<AgentRun[]>({
-		queryKey: ["ai-agent-runs", scanId],
-		queryFn: () =>
-			api.get(`/ai/scans/${scanId}/agent/runs`).then((r) => r.data),
-		refetchInterval: (q) =>
-			(q.state.data ?? []).some((r) => ["queued", "running"].includes(r.status))
-				? 4000
-				: false,
-	});
-
-	const launch = useMutation({
-		mutationFn: (msg: string) => {
-			const c = CAPS[capability];
-			return api
-				.post(`/ai/scans/${scanId}/agent`, {
-					mode,
-					objective: msg.trim(),
-					max_iterations: maxIterations,
-					max_tokens: maxTokens,
-					provider: provider || undefined,
-					aggressive: isAdmin && c.aggressive,
-					allow_exploitation: isAdmin && c.allow_exploitation,
-					allow_privilege_escalation: isAdmin && c.allow_privilege_escalation,
-					allow_command_exec: isAdmin && c.allow_command_exec,
-					allow_target_egress: isAdmin && c.allow_target_egress,
-				})
-				.then((r) => r.data);
-		},
-		onSuccess: () => {
-			setMessage("");
-			qc.invalidateQueries({ queryKey: ["ai-agent-runs", scanId] });
-		},
-		onSettled: () => setSending(false),
-	});
-
-	const chatMut = useMutation({
-		mutationFn: ({ runId, msg }: { runId: string; msg: string }) =>
-			api
-				.post(`/ai/agent/runs/${runId}/chat`, {
-					message: msg,
-					provider: provider || undefined,
-				})
-				.then((r) => r.data),
-		onSuccess: () => {
-			setMessage("");
-			qc.invalidateQueries({ queryKey: ["ai-agent-runs", scanId] });
-		},
-		onSettled: () => setSending(false),
-	});
-
-	const stopMut = useMutation({
-		mutationFn: (runId: string) =>
-			api.post(`/ai/agent/runs/${runId}/stop`).then((r) => r.data),
-		onSuccess: () =>
-			qc.invalidateQueries({ queryKey: ["ai-agent-runs", scanId] }),
-	});
-
-	const launchErr = (() => {
-		const e = (launch.error ?? chatMut.error) as {
-			response?: { data?: { detail?: string } };
-		} | null;
-		return e?.response?.data?.detail ?? null;
-	})();
-
-	const active = runs.some((r) => ["queued", "running"].includes(r.status));
-	const latestRun = runs[0];
-	const canChat =
-		latestRun?.status === "completed" && latestRun?.conversation?.length;
-
-	const send = () => {
-		const msg = message.trim();
-		if (
-			!msg ||
-			!enabled ||
-			launch.isPending ||
-			chatMut.isPending ||
-			active ||
-			sending
-		)
-			return;
-		setSending(true);
-		if (canChat && latestRun && !forceNew) {
-			chatMut.mutate({ runId: latestRun.id, msg });
-		} else {
-			setForceNew(false);
-			launch.mutate(msg);
-		}
-	};
-
-	useEffect(() => {
-		if (chatRef.current)
-			chatRef.current.scrollTop = chatRef.current.scrollHeight;
-	}, [runs]);
-
-	const exportTrace = async (runId: string) => {
-		const resp = await api.get(`/ai/agent/runs/${runId}/export`, {
-			params: { format: "md" },
-			responseType: "blob",
-		});
-		const url = URL.createObjectURL(resp.data as Blob);
-		const a = document.createElement("a");
-		a.href = url;
-		a.download = `agent-trace-${runId.slice(0, 8)}.md`;
-		document.body.appendChild(a);
-		a.click();
-		a.remove();
-		URL.revokeObjectURL(url);
-	};
-
-	// Map tool results back to the calls that produced them
-	const toolResults: Record<string, string> = {};
-	for (const m of latestRun?.conversation ?? []) {
-		if (m.role === "tool" && m.tool_call_id)
-			toolResults[m.tool_call_id] = m.content ?? "";
-	}
-
-	return (
-		<div
-			className="panel"
-			style={{
-				display: "flex",
-				flexDirection: "column",
-				flex: 1,
-				minHeight: 0,
-			}}
-		>
-			{/* Header with settings summary */}
-			<div className="panel-head" style={{ justifyContent: "space-between" }}>
-				<span className="panel-title">AI Agent</span>
-				<div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-					{!!latestRun?.conversation?.length && (
-						<button
-							className="btn btn-ghost btn-sm"
-							onClick={() => exportTrace(latestRun.id)}
-							title="Download the full agent trace (every command + result) for audit / cleanup"
-							style={{ fontSize: 11 }}
-						>
-							⬇ Export
-						</button>
-					)}
-					{canChat && (
-						<button
-							className="btn btn-primary btn-sm"
-							onClick={() => {
-								setForceNew(true);
-							}}
-							title="Start a new run with current settings"
-							style={{ fontSize: 11 }}
-						>
-							<Plus size={11} /> New
-						</button>
-					)}
-					<button
-						className="btn btn-ghost btn-sm"
-						onClick={() => setShowSettings((s) => !s)}
-						style={{ fontSize: 11 }}
-					>
-						{provider ? `${PROVIDER_LABEL[provider] ?? provider} · ` : ""}
-						{mode} · {CAP_LABEL[capability]} ·{" "}
-						{maxIterations === 0 ? "∞" : maxIterations} steps ·{" "}
-						{maxTokens === 0 ? "∞" : `${Math.round(maxTokens / 1000)}k`} tok{" "}
-						{showSettings ? "▲" : "▼"}
-					</button>
-				</div>
-			</div>
-
-			{/* Collapsible settings */}
-			{showSettings && (
-				<div
-					style={{
-						padding: "10px 14px",
-						borderBottom: "1px solid var(--border)",
-						display: "flex",
-						flexDirection: "column",
-						gap: 8,
-					}}
-				>
-					<div style={{ display: "flex", gap: 8 }}>
-						{(["guided", "autonomous"] as const).map((m) => (
-							<button
-								key={m}
-								className={`btn btn-sm ${mode === m ? "btn-primary" : "btn-ghost"}`}
-								onClick={() => setMode(m)}
-								style={{ flex: 1, fontSize: 11.5 }}
-							>
-								{m === "guided" ? "🛡 Guided (you approve)" : "🚀 Autonomous"}
-							</button>
-						))}
-					</div>
-					{availableProviders.length > 0 && (
-						<div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-							<span style={{ fontSize: 11, color: "var(--text-3)" }}>
-								Model:
-							</span>
-							<select
-								className="input"
-								value={provider}
-								onChange={(e) => setProvider(e.target.value)}
-								style={{ fontSize: 11.5, flex: 1 }}
-								title="Switch the AI model — applies to the next message, including mid-conversation"
-							>
-								<option value="">
-									Default
-									{aiStatus?.default_provider
-										? ` (${PROVIDER_LABEL[aiStatus.default_provider] ?? aiStatus.default_provider})`
-										: ""}
-								</option>
-								{availableProviders.map((p) => (
-									<option key={p} value={p}>
-										{PROVIDER_LABEL[p] ?? p}
-									</option>
-								))}
-							</select>
-						</div>
-					)}
-					<div
-						style={{
-							display: "flex",
-							alignItems: "center",
-							gap: 8,
-							flexWrap: "wrap",
-						}}
-					>
-						<span style={{ fontSize: 11, color: "var(--text-3)" }}>
-							Max steps:
-						</span>
-						<input
-							type="number"
-							className="input"
-							min={1}
-							max={200}
-							value={maxIterations === 0 ? "" : maxIterations}
-							disabled={maxIterations === 0}
-							placeholder="∞"
-							onChange={(e) =>
-								setMaxIterations(
-									Math.max(1, Math.min(200, Number(e.target.value) || 1)),
-								)
-							}
-							style={{ width: 48, fontSize: 11.5 }}
-						/>
-						<button
-							type="button"
-							className={`btn btn-sm ${maxIterations === 0 ? "btn-primary" : "btn-ghost"}`}
-							onClick={() => setMaxIterations((v) => (v === 0 ? 25 : 0))}
-							style={{ fontSize: 12, padding: "2px 8px" }}
-							title="No step limit"
-						>
-							∞
-						</button>
-						<span style={{ fontSize: 11, color: "var(--text-3)" }}>
-							Max tokens:
-						</span>
-						<input
-							type="number"
-							className="input"
-							min={1}
-							step={10}
-							value={maxTokens === 0 ? "" : Math.round(maxTokens / 1000)}
-							disabled={maxTokens === 0}
-							placeholder="∞"
-							onChange={(e) =>
-								setMaxTokens(
-									Math.max(
-										1000,
-										Math.min(2000000, (Number(e.target.value) || 1) * 1000),
-									),
-								)
-							}
-							style={{ width: 48, fontSize: 11.5 }}
-							title="Token safety cap (thousands)"
-						/>
-						<span style={{ fontSize: 11, color: "var(--text-3)" }}>k</span>
-						<button
-							type="button"
-							className={`btn btn-sm ${maxTokens === 0 ? "btn-primary" : "btn-ghost"}`}
-							onClick={() => setMaxTokens((v) => (v === 0 ? 200000 : 0))}
-							style={{ fontSize: 12, padding: "2px 8px" }}
-							title="No token limit"
-						>
-							∞
-						</button>
-					</div>
-					{isAdmin && (
-						<div style={{ display: "flex", gap: 6 }}>
-							{(["analyze", "active", "full"] as const).map((c) => (
-								<button
-									key={c}
-									className={`btn btn-sm ${capability === c ? "btn-primary" : "btn-ghost"}`}
-									onClick={() => setCapability(c)}
-									style={{ flex: 1, fontSize: 11 }}
-								>
-									{c === "analyze"
-										? "📋 Read-only"
-										: c === "active"
-											? "🔍 Active"
-											: "💣 Full"}
-								</button>
-							))}
-						</div>
-					)}
-				</div>
-			)}
-
-			{/* Chat messages */}
-			<div
-				ref={chatRef}
-				style={{
-					flex: 1,
-					overflowY: "auto",
-					padding: "10px 14px",
-					display: "flex",
-					flexDirection: "column",
-					gap: 8,
-				}}
-			>
-				{!latestRun && !active && !forceNew && (
-					<div
-						style={{
-							fontSize: 12,
-							color: "var(--text-3)",
-							textAlign: "center",
-							padding: 20,
-						}}
-					>
-						Send a message to start the agent.
-					</div>
-				)}
-
-				{!forceNew &&
-					latestRun?.conversation?.map((msg, i) => {
-						if (msg.role === "user") {
-							return (
-								<div
-									key={i}
-									style={{ display: "flex", justifyContent: "flex-end" }}
-								>
-									<div
-										style={{
-											maxWidth: "80%",
-											padding: "8px 12px",
-											borderRadius: 12,
-											borderBottomRightRadius: 4,
-											background: "var(--accent)",
-											color: "#fff",
-											fontSize: 13,
-											lineHeight: 1.5,
-										}}
-									>
-										{msg.content}
-									</div>
-								</div>
-							);
-						}
-						if (msg.role === "assistant") {
-							const hasTools = msg.tool_calls && msg.tool_calls.length > 0;
-							return (
-								<div
-									key={i}
-									style={{ display: "flex", flexDirection: "column", gap: 4 }}
-								>
-									{msg.content && (
-										<div
-											style={{
-												maxWidth: "85%",
-												padding: "8px 12px",
-												borderRadius: 12,
-												borderBottomLeftRadius: 4,
-												background: "var(--bg-2)",
-												border: "1px solid var(--border)",
-											}}
-										>
-											<Markdown>{msg.content}</Markdown>
-										</div>
-									)}
-									{hasTools && (
-										<ToolCallsBlock
-											calls={msg.tool_calls!}
-											results={toolResults}
-										/>
-									)}
-								</div>
-							);
-						}
-						return null;
-					})}
-
-				{/* Thinking indicator */}
-				{(launch.isPending ||
-					chatMut.isPending ||
-					(active && latestRun?.status !== "completed")) && (
-					<div
-						style={{
-							display: "flex",
-							gap: 8,
-							alignItems: "center",
-							padding: "8px 12px",
-						}}
-					>
-						<div
-							style={{
-								width: 8,
-								height: 8,
-								borderRadius: "50%",
-								background: "var(--accent)",
-								animation: "pulse-dot 1s infinite",
-							}}
-						/>
-						<span style={{ fontSize: 12, color: "var(--text-3)" }}>
-							Agent is thinking…
-						</span>
-						<span style={{ flex: 1 }} />
-						{latestRun && active && (
-							<button
-								className="btn btn-ghost btn-sm"
-								onClick={() => stopMut.mutate(latestRun.id)}
-								disabled={stopMut.isPending}
-								style={{ fontSize: 11, color: "var(--sev-high)" }}
-								title="Stop the agent after its current step"
-							>
-								{stopMut.isPending ? "Stopping…" : "⏹ Stop"}
-							</button>
-						)}
-					</div>
-				)}
-
-				{/* Approval prompt */}
-				{latestRun?.pending_approval && (
-					<ApprovalCard run={latestRun} scanId={scanId} />
-				)}
-
-				{/* Legacy run cards (non-chat runs) */}
-				{runs
-					.filter((r) => !r.conversation?.length)
-					.map((run) => (
-						<AgentRunCard key={run.id} run={run} scanId={scanId} />
-					))}
-
-				{launchErr && (
-					<div
-						style={{
-							color: "var(--sev-high)",
-							fontSize: 11.5,
-							textAlign: "center",
-						}}
-					>
-						{launchErr}
-					</div>
-				)}
-				{!enabled && (
-					<div
-						style={{
-							fontSize: 11,
-							color: "var(--text-3)",
-							textAlign: "center",
-						}}
-					>
-						Configure a provider key in Settings → AI first.
-					</div>
-				)}
-			</div>
-
-			{/* Input */}
-			<div
-				style={{
-					padding: "8px 14px",
-					borderTop: "1px solid var(--border)",
-					display: "flex",
-					gap: 8,
-				}}
-			>
-				<input
-					className="input"
-					placeholder={
-						canChat
-							? "Continue the conversation…"
-							: "What should the agent investigate?"
-					}
-					value={message}
-					onChange={(e) => setMessage(e.target.value)}
-					onKeyDown={(e) => {
-						if (e.key === "Enter" && !e.shiftKey) {
-							e.preventDefault();
-							send();
-						}
-					}}
-					disabled={!enabled || launch.isPending || chatMut.isPending || active}
-					style={{ flex: 1, fontSize: 13 }}
-				/>
-				<button
-					className="btn btn-primary btn-sm"
-					disabled={
-						!enabled ||
-						!message.trim() ||
-						launch.isPending ||
-						chatMut.isPending ||
-						active
-					}
-					onClick={send}
-				>
-					▶
-				</button>
-			</div>
-		</div>
-	);
+function runLabel(run: AgentRun): string {
+  const text = run.objective?.trim() || 'Scan investigation'
+  return text.length > 54 ? `${text.slice(0, 54)}…` : text
 }
 
-/* ── ToolCallsBlock ─────────────────────────── */
-function ToolCallsBlock({
-	calls,
-	results,
-}: {
-	calls: { id: string; name: string; arguments: Record<string, unknown> }[];
-	results: Record<string, string>;
-}) {
-	const [open, setOpen] = useState(false);
-	return (
-		<div style={{ marginLeft: 8 }}>
-			<button
-				onClick={() => setOpen((o) => !o)}
-				className="btn btn-ghost btn-sm"
-				style={{
-					fontSize: 11,
-					color: "var(--text-3)",
-					fontFamily: "var(--font-mono)",
-					padding: "2px 6px",
-				}}
-			>
-				{open ? "▾" : "▸"} {calls.length} tool call
-				{calls.length !== 1 ? "s" : ""}
-			</button>
-			{open && (
-				<div
-					style={{
-						display: "flex",
-						flexDirection: "column",
-						gap: 4,
-						marginTop: 4,
-					}}
-				>
-					{calls.map((tc, j) => (
-						<div
-							key={j}
-							style={{ display: "flex", flexDirection: "column", gap: 2 }}
-						>
-							<div
-								style={{
-									padding: "3px 8px",
-									borderRadius: 6,
-									background: "var(--bg-2)",
-									border: "1px solid var(--border)",
-									fontSize: 11,
-									fontFamily: "var(--font-mono)",
-									color: "var(--accent)",
-									wordBreak: "break-all",
-								}}
-							>
-								🔧 {tc.name}({JSON.stringify(tc.arguments)})
-							</div>
-							{results[tc.id] !== undefined && (
-								<div
-									style={{
-										marginLeft: 8,
-										padding: "3px 8px",
-										borderRadius: 6,
-										background: "var(--bg-1)",
-										border: "1px solid var(--border)",
-										fontSize: 10.5,
-										fontFamily: "var(--font-mono)",
-										color: "var(--text-3)",
-										maxHeight: 160,
-										overflowY: "auto",
-										whiteSpace: "pre-wrap",
-									}}
-								>
-									{results[tc.id].slice(0, 2000)}
-								</div>
-							)}
-						</div>
-					))}
-				</div>
-			)}
-		</div>
-	);
-}
+export default function AgentPanel({ scanId, enabled, autoScheduled = false }: { scanId: string; enabled: boolean; autoScheduled?: boolean }) {
+  const qc = useQueryClient()
+  const token = useAuthStore(s => s.token)
+  const isAdmin = isAdminToken(token)
+  const [saved] = useState(loadSettings)
+  const [mode, setMode] = useState<Mode>(saved.mode)
+  const [capability, setCapability] = useState<Capability>(isAdmin ? saved.capability : 'analyze')
+  const [provider, setProvider] = useState(saved.provider)
+  const [message, setMessage] = useState('')
+  const [showSettings, setShowSettings] = useState(false)
+  const [selectedRunId, setSelectedRunId] = useState<string | 'new' | null>(null)
+  const [stopRequested, setStopRequested] = useState(false)
+  const transcriptRef = useRef<HTMLDivElement>(null)
 
-/* ── ApprovalCard ───────────────────────────── */
-function ApprovalCard({ run, scanId }: { run: AgentRun; scanId: string }) {
-	const qc = useQueryClient();
-	const decide = useMutation({
-		mutationFn: (decision: "allow" | "deny") =>
-			api.post(`/ai/agent/runs/${run.id}/approval`, {
-				approval_id: run.pending_approval?.approval_id,
-				decision,
-			}),
-		onSuccess: () =>
-			qc.invalidateQueries({ queryKey: ["ai-agent-runs", scanId] }),
-	});
-	return (
-		<div
-			style={{
-				padding: 10,
-				borderRadius: 6,
-				background: "var(--bg-2)",
-				border: "2px solid var(--sev-medium)",
-			}}
-		>
-			<div
-				style={{
-					fontSize: 12.5,
-					fontWeight: 700,
-					color: "var(--sev-medium)",
-					marginBottom: 4,
-				}}
-			>
-				⏸ Agent paused — needs your approval
-			</div>
-			<div
-				style={{
-					fontSize: 11.5,
-					fontFamily: "var(--font-mono)",
-					color: "var(--text-2)",
-				}}
-			>
-				{run.pending_approval?.tool}(
-				{JSON.stringify(run.pending_approval?.args)})
-			</div>
-			<div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-				<button
-					className="btn btn-primary btn-sm"
-					disabled={decide.isPending}
-					onClick={() => decide.mutate("allow")}
-				>
-					✓ Approve
-				</button>
-				<button
-					className="btn btn-sm"
-					disabled={decide.isPending}
-					onClick={() => decide.mutate("deny")}
-					style={{ color: "var(--sev-high)", borderColor: "var(--sev-high)" }}
-				>
-					✗ Deny
-				</button>
-			</div>
-		</div>
-	);
-}
+  useEffect(() => {
+    try { localStorage.setItem(SETTINGS_KEY, JSON.stringify({ mode, capability, provider })) } catch { /* local storage may be unavailable */ }
+  }, [mode, capability, provider])
 
-/* ── AgentRunCard (legacy, non-chat runs) ───── */
-function AgentRunCard({ run, scanId }: { run: AgentRun; scanId: string }) {
-	const running = ["queued", "running"].includes(run.status);
-	const [open, setOpen] = useState(running);
-	const qc = useQueryClient();
+  const { data: aiStatus } = useQuery<{ providers: string[]; configured: Record<string, boolean>; default_provider: string }>({
+    queryKey: ['ai-status'], queryFn: () => api.get('/ai/status').then(r => r.data),
+  })
+  const availableProviders = (aiStatus?.providers ?? []).filter(p => aiStatus?.configured?.[p])
+  const { data: runs = [], error: runsError } = useQuery<AgentRun[]>({
+    queryKey: ['ai-agent-runs', scanId],
+    queryFn: () => api.get(`/ai/scans/${scanId}/agent/runs`).then(r => r.data),
+    refetchInterval: 3000,
+  })
+  const activeRun = runs.find(run => ACTIVE_STATUSES.includes(run.status))
+  const selectedRun = selectedRunId === 'new' ? undefined : runs.find(run => run.id === selectedRunId) ?? runs[0]
+  const canContinue = selectedRun?.status === 'completed' && Boolean(selectedRun.conversation?.length)
+  const newSession = selectedRunId === 'new' || !selectedRun
 
-	const stopLabel: Record<string, string> = {
-		end: "Agent finished",
-		budget: "Reached token limit",
-		max_iterations: "Reached step limit",
-		stopped: "Stopped by you",
-		error: "Error",
-	};
+  useEffect(() => {
+    if (!activeRun) setStopRequested(false)
+  }, [activeRun])
+  useEffect(() => {
+    if (transcriptRef.current) transcriptRef.current.scrollTop = transcriptRef.current.scrollHeight
+  }, [selectedRunId, selectedRun?.conversation, selectedRun?.final_text])
 
-	const decide = useMutation({
-		mutationFn: (decision: "allow" | "deny") =>
-			api.post(`/ai/agent/runs/${run.id}/approval`, {
-				approval_id: run.pending_approval?.approval_id,
-				decision,
-			}),
-		onSuccess: () =>
-			qc.invalidateQueries({ queryKey: ["ai-agent-runs", scanId] }),
-	});
+  const launch = useMutation({
+    mutationFn: (objective: string) => api.post<AgentRun>(`/ai/scans/${scanId}/agent`, {
+      mode, objective, provider: provider || undefined,
+      max_iterations: 0, max_tokens: 0,
+      ...Object.fromEntries(Object.entries(CAPS[capability]).map(([key, value]) => [key, isAdmin && value])),
+    }).then(r => r.data),
+    onSuccess: run => { setMessage(''); setSelectedRunId(run.id); qc.invalidateQueries({ queryKey: ['ai-agent-runs', scanId] }) },
+  })
+  const chat = useMutation({
+    mutationFn: ({ runId, text }: { runId: string; text: string }) => api.post(`/ai/agent/runs/${runId}/chat`, { message: text, provider: provider || undefined }).then(r => r.data),
+    onSuccess: () => { setMessage(''); qc.invalidateQueries({ queryKey: ['ai-agent-runs', scanId] }) },
+  })
+  const stop = useMutation({
+    mutationFn: (runId: string) => api.post(`/ai/agent/runs/${runId}/stop`).then(r => r.data),
+    onMutate: () => setStopRequested(true),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['ai-agent-runs', scanId] }),
+    onError: () => setStopRequested(false),
+  })
+  const decide = useMutation({
+    mutationFn: ({ runId, approvalId, decision }: { runId: string; approvalId: string; decision: 'allow' | 'deny' }) =>
+      api.post(`/ai/agent/runs/${runId}/approval`, { approval_id: approvalId, decision }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['ai-agent-runs', scanId] }),
+  })
 
-	return (
-		<div
-			style={{
-				border: "1px solid var(--border)",
-				borderRadius: 8,
-				padding: "10px 12px",
-			}}
-		>
-			<div
-				style={{
-					display: "flex",
-					alignItems: "center",
-					gap: 8,
-					flexWrap: "wrap",
-				}}
-			>
-				<StatusPill status={run.status} />
-				<span style={{ fontSize: 11, color: "var(--text-3)" }}>{run.mode}</span>
-				{run.provider && (
-					<span style={{ fontSize: 11, color: "var(--text-3)" }}>
-						{run.provider}/{run.model}
-					</span>
-				)}
-				{run.token_usage && (
-					<span style={{ fontSize: 11, color: "var(--text-3)" }}>
-						{run.token_usage.input_tokens + run.token_usage.output_tokens} tok
-					</span>
-				)}
-				{run.stop_reason && run.status === "completed" && (
-					<span style={{ fontSize: 10.5, color: "var(--text-3)" }}>
-						· {stopLabel[run.stop_reason] ?? run.stop_reason}
-					</span>
-				)}
-				<span style={{ flex: 1 }} />
-				{run.actions.length > 0 && (
-					<button
-						className="btn btn-ghost btn-sm"
-						onClick={() => setOpen((o) => !o)}
-					>
-						{open
-							? "Hide steps"
-							: `${run.actions.length} step${run.actions.length !== 1 ? "s" : ""}`}
-					</button>
-				)}
-			</div>
-			{run.objective && (
-				<div style={{ fontSize: 11.5, color: "var(--text-2)", marginTop: 4 }}>
-					{run.objective}
-				</div>
-			)}
+  const send = () => {
+    const text = message.trim()
+    if (!text || !enabled || activeRun || launch.isPending || chat.isPending) return
+    if (canContinue && selectedRun && !newSession) chat.mutate({ runId: selectedRun.id, text })
+    else launch.mutate(text)
+  }
+  const exportTrace = async (runId: string) => {
+    const response = await api.get(`/ai/agent/runs/${runId}/export`, { params: { format: 'md' }, responseType: 'blob' })
+    const url = URL.createObjectURL(response.data as Blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `agent-trace-${runId.slice(0, 8)}.md`
+    link.click()
+    window.setTimeout(() => URL.revokeObjectURL(url), 0)
+  }
 
-			{run.pending_approval && (
-				<div
-					style={{
-						marginTop: 8,
-						padding: 10,
-						borderRadius: 6,
-						background: "var(--bg-2)",
-						border: "2px solid var(--sev-medium)",
-					}}
-				>
-					<div
-						style={{
-							fontSize: 12.5,
-							fontWeight: 700,
-							color: "var(--sev-medium)",
-							marginBottom: 4,
-						}}
-					>
-						⏸ Agent paused — needs your approval
-					</div>
-					<div
-						style={{
-							fontSize: 11.5,
-							fontFamily: "var(--font-mono)",
-							color: "var(--text-2)",
-						}}
-					>
-						{run.pending_approval.tool}(
-						{JSON.stringify(run.pending_approval.args)})
-					</div>
-					<div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-						<button
-							className="btn btn-primary btn-sm"
-							disabled={decide.isPending}
-							onClick={() => decide.mutate("allow")}
-						>
-							✓ Approve
-						</button>
-						<button
-							className="btn btn-sm"
-							disabled={decide.isPending}
-							onClick={() => decide.mutate("deny")}
-							style={{
-								color: "var(--sev-high)",
-								borderColor: "var(--sev-high)",
-							}}
-						>
-							✗ Deny
-						</button>
-					</div>
-				</div>
-			)}
+  const toolResults: Record<string, string> = {}
+  for (const entry of selectedRun?.conversation ?? []) {
+    if (entry.role === 'tool' && entry.tool_call_id) toolResults[entry.tool_call_id] = entry.content ?? ''
+  }
+  const busy = Boolean(activeRun || launch.isPending || chat.isPending)
+  const sendError = errorText(launch.error ?? chat.error ?? stop.error ?? decide.error ?? runsError)
 
-			{run.error && (
-				<div
-					style={{
-						color: "var(--sev-high)",
-						fontSize: 12,
-						marginTop: 6,
-						padding: 8,
-						background: "var(--bg-2)",
-						borderRadius: 4,
-					}}
-				>
-					{run.error}
-				</div>
-			)}
+  return (
+    <section className="agent-workspace" aria-label="AI agent workspace">
+      <aside className="agent-history" aria-label="Agent sessions">
+        <div className="agent-history-head"><span>Sessions</span><button type="button" onClick={() => { setSelectedRunId('new'); setMessage('') }} disabled={busy} title="Start a new session"><Plus size={15} /> New</button></div>
+        <div className="agent-history-list">
+          {runs.length === 0 && <p>No sessions yet</p>}
+          {runs.map(run => <button type="button" key={run.id} className={`agent-history-item ${selectedRun?.id === run.id && !newSession ? 'is-selected' : ''}`} onClick={() => setSelectedRunId(run.id)}>
+            <span className="agent-history-title">{runLabel(run)}</span>
+            <span className="agent-history-meta"><span className={`agent-state agent-state-${run.status}`}>{run.status}</span><span>{run.mode}</span></span>
+          </button>)}
+        </div>
+      </aside>
 
-			{run.final_text && (
-				<div style={{ marginTop: 10 }}>
-					<div
-						style={{
-							fontSize: 11,
-							fontWeight: 600,
-							color: "var(--text-2)",
-							marginBottom: 4,
-						}}
-					>
-						📝 Agent report
-					</div>
-					<Markdown>{run.final_text}</Markdown>
-				</div>
-			)}
+      <div className="agent-main">
+        <header className="agent-header">
+          <div className="agent-header-copy"><span className="agent-eyebrow">Agent session</span><h2>{newSession ? 'New investigation' : runLabel(selectedRun!)}</h2><div className="agent-run-meta">
+            {selectedRun ? <><span className={`agent-state agent-state-${selectedRun.status}`}>{selectedRun.status}</span><span>{selectedRun.mode}</span><span>{selectedRun.provider ? `${PROVIDER_LABEL[selectedRun.provider] ?? selectedRun.provider}${selectedRun.model ? ` / ${selectedRun.model}` : ''}` : 'Default model'}</span>{selectedRun.token_usage && <span>{(selectedRun.token_usage.input_tokens + selectedRun.token_usage.output_tokens).toLocaleString()} tokens used</span>}</> : <span>Runs until it finishes or you stop it</span>}
+          </div></div>
+          <div className="agent-header-actions">
+            {selectedRun && <button type="button" className="agent-button" onClick={() => void exportTrace(selectedRun.id)}><Download size={14} /> Export trace</button>}
+            <button type="button" className="agent-button" onClick={() => setShowSettings(value => !value)} aria-expanded={showSettings}>Settings</button>
+            {activeRun && <button type="button" className="agent-button agent-stop" onClick={() => stop.mutate(activeRun.id)} disabled={stop.isPending || stopRequested}><Square size={12} fill="currentColor" /> {stop.isPending || stopRequested ? 'Stopping…' : 'Stop agent'}</button>}
+          </div>
+        </header>
 
-			{run.status === "completed" && !run.final_text && !run.error && (
-				<div
-					style={{
-						fontSize: 11.5,
-						color: "var(--text-3)",
-						marginTop: 6,
-						fontStyle: "italic",
-					}}
-				>
-					Agent stopped without producing a report. Expand steps to see what
-					happened.
-				</div>
-			)}
+        {showSettings && <div className="agent-settings">
+          <div className="agent-setting-group"><span>Mode</span><div className="agent-segments">{(['autonomous', 'guided'] as Mode[]).map(value => <button type="button" key={value} className={mode === value ? 'is-selected' : ''} onClick={() => setMode(value)} aria-pressed={mode === value}>{value === 'autonomous' ? 'Autonomous' : 'Guided approval'}</button>)}</div></div>
+          <div className="agent-setting-group"><label htmlFor="agent-provider">Provider</label><select id="agent-provider" value={provider} onChange={event => setProvider(event.target.value)}><option value="">Default{aiStatus?.default_provider ? ` (${PROVIDER_LABEL[aiStatus.default_provider] ?? aiStatus.default_provider})` : ''}</option>{availableProviders.map(value => <option key={value} value={value}>{PROVIDER_LABEL[value] ?? value}</option>)}</select></div>
+          {isAdmin && <div className="agent-setting-group"><span>Access</span><div className="agent-segments">{(['analyze', 'active', 'full'] as Capability[]).map(value => <button type="button" key={value} className={capability === value ? 'is-selected' : ''} onClick={() => setCapability(value)} aria-pressed={capability === value}>{CAP_LABEL[value]}</button>)}</div></div>}
+          <p className="agent-settings-note">No step or session token cap. Access permissions still control what the agent can do.</p>
+        </div>}
 
-			{open && run.actions.length > 0 && (
-				<div
-					style={{
-						marginTop: 8,
-						display: "flex",
-						flexDirection: "column",
-						gap: 6,
-						maxHeight: 400,
-						overflowY: "auto",
-					}}
-				>
-					{run.actions.map((a, i) => (
-						<div
-							key={i}
-							style={{
-								fontSize: 11.5,
-								fontFamily: "var(--font-mono)",
-								color: "var(--text-2)",
-							}}
-						>
-							<div style={{ color: "var(--accent)", fontWeight: 600 }}>
-								→ {a.tool}({JSON.stringify(a.arguments)})
-							</div>
-							<div style={{ whiteSpace: "pre-wrap", color: "var(--text-3)" }}>
-								{a.result.slice(0, 1200)}
-							</div>
-						</div>
-					))}
-				</div>
-			)}
-		</div>
-	);
+        {!enabled && <div className="agent-notice" role="status"><strong>AI provider required</strong><span>Add a provider key in <a href="#/settings">Settings → AI providers</a> to start an agent. Previous sessions remain available below.</span></div>}
+        {autoScheduled && !activeRun && runs.length === 0 && <div className="agent-notice" role="status"><strong>Automatic agent scheduled</strong><span>The agent starts after scan checks. Use Stop AI in the scan header to cancel before it starts.</span></div>}
+        {sendError && <div className="agent-error" role="alert">{sendError}</div>}
+
+        <div className="agent-transcript" ref={transcriptRef}>
+          {newSession ? <div className="agent-empty"><span>AI AGENT</span><h3>Set an objective for this scan.</h3><p>Ask the agent to investigate findings, verify exposure, or explain a route. It keeps working until it finishes or you stop it.</p></div> : <div className="agent-messages">
+            {selectedRun?.conversation?.map((entry, index) => {
+              if (entry.role === 'tool') return null
+              if (entry.role === 'user') return <article className="agent-message agent-message-user" key={index}><div className="agent-message-label">You</div><div className="agent-message-body">{entry.content}</div></article>
+              if (entry.role === 'assistant') return <article className="agent-message" key={index}><div className="agent-message-label">Agent</div>{entry.content && <div className="agent-message-body"><Markdown>{entry.content}</Markdown></div>}{entry.tool_calls?.length ? <div className="agent-tools">{entry.tool_calls.map(call => <details key={call.id}><summary><span>{call.name}</span><span>View command and result</span></summary><div><strong>Arguments</strong><pre>{JSON.stringify(call.arguments, null, 2)}</pre><strong>Result</strong><pre>{toolResults[call.id] ?? 'Waiting for result…'}</pre></div></details>)}</div> : null}</article>
+              return null
+            })}
+            {!selectedRun?.conversation?.length && selectedRun?.actions?.length ? <div className="agent-tools agent-legacy-tools">{selectedRun.actions.map((action, index) => <details key={index}><summary><span>{action.tool}</span><span>View command and result</span></summary><div><strong>Arguments</strong><pre>{JSON.stringify(action.arguments, null, 2)}</pre><strong>Result</strong><pre>{action.result}</pre></div></details>)}</div> : null}
+            {selectedRun?.final_text && !selectedRun.conversation?.some(entry => entry.role === 'assistant' && entry.content === selectedRun.final_text) && <article className="agent-message"><div className="agent-message-label">Report</div><div className="agent-message-body"><Markdown>{selectedRun.final_text}</Markdown></div></article>}
+            {selectedRun?.error && <div className="agent-error" role="alert">{selectedRun.error}</div>}
+            {selectedRun?.pending_approval && <div className="agent-approval"><strong>Approval required</strong><p>{selectedRun.pending_approval.reason || `${selectedRun.pending_approval.tool} requires approval.`}</p><pre>{selectedRun.pending_approval.tool}({JSON.stringify(selectedRun.pending_approval.args, null, 2)})</pre><div><button type="button" onClick={() => decide.mutate({ runId: selectedRun.id, approvalId: selectedRun.pending_approval!.approval_id, decision: 'allow' })} disabled={decide.isPending}>Approve</button><button type="button" onClick={() => decide.mutate({ runId: selectedRun.id, approvalId: selectedRun.pending_approval!.approval_id, decision: 'deny' })} disabled={decide.isPending}>Deny</button></div></div>}
+            {activeRun?.id === selectedRun?.id && <div className="agent-working"><span className="agent-working-mark" />{stopRequested ? 'Stopping after the current operation…' : activeRun.status === 'queued' ? 'Agent queued…' : 'Agent working…'}</div>}
+            {selectedRun?.stop_reason && <div className="agent-end-state">Run ended: {selectedRun.stop_reason.replace(/_/g, ' ')}</div>}
+          </div>}
+        </div>
+
+        <footer className="agent-composer"><div className="agent-composer-inner"><label htmlFor="agent-message">{canContinue && !newSession ? 'Continue this session' : 'New objective'}</label><textarea id="agent-message" value={message} onChange={event => setMessage(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); send() } }} placeholder="What should the agent investigate?" rows={3} disabled={!enabled} /><div className="agent-composer-bottom"><span>{busy ? 'Agent is active. Stop it or wait before sending.' : 'Enter to send · Shift+Enter for a new line'}</span><button type="button" className="agent-send" onClick={send} disabled={!enabled || !message.trim() || busy}><Send size={14} /> {canContinue && !newSession ? 'Send' : 'Start agent'}</button></div></div></footer>
+      </div>
+    </section>
+  )
 }

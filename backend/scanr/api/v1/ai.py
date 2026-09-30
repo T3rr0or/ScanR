@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from scanr.ai import settings_store as store
@@ -428,9 +429,9 @@ class AgentRunRequest(BaseModel):
     objective: str = Field(default="", max_length=2000)
     provider: str | None = None
     model: str | None = None
-    # 0 = unlimited (rely on the Stop button); None = engine default.
-    max_iterations: int | None = Field(default=None, ge=0, le=200)
-    max_tokens: int | None = Field(default=None, ge=0, le=2_000_000)
+    # 0 or omitted = unlimited; an operator may still choose a ceiling.
+    max_iterations: int | None = Field(default=None, ge=0)
+    max_tokens: int | None = Field(default=None, ge=0)
     # Aggressive opt-ins — each gated; only take effect with aggressive=True.
     aggressive: bool = False
     allow_privilege_escalation: bool = False
@@ -477,7 +478,6 @@ def _agent_run_dict(run: AiAgentRun) -> dict:
 
 
 @router.post("/scans/{scan_id}/agent", status_code=202)
-@limiter.limit("5/minute")
 async def launch_agent(
     request: Request,
     scan_id: str,
@@ -528,8 +528,8 @@ async def launch_agent(
         objective=objective,
         provider=provider_name,
         model=body.model,
-        max_iterations=body.max_iterations,
-        max_tokens=body.max_tokens,
+        max_iterations=body.max_iterations if body.max_iterations is not None else 0,
+        max_tokens=body.max_tokens if body.max_tokens is not None else 0,
         capabilities=_json.dumps(caps) if caps["aggressive"] else None,
     )
     db.add(run)
@@ -704,7 +704,6 @@ class ChatBody(BaseModel):
 
 
 @router.post("/agent/runs/{run_id}/chat")
-@limiter.limit("10/minute")
 async def agent_chat(
     request: Request,
     run_id: str,
@@ -754,13 +753,63 @@ async def agent_chat(
     conv = _json.loads(run.conversation) if run.conversation else []
     conv.append({"role": "user", "content": body.message})
     run.conversation = _json.dumps(conv)
+    # A Stop that raced with the previous run's completion may have left a
+    # cancel flag. Clear it before queuing a fresh chat turn, never in the
+    # worker (where it could erase a new Stop request).
+    try:
+        import redis.asyncio as aioredis
+
+        redis_client = aioredis.from_url(get_settings().redis_url, decode_responses=True)
+        try:
+            await redis_client.delete(f"scanr:ai:cancel:{run_id}")
+        finally:
+            await redis_client.aclose()
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Could not prepare agent resume: {exc}") from exc
     run.status = "queued"
+    # Fresh queue time for the watchdog; the previous turn's heartbeat is stale.
+    run.last_heartbeat = datetime.now(tz=timezone.utc)
     await db.commit()
 
     from scanr.tasks.agent_tasks import run_ai_agent_task
 
     run_ai_agent_task.delay(run.id, resume=True)
     return _agent_run_dict(run)
+
+
+async def _signal_agent_stop(db: AsyncSession, run: AiAgentRun) -> bool:
+    """Stop a queued run atomically or signal its active worker.
+
+    A queued run is completed in the database before it can be claimed by a
+    worker. If the worker wins the race, the Redis signal stops its loop.
+    """
+    if run.status not in ("queued", "running"):
+        return False
+    if run.status == "queued":
+        updated = await db.execute(
+            update(AiAgentRun)
+            .where(AiAgentRun.id == run.id, AiAgentRun.status == "queued")
+            .values(status="completed", stop_reason="stopped", pending_approval=None)
+        )
+        await db.commit()
+        if updated.rowcount == 1:
+            await db.refresh(run)
+            return True
+
+    import json as _json
+    import redis.asyncio as aioredis
+
+    redis_client = aioredis.from_url(get_settings().redis_url, decode_responses=True)
+    try:
+        await redis_client.set(f"scanr:ai:cancel:{run.id}", "1", ex=3600)
+        pending = _json.loads(run.pending_approval) if run.pending_approval else None
+        if pending and pending.get("approval_id"):
+            await redis_client.set(
+                f"scanr:ai:approval:{pending['approval_id']}", "deny", ex=600
+            )
+    finally:
+        await redis_client.aclose()
+    return True
 
 
 @router.post("/agent/runs/{run_id}/stop")
@@ -779,16 +828,48 @@ async def agent_stop(
     if run.status not in ("running", "queued"):
         return _agent_run_dict(run)
 
-    # Set a cancel flag the agent loop polls each iteration (fail-safe TTL so a
-    # stale flag can't linger). The run finishes itself with stop_reason=stopped.
-    import redis.asyncio as aioredis
-
-    r = aioredis.from_url(get_settings().redis_url, decode_responses=True)
     try:
-        await r.set(f"scanr:ai:cancel:{run_id}", "1", ex=3600)
-    finally:
-        await r.aclose()
+        await _signal_agent_stop(db, run)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Could not signal stop: {exc}") from exc
     return _agent_run_dict(run)
+
+
+@router.post("/scans/{scan_id}/agent/stop")
+@limiter.limit("30/minute")
+async def stop_scan_agent(
+    request: Request,
+    scan_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_scopes("scans:write", "ai:agent")),
+):
+    """Stop active AI work and disable a scan's pending auto launch.
+
+    This endpoint also works before the scan worker has created an agent run.
+    It does not cancel or pause the underlying scan.
+    """
+    await _own_scan(db, scan_id, current_user.id)
+    await db.execute(
+        update(Scan)
+        .where(Scan.id == scan_id, Scan.user_id == current_user.id)
+        .values(ai_agent_enabled=False)
+    )
+    await db.commit()
+    runs = (
+        await db.execute(
+            select(AiAgentRun).where(
+                AiAgentRun.scan_id == scan_id,
+                AiAgentRun.status.in_(("queued", "running")),
+            )
+        )
+    ).scalars().all()
+    stopped = 0
+    try:
+        for run in runs:
+            stopped += int(await _signal_agent_stop(db, run))
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Could not signal stop: {exc}") from exc
+    return {"ok": True, "stopped_runs": stopped, "ai_agent_enabled": False}
 
 
 @router.post("/agent/runs/{run_id}/approval")
@@ -839,9 +920,7 @@ async def cancel_agent_run(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_scopes("scans:write", "ai:agent")),
 ):
-    """Operator Stop for an in-flight run. Sets a Redis cancel flag the worker's
-    agent loop checks between iterations; the run stops cleanly and is marked
-    'cancelled' with its partial transcript preserved."""
+    """Compatibility endpoint for stopping a run; uses the same semantics as Stop."""
     run = await db.get(AiAgentRun, run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="Agent run not found")
@@ -850,18 +929,8 @@ async def cancel_agent_run(
     if run.status not in ("queued", "running"):
         raise HTTPException(status_code=409, detail=f"Run is {run.status}; nothing to stop.")
 
-    # If the agent has a pending approval, also release it as a deny so the loop
-    # unblocks immediately rather than waiting out the approval timeout.
     try:
-        from scanr.db.redis import get_redis
-
-        r = get_redis()
-        await r.setex(f"scanr:ai:cancel:{run_id}", 600, "1")
-        import json as _json
-
-        pending = _json.loads(run.pending_approval) if run.pending_approval else None
-        if pending and pending.get("approval_id"):
-            await r.setex(f"scanr:ai:approval:{pending['approval_id']}", 600, "deny")
+        await _signal_agent_stop(db, run)
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Could not signal stop: {exc}")
     logger.info("agent run %s stop requested by %s", run_id, current_user.email)

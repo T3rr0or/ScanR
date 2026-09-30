@@ -1,10 +1,9 @@
-import { useState, useMemo, type Dispatch, type ReactNode, type SetStateAction } from 'react'
+import { useState, useMemo, useEffect, type Dispatch, type ReactNode, type SetStateAction } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
-  Activity, Scan, Plus, Download, Search,
-  Terminal, Play, StopCircle, GitCompare, Trash2,
-  Radar, Globe, Zap, SlidersHorizontal, RotateCcw,
-  X, FileText, AlertTriangle, Check, Pencil,
+  Plus, Download, Search,
+  Play, Zap, SlidersHorizontal,
+  X, FileText, AlertTriangle, Check,
 } from 'lucide-react'
 import { scansApi, type ScanCreate, type ScanCredentialIn } from '@/api/scans'
 import { templatesApi, type ScanTemplate } from '@/api/templates'
@@ -14,15 +13,18 @@ import { useAuthStore } from '@/store/auth'
 import { isAdminToken, isViewerToken } from '@/utils/jwt'
 import { ALL_CATEGORIES, PORT_RANGES, configToJson, defaultProfileConfig, jsonToConfig, type ProfileConfig } from '@/components/ProfileEditor'
 import ScanDelta from './ScanDelta'
-import { StatusPill, SeverityBar, CHML, Meter, fmtDuration, relTime } from '@/components/ui'
+import { relTime } from '@/components/ui'
+import './Scans.css'
 
 interface Props {
   onOpenScan?: (id: string) => void
+  openNewScan?: boolean
+  onNewScanOpened?: () => void
 }
 
 const PAGE_SIZE = 50
 
-type FilterStatus = 'all' | 'running' | 'completed' | 'pending' | 'failed'
+type FilterStatus = 'all' | 'running' | 'completed' | 'pending' | 'failed' | 'cancelled'
 
 /* ── Inline credential state ─────────────────────────────────────── */
 interface InlineCredential {
@@ -49,7 +51,7 @@ const ROLE_HELP: Record<InlineCredential['role'], string> = {
   local_admin: 'Local administrator on a specific machine (not domain-wide)',
   ssh: 'SSH key or password for remote login to Linux/Unix/macOS',
   snmp: 'SNMP community string for network device info queries',
-  generic: 'Any credential type — used as fallback when other roles do not match',
+  generic: 'Any credential type: used as fallback when other roles do not match',
 }
 
 const TYPE_LABELS: Record<InlineCredential['type'], string> = {
@@ -121,14 +123,6 @@ const PERFORMANCE_HELP: Record<ProfileConfig['performance_profile'], { title: st
     title: 'Custom',
     desc: 'Use the advanced numeric settings below instead of a preset.',
   },
-}
-
-function TemplateIcon({ name, size = 14 }: { name: string; size?: number }) {
-  if (name === 'zap')     return <Zap size={size} />
-  if (name === 'radar')   return <Radar size={size} />
-  if (name === 'globe')   return <Globe size={size} />
-  if (name === 'sliders') return <SlidersHorizontal size={size} />
-  return <Scan size={size} />
 }
 
 type TargetPreviewType = 'ip' | 'cidr' | 'range' | 'hostname' | 'domain' | 'invalid'
@@ -236,24 +230,28 @@ function buildTargetPreview(targets: string, configured: ProfileConfig['target_t
 /* ─────────────────────────────────────────────────────────────────
    Main page component
    ───────────────────────────────────────────────────────────────── */
-export default function Scans({ onOpenScan }: Props) {
+export default function Scans({ onOpenScan, openNewScan, onNewScanOpened }: Props) {
   const qc = useQueryClient()
   // Read-only accounts: the API rejects their writes with 403, so don't offer
   // the action in the first place.
   const isViewer = isViewerToken(useAuthStore(s => s.token))
   const [showForm, setShowForm]       = useState(false)
+  useEffect(() => {
+    if (!openNewScan) return
+    setShowForm(true)
+    onNewScanOpened?.()
+  }, [openNewScan, onNewScanOpened])
   const [editScanId, setEditScanId]   = useState<string | null>(null)
   const [rerunScan, setRerunScan]     = useState<{ id: string; name: string; targets?: string[]; profile_json?: string | null } | null>(null)
   const [deltaScan, setDeltaScan]     = useState<{ id: string; name: string } | null>(null)
   const [page, setPage]               = useState(0)
   const [filter, setFilter]           = useState<FilterStatus>('all')
   const [search, setSearch]           = useState('')
-  const [lastUpdated]                 = useState<Date>(new Date())
 
   const [mutError, setMutError] = useState<string | null>(null)
   const _onErr = (e: unknown) => setMutError(e instanceof Error ? e.message : String(e))
 
-  const { data: scans = [] } = useQuery({
+  const { data: scans = [], dataUpdatedAt, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['scans', page],
     queryFn: () => scansApi.list({ limit: PAGE_SIZE, offset: page * PAGE_SIZE }),
     refetchInterval: (query) =>
@@ -279,7 +277,7 @@ export default function Scans({ onOpenScan }: Props) {
       }
       return scan
     },
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['scans'] }); setShowForm(false) },
+    onSuccess: (scan) => { qc.invalidateQueries({ queryKey: ['scans'] }); setShowForm(false); onOpenScan?.(scan.id) },
     onError: _onErr,
   })
 
@@ -323,6 +321,7 @@ export default function Scans({ onOpenScan }: Props) {
     completed: scans.filter(s => s.status === 'completed').length,
     pending:   scans.filter(s => s.status === 'pending').length,
     failed:    scans.filter(s => s.status === 'failed').length,
+    cancelled: scans.filter(s => s.status === 'cancelled').length,
   }), [scans])
 
   /* filter + search */
@@ -339,7 +338,7 @@ export default function Scans({ onOpenScan }: Props) {
   }, [scans, filter, search])
 
   return (
-    <div className="page-pad" style={{ maxWidth: 1480, margin: '0 auto' }}>
+    <div className="page-pad scans-page">
       {mutError && (
         <div style={{ background: 'var(--sev-high)', color: '#fff', borderRadius: 6, padding: '8px 14px', marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
           <AlertTriangle size={14} />
@@ -395,18 +394,13 @@ export default function Scans({ onOpenScan }: Props) {
         />
       )}
 
-      {/* ── Page header ── */}
-      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 16 }}>
-        <div>
-          <h1 style={{ margin: 0, fontSize: 20, fontWeight: 600, letterSpacing: '-0.01em', color: 'var(--text-0)' }}>
-            Scans
-          </h1>
-          <div className="mono" style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 3 }}>
-            {scans.length} total · last updated {relTime(lastUpdated.toISOString())}
-          </div>
+      <header className="scans-header">
+        <div className="scans-heading">
+          <h1>Scans</h1>
+          <span>{isError ? 'Connection error' : isLoading ? 'Loading' : `Updated ${relTime(new Date(dataUpdatedAt).toISOString())}`}</span>
         </div>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn" onClick={() => {
+        <div className="scans-header-actions">
+          <button type="button" className="scans-button" disabled={isLoading || isError} onClick={() => {
             const csvQ = (v: unknown) => {
               const s = String(v ?? '')
               const safe = /^[=+\-@\t\r]/.test(s) ? `'${s}` : s
@@ -418,247 +412,86 @@ export default function Scans({ onOpenScan }: Props) {
                 new Date(s.created_at).toISOString()].map(csvQ).join(','))
             ].join('\n')
             const a = document.createElement('a')
-            a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }))
-            a.download = 'scans.csv'; a.click()
-          }}>
-            <Download size={12} /> Export
-          </button>
-          {!isViewer && (
-            <button className="btn btn-primary" onClick={() => setShowForm(true)}>
-              <Plus size={12} /> New Scan
-            </button>
-          )}
+            const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }))
+            a.href = url
+            a.download = 'scans.csv'
+            a.click()
+            window.setTimeout(() => URL.revokeObjectURL(url), 0)
+          }}><Download size={14} /> Export CSV</button>
+          {!isViewer && <button type="button" className="scans-button scans-button-primary" onClick={() => setShowForm(true)}><Plus size={15} /> New Scan</button>}
         </div>
-      </div>
+      </header>
 
-      {/* ── Filter chips + search ── */}
-      <div style={{ display: 'flex', gap: 6, marginBottom: 12, alignItems: 'center' }}>
-        {(['all', 'running', 'completed', 'pending', 'failed'] as FilterStatus[]).map(f => (
-          <button
-            key={f}
-            onClick={() => setFilter(f)}
-            style={{
-              padding: '5px 10px',
-              borderRadius: 6,
-              fontSize: 11.5,
-              background: filter === f ? 'var(--bg-3)' : 'transparent',
-              color: filter === f ? 'var(--text-0)' : 'var(--text-2)',
-              border: '1px solid ' + (filter === f ? 'var(--border-strong)' : 'transparent'),
-              textTransform: 'capitalize',
-              cursor: 'pointer',
-              transition: 'background 120ms ease, color 120ms ease, border-color 120ms ease',
-            }}
-          >
-            {f}{' '}
-            <span className="mono" style={{ color: 'var(--text-3)', marginLeft: 2 }}>
-              {counts[f]}
-            </span>
-          </button>
-        ))}
-
-        <div style={{ flex: 1 }} />
-
-        <div className="search" style={{ width: 260 }}>
-          <Search size={13} color="var(--text-3)" strokeWidth={2} />
-          <input
-            placeholder="Search by name, target, CVE…"
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-          />
-          <span className="kbd">⌘K</span>
-        </div>
-
-      </div>
-
-      {/* ── Table ── */}
-      <div className="panel" style={{ overflow: 'hidden' }}>
-        <table className="tbl">
-          <thead>
-            <tr>
-              <th style={{ width: 28 }}></th>
-              <th>Name</th>
-              <th>Targets</th>
-              <th>Profile</th>
-              <th>Status</th>
-              <th>Hosts</th>
-              <th>Findings (C/H/M/L)</th>
-              <th>Severity</th>
-              <th>Duration</th>
-              <th>When</th>
-              <th style={{ width: 100, position: 'sticky', right: 0, background: 'var(--bg-1)', zIndex: 2 }}></th>
-            </tr>
-          </thead>
-          <tbody>
-            {filtered.map(s => (
-              <tr key={s.id} onClick={() => onOpenScan?.(s.id)}>
-                {/* Status icon */}
-                <td>
-                  {s.status === 'running'
-                    ? <Activity size={13} color="var(--accent-2)" />
-                    : <Scan size={13} color="var(--text-3)" />
-                  }
-                </td>
-
-                {/* Name + ID */}
-                <td>
-                  <div style={{ fontWeight: 500, fontSize: 12.5, color: 'var(--text-0)' }}>{s.name}</div>
-                  <div className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)', marginTop: 2 }}>{s.id}</div>
-                </td>
-
-                {/* Targets */}
-                <td className="mono" style={{ fontSize: 11.5, color: 'var(--text-2)', maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                  {(s.targets ?? []).slice(0, 1).join(', ')}
-                  {(s.targets ?? []).length > 1 && (
-                    <span style={{ color: 'var(--text-3)' }}> +{(s.targets ?? []).length - 1}</span>
-                  )}
-                </td>
-
-                {/* Profile */}
-                <td className="dim" style={{ fontSize: 12.5 }}>{s.profile}</td>
-
-                {/* Status pill + progress meter / error */}
-                <td>
-                  <StatusPill status={s.status} />
-                  {s.status === 'running' && (
-                    <div style={{ width: 80, marginTop: 4 }}>
-                      <Meter value={s.progress ?? 0} color="var(--accent-2)" />
-                    </div>
-                  )}
-                  {s.status === 'failed' && s.error_message && (
-                    <div className="mono" style={{ fontSize: 10, color: 'var(--sev-high)', marginTop: 3, maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={s.error_message}>
-                      {s.error_message}
-                    </div>
-                  )}
-                </td>
-
-                {/* Hosts up/total */}
-                <td className="mono">
-                  <span style={{ color: 'var(--text-0)' }}>{s.hosts_up}</span>
-                  <span style={{ color: 'var(--text-3)' }}>/{s.hosts_total}</span>
-                </td>
-
-                {/* C/H/M/L */}
-                <td>
-                  <CHML
-                    c={s.findings_critical}
-                    h={s.findings_high}
-                    m={s.findings_medium}
-                    l={s.findings_low}
-                  />
-                </td>
-
-                {/* Severity bar */}
-                <td style={{ width: 110 }}>
-                  <SeverityBar
-                    c={s.findings_critical}
-                    h={s.findings_high}
-                    m={s.findings_medium}
-                    l={s.findings_low}
-                    i={s.findings_info}
-                  />
-                </td>
-
-                {/* Duration */}
-                <td className="mono dim">{fmtDuration(s.duration_s)}</td>
-
-                {/* When */}
-                <td className="mono dim">{relTime(s.created_at)}</td>
-
-                {/* Actions — sticky right so always visible on narrow screens */}
-                <td onClick={e => e.stopPropagation()}
-                  style={{ position: 'sticky', right: 0, background: 'var(--bg-1)', zIndex: 1 }}>
-                  <div style={{ display: 'flex', gap: 2 }}>
-                    <button
-                      className="btn btn-ghost btn-icon"
-                      title="Open console"
-                      onClick={() => onOpenScan?.(s.id)}
-                    >
-                      <Terminal size={13} />
-                    </button>
-
-                    {s.status === 'pending' && (
-                      <>
-                        <button
-                          className="btn btn-ghost btn-icon"
-                          title="Edit scan settings"
-                          onClick={() => setEditScanId(s.id)}
-                          style={{ color: 'var(--accent)' }}
-                        >
-                          <Pencil size={11} />
-                        </button>
-                        <button
-                          className="btn btn-ghost btn-icon"
-                          title="Launch"
-                          onClick={() => launchMut.mutate(s.id)}
-                          style={{ color: 'var(--ok)' }}
-                        >
-                          <Play size={11} />
-                        </button>
-                      </>
-                    )}
-
-                    {s.status === 'running' && (
-                      <button
-                        className="btn btn-ghost btn-icon"
-                        title="Cancel"
-                        onClick={() => cancelMut.mutate(s.id)}
-                        style={{ color: 'var(--sev-high)' }}
-                      >
-                        <StopCircle size={10} />
-                      </button>
-                    )}
-
-                    {(s.status === 'completed' || s.status === 'failed' || s.status === 'cancelled') && (
-                      <>
-                        <button
-                          className="btn btn-ghost btn-icon"
-                          title="Rerun with same config"
-                          onClick={() => { if (confirm('Rerun this scan with the same config?')) rerunMut.mutate(s.id) }}
-                          style={{ color: 'var(--ok)' }}
-                        >
-                          <RotateCcw size={13} />
-                        </button>
-                        <button
-                          className="btn btn-ghost btn-icon"
-                          title="Edit config & rerun"
-                          onClick={() => setRerunScan({ id: s.id, name: s.name, targets: s.targets, profile_json: s.profile_json })}
-                          style={{ color: 'var(--accent)' }}
-                        >
-                          <Pencil size={11} />
-                        </button>
-                        <button
-                          className="btn btn-ghost btn-icon"
-                          title="Compare"
-                          onClick={() => setDeltaScan({ id: s.id, name: s.name })}
-                        >
-                          <GitCompare size={13} />
-                        </button>
-                      </>
-                    )}
-
-                    <button
-                      className="btn btn-ghost btn-icon"
-                      title="Delete"
-                      onClick={() => { if (confirm('Delete this scan?')) deleteMut.mutate(s.id) }}
-                      style={{ marginLeft: 4, paddingLeft: 8, borderLeft: '1px solid var(--border)' }}
-                    >
-                      <Trash2 size={13} />
-                    </button>
-                  </div>
-                </td>
-              </tr>
+      <section className="scans-register" aria-label="Scan list">
+        <div className="scans-toolbar">
+          <div className="scans-filters" role="group" aria-label="Filter scans by status">
+            {(['all', 'running', 'pending', 'completed', 'failed', 'cancelled'] as FilterStatus[]).map(f => (
+              <button key={f} type="button" className={filter === f ? 'is-active' : ''} onClick={() => setFilter(f)} aria-pressed={filter === f}>
+                {f === 'all' ? 'All' : f === 'pending' ? 'Draft' : f[0].toUpperCase() + f.slice(1)} <span>{counts[f]}</span>
+              </button>
             ))}
+          </div>
+          <label className="scans-search">
+            <Search size={15} aria-hidden="true" />
+            <span className="sr-only">Search scans by name or target</span>
+            <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search scans or targets" />
+            {search && <button type="button" aria-label="Clear search" onClick={() => setSearch('')}><X size={14} /></button>}
+          </label>
+        </div>
 
-            {filtered.length === 0 && (
-              <tr>
-                <td colSpan={11} style={{ padding: '40px 16px', textAlign: 'center', color: 'var(--text-3)', fontSize: 13 }}>
-                  {search ? 'No scans match your search.' : 'No scans yet — create one to get started.'}
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
+        <div className="scans-table-wrap">
+          <table className="scans-table">
+            <thead>
+              <tr><th>Name</th><th>Target</th><th>Profile</th><th>Status</th><th>Hosts</th><th>Findings</th><th>Last run</th><th>Actions</th></tr>
+            </thead>
+            <tbody>
+              {isLoading && <tr><td colSpan={8} className="scans-message" role="status">Loading scans…</td></tr>}
+              {isError && <tr><td colSpan={8} className="scans-message scans-message-error" role="alert">Scans could not be loaded. {error instanceof Error ? error.message : 'Check the backend connection.'} <button type="button" onClick={() => void refetch()}>Retry</button></td></tr>}
+              {!isLoading && !isError && filtered.map(s => {
+                const findingCount = s.findings_critical + s.findings_high + s.findings_medium + s.findings_low
+                const progress = Math.min(100, Math.max(0, (s.progress ?? 0) <= 1 ? (s.progress ?? 0) * 100 : (s.progress ?? 0)))
+                return (
+                  <tr
+                    key={s.id}
+                    className="scans-row"
+                    tabIndex={0}
+                    aria-label={`Open ${s.name} scan console`}
+                    onClick={() => onOpenScan?.(s.id)}
+                    onKeyDown={event => {
+                      if (event.target !== event.currentTarget || (event.key !== 'Enter' && event.key !== ' ')) return
+                      event.preventDefault()
+                      onOpenScan?.(s.id)
+                    }}
+                  >
+                    <td className="scans-cell-name"><span>{s.name}</span><small>{s.id.slice(0, 8)}</small></td>
+                    <td className="scans-cell-target" title={(s.targets ?? []).join(', ')}>{(s.targets ?? [])[0] || 'No target'}{(s.targets ?? []).length > 1 ? ` +${(s.targets ?? []).length - 1}` : ''}</td>
+                    <td className="scans-cell-profile">{s.profile || 'Default'}</td>
+                    <td><span className="scans-status"><span className={`scans-status-dot scans-status-${s.status}`} />{s.status === 'pending' ? 'Draft' : s.status[0].toUpperCase() + s.status.slice(1)}{s.status === 'running' ? ` ${Math.round(progress)}%` : ''}</span>{s.status === 'failed' && s.error_message && <small className="scans-cell-error" title={s.error_message}>{s.error_message}</small>}</td>
+                    <td className="scans-cell-number">{s.hosts_up}<span> / {s.hosts_total}</span></td>
+                    <td className={`scans-cell-number ${findingCount ? 'has-findings' : ''}`}>{findingCount}</td>
+                    <td className="scans-cell-time">{s.started_at ? relTime(s.started_at) : 'Never'}</td>
+                    <td className="scans-cell-actions" onClick={event => event.stopPropagation()}><details className="scans-actions-menu">
+                      <summary>Actions <span aria-hidden="true">▾</span></summary>
+                      <div className="scans-actions-list">
+                      <button type="button" onClick={() => onOpenScan?.(s.id)}>Open console</button>
+                      {!isViewer && s.status === 'pending' && <><button type="button" onClick={() => setEditScanId(s.id)}>Edit</button><button type="button" className="is-primary" onClick={() => launchMut.mutate(s.id)}>Launch</button></>}
+                      {!isViewer && s.status === 'running' && <button type="button" onClick={() => cancelMut.mutate(s.id)}>Cancel</button>}
+                      {!isViewer && (s.status === 'completed' || s.status === 'failed' || s.status === 'cancelled') && <>
+                        <button type="button" onClick={() => { if (confirm('Rerun this scan with the same config?')) rerunMut.mutate(s.id) }}>Rerun</button>
+                        <button type="button" onClick={() => setRerunScan({ id: s.id, name: s.name, targets: s.targets, profile_json: s.profile_json })}>Edit config</button>
+                        <button type="button" onClick={() => setDeltaScan({ id: s.id, name: s.name })}>Compare</button>
+                      </>}
+                      {!isViewer && <button type="button" className="is-danger" onClick={() => { if (confirm('Delete this scan?')) deleteMut.mutate(s.id) }}>Delete</button>}
+                      </div>
+                    </details></td>
+                  </tr>
+                )
+              })}
+              {!isLoading && !isError && filtered.length === 0 && <tr><td colSpan={8} className="scans-message">{search ? 'No scans match your search.' : filter === 'all' ? 'No scans yet. Use New Scan to create one.' : `No ${filter} scans.`}</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      </section>
 
       {/* ── Pagination ── */}
       {(page > 0 || scans.length === PAGE_SIZE) && (
@@ -752,7 +585,7 @@ function NewScanModal({
   const aiProviderChoice = ai.provider || aiStatus?.default_provider || ''
 
   // The provider's own model list. Admin-only server-side, so a rejection is
-  // expected rather than exceptional — fall back to a free-text model id.
+  // expected rather than exceptional: fall back to a free-text model id.
   const {
     data: aiModels,
     isError: aiModelsUnavailable,
@@ -962,6 +795,7 @@ function NewScanModal({
 
   return (
     <div
+      className="scan-form-overlay"
       style={{
         position: 'fixed', inset: 0,
         background: 'oklch(0.06 0.01 255 / 0.7)',
@@ -970,7 +804,7 @@ function NewScanModal({
       }}
       // Deliberately not dismissed by a backdrop click: this is a five-step form,
       // and a stray click outside it used to discard everything typed so far.
-      // Closing is explicit — the header's X or the Cancel button.
+      // Closing is explicit: the header's X or the Cancel button.
     >
       <div
         className="panel"
@@ -978,7 +812,6 @@ function NewScanModal({
       >
         {/* Modal header */}
         <div className="panel-head">
-          <Radar size={14} color="var(--accent)" />
           <span style={{ fontSize: 13, fontWeight: 600 }}>{editMode ? 'Edit Scan' : 'New Scan'}</span>
           <button
             className="btn btn-ghost btn-icon"
@@ -991,28 +824,31 @@ function NewScanModal({
 
         {/* Modal body */}
         <div style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 14 }}>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 6 }}>
+          <nav className="scan-wizard-steps" aria-label="Scan setup steps" style={{ display: 'grid', gap: 6 }}>
             {['Template', 'Context', 'Targets', 'Capabilities', 'Review'].map((label, idx) => (
               <button
                 key={label}
                 type="button"
                 onClick={() => setStep(idx + 1)}
                 className={`btn btn-sm ${step === idx + 1 ? 'btn-primary' : 'btn-ghost'}`}
+                aria-current={step === idx + 1 ? 'step' : undefined}
               >
-                {idx + 1}. {label}
+                {label}
               </button>
             ))}
-          </div>
+          </nav>
+
+          <div className="scan-editor-content">
 
           {step === 1 && (
             <div>
               <div className="label">Start from template</div>
               <p className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)', marginBottom: 10 }}>
                 {systemTemplates.length > 0
-                  ? 'Templates defined by your team — pick one to pre-fill safe defaults.'
-                  : 'Built-in quick-start templates — pick one that matches your goal.'}
+                  ? 'Templates defined by your team: pick one to pre-fill safe defaults.'
+                  : 'Built-in quick-start templates: pick one that matches your goal.'}
               </p>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 8 }}>
+              <div className="scan-template-list" style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 8 }}>
                 {systemTemplates.length > 0 && (
                   <div style={{ gridColumn: '1 / -1', fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-3)', marginBottom: -4, display: 'flex', alignItems: 'center', gap: 6 }}>
                     Server Templates
@@ -1025,6 +861,8 @@ function NewScanModal({
                     : selectedDesignTemplate === (t as typeof DESIGN_TEMPLATES[number]).id
                   return (
                     <button
+                      className={`scan-template-option${active ? ' is-selected' : ''}`}
+                      aria-pressed={active}
                       key={isApi ? (t as ScanTemplate).id : (t as typeof DESIGN_TEMPLATES[number]).id}
                       type="button"
                       onClick={() => isApi ? applyApiTemplate(t as ScanTemplate) : applyFallbackTemplate(t as typeof DESIGN_TEMPLATES[number])}
@@ -1035,20 +873,13 @@ function NewScanModal({
                         display: 'flex', alignItems: 'flex-start', gap: 10,
                       }}
                     >
-                      <span style={{
-                        width: 28, height: 28, borderRadius: 6, background: 'var(--bg-2)',
-                        color: active ? 'var(--accent)' : 'var(--text-1)',
-                        display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                        flexShrink: 0,
-                      }}>
-                        {isApi ? <Scan size={14} /> : <TemplateIcon name={(t as typeof DESIGN_TEMPLATES[number]).icon} size={14} />}
-                      </span>
-                      <div>
+                      <div className="scan-template-copy">
                         <div style={{ fontSize: 12.5, fontWeight: 600 }}>{t.name}</div>
                         <div className="mono" style={{ fontSize: 10.5, color: 'var(--text-3)', marginTop: 2 }}>
                           {isApi ? ((t as ScanTemplate).description ?? 'Capability preset') : (t as typeof DESIGN_TEMPLATES[number]).desc}
                         </div>
                       </div>
+                      <span className="scan-template-action" aria-hidden="true">{active ? 'Selected' : 'Select'}</span>
                     </button>
                   )
                 })}
@@ -1064,7 +895,7 @@ function NewScanModal({
               </div>
               <div>
                 <label className="label">Scan context</label>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
+                <div className="scan-context-list" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
                   {[
                     ['internal', 'Internal', 'Validated discovery, ARP/ICMP options, internal protocols.'],
                     ['external', 'External', 'TCP discovery, no ICMP reliance, web and DNS defaults.'],
@@ -1073,6 +904,8 @@ function NewScanModal({
                     <button
                       key={value}
                       type="button"
+                      className={`scan-context-option${profileConfig.scan_context === value ? ' is-selected' : ''}`}
+                      aria-pressed={profileConfig.scan_context === value}
                       onClick={() => setProfileConfig(p => ({ ...p, scan_context: value as ProfileConfig['scan_context'] }))}
                       style={{
                         padding: 12, borderRadius: 8, textAlign: 'left', cursor: 'pointer',
@@ -1136,15 +969,15 @@ function NewScanModal({
                   <Zap size={12} color="var(--accent)" /> Use AI during this scan
                 </label>
                 <p className="mono" style={{ margin: '4px 0 0 22px', fontSize: 10.5, color: 'var(--text-3)' }}>
-                  Launches an AI agent that investigates concurrently while the scan runs (requires a provider key in Settings → AI).
+                  Starts an AI investigation after scan checks finish. Open the scan console to follow or stop it. Requires a provider key in Settings → AI.
                 </p>
                 {ai.enabled && (
                   <div style={{ paddingLeft: 22, marginTop: 8, display: 'flex', flexDirection: 'column', gap: 8 }}>
                     <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                       <span style={{ fontSize: 12, color: 'var(--text-2)' }}>Mode</span>
                       <select className="select-field" style={{ width: 'auto' }} value={ai.mode} onChange={e => setAi(a => ({ ...a, mode: e.target.value as 'guided' | 'autonomous' }))}>
-                        <option value="guided">Guided — asks before intrusive steps</option>
-                        <option value="autonomous">Autonomous — runs hands-off</option>
+                        <option value="guided">Guided: asks before intrusive steps</option>
+                        <option value="autonomous">Autonomous: runs hands-off</option>
                       </select>
                     </div>
 
@@ -1209,7 +1042,7 @@ function NewScanModal({
                     {aiStatus && aiProviders.length === 0 && (
                       <div style={{ fontSize: 11, color: 'var(--sev-high)' }}>
                         ⚠ No provider key is configured. Creating the scan will be
-                        rejected while AI is enabled — the check runs before the scan
+                        rejected while AI is enabled: the check runs before the scan
                         row is written. Add a key in Settings → AI, or turn AI off.
                       </div>
                     )}
@@ -1218,13 +1051,13 @@ function NewScanModal({
                       rows={2}
                       value={ai.objective}
                       onChange={e => setAi(a => ({ ...a, objective: e.target.value }))}
-                      placeholder="Objective (optional) — e.g. 'focus on the web services and find the most exploitable issue'"
+                      placeholder="Objective (optional): e.g. 'focus on the web services and find the most exploitable issue'"
                     />
                     {isAdmin && (
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                         <label style={{ fontSize: 12, color: 'var(--text-1)', display: 'flex', alignItems: 'center', gap: 6 }}>
                           <input type="checkbox" checked={ai.aggressive} onChange={e => setAi(a => ({ ...a, aggressive: e.target.checked }))} />
-                          Aggressive mode (admin) — allow intrusive/destructive actions
+                          Aggressive mode (admin): allow intrusive/destructive actions
                         </label>
                         {ai.aggressive && (
                           <div style={{ paddingLeft: 22, display: 'flex', flexDirection: 'column', gap: 4 }}>
@@ -1269,9 +1102,9 @@ function NewScanModal({
           {step === 4 && (
             <>
               <CapabilityGroup title="Host Discovery">
-                <Toggle label="ICMP ping — checks if host responds (like 'ping' command)" checked={profileConfig.discovery.icmp} onChange={icmp => setProfileConfig(p => ({ ...p, discovery: { ...p.discovery, icmp } }))} />
-                <Toggle label="TCP probes — connects to common ports to see if host is up" checked={profileConfig.discovery.tcp} onChange={tcp => setProfileConfig(p => ({ ...p, discovery: { ...p.discovery, tcp } }))} />
-                <Toggle label="ARP (local network — limited support)" checked={profileConfig.discovery.arp} onChange={arp => setProfileConfig(p => ({ ...p, discovery: { ...p.discovery, arp } }))} />
+                <Toggle label="ICMP ping: checks if host responds (like 'ping' command)" checked={profileConfig.discovery.icmp} onChange={icmp => setProfileConfig(p => ({ ...p, discovery: { ...p.discovery, icmp } }))} />
+                <Toggle label="TCP probes: connects to common ports to see if host is up" checked={profileConfig.discovery.tcp} onChange={tcp => setProfileConfig(p => ({ ...p, discovery: { ...p.discovery, tcp } }))} />
+                <Toggle label="ARP (local network: limited support)" checked={profileConfig.discovery.arp} onChange={arp => setProfileConfig(p => ({ ...p, discovery: { ...p.discovery, arp } }))} />
                 <div style={{ marginTop: 4 }}>
                   <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)', marginBottom: 4, display: 'block' }}>Discovery mode:</span>
                   <select
@@ -1333,11 +1166,11 @@ function NewScanModal({
                     value={profileConfig.port_scanning.timing}
                     onChange={e => setProfileConfig(p => ({ ...p, port_scanning: { ...p.port_scanning, timing: Number(e.target.value) } }))}
                   >
-                    <option value={1}>T1 — Paranoid (IDS evasion)</option>
-                    <option value={2}>T2 — Sneaky</option>
-                    <option value={3}>T3 — Polite</option>
-                    <option value={4}>T4 — Normal (default)</option>
-                    <option value={5}>T5 — Insane (fast LAN)</option>
+                    <option value={1}>T1: Paranoid (IDS evasion)</option>
+                    <option value={2}>T2: Sneaky</option>
+                    <option value={3}>T3: Polite</option>
+                    <option value={4}>T4: Normal (default)</option>
+                    <option value={5}>T5: Insane (fast LAN)</option>
                   </select>
                 </div>
               </CapabilityGroup>
@@ -1429,7 +1262,7 @@ function NewScanModal({
                     // or inherited, so Review never hides which one it will be.
                     `${providerLabel(aiProviderChoice) || 'default provider'} · ${ai.model || effectiveModelFor(aiStatus, aiProviderChoice) || 'default model'}`,
                     ...(isAdmin && ai.aggressive ? ['aggressive'] : []),
-                  ].join(' · ') + ' — runs during the scan'
+                  ].join(' · ') + ': runs during the scan'
                 : 'disabled'}
             />
           )}
@@ -1449,10 +1282,12 @@ function NewScanModal({
             <div><strong style={{ color: 'var(--text-1)' }}>Legal notice.</strong> Only scan systems you own or have permission to test.</div>
           </div>
 
+          </div>
+
         </div>
 
         {/* Modal footer */}
-        <div style={{
+        <div className="scan-editor-footer" style={{
           padding: 14,
           borderTop: '1px solid var(--border)',
           display: 'flex',

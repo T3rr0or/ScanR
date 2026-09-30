@@ -1,13 +1,13 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
-  Clock, Plus, Trash2, ToggleLeft, ToggleRight, Calendar,
-  ChevronDown, ChevronUp, Pencil, Target, Settings2,
+  Plus, Trash2, ChevronDown, ChevronUp, Pencil, Settings2,
 } from 'lucide-react'
 import { schedulesApi, type Schedule } from '@/api/schedules'
 import { credentialsApi } from '@/api/credentials'
 import { templatesApi, type ScanTemplate } from '@/api/templates'
 import { ALL_CATEGORIES, PORT_RANGES, defaultProfileConfig, type ProfileConfig } from '@/components/ProfileEditor'
+import './OperatorSetup.css'
 
 const CRON_PRESETS = [
   { label: 'Every hour',   value: '0 * * * *' },
@@ -307,111 +307,15 @@ function ScheduleCard({ schedule: s, onToggle, onDelete, onEdit, credentialName 
   onEdit: () => void
   credentialName?: string
 }) {
-  // Parse profile summary
-  const profile = (() => {
-    try { return JSON.parse(s.scan_profile_json || '{}') } catch { return {} }
-  })()
-  const portRange = profile.port_range ?? '—'
-  const plugins   = Array.isArray(profile.plugins) ? profile.plugins : ['*']
-  const flags     = [
-    profile.intrusive && 'intrusive',
-    profile.stealth   && 'stealth',
-    profile.brute_force?.enabled && 'brute-force',
-  ].filter(Boolean)
-
-  function fmtDate(d: string | null) {
-    if (!d) return '—'
-    const dt = new Date(d)
-    return dt.toLocaleDateString() + ' ' + dt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-  }
-
-  return (
-    <div className="panel" style={{ padding: 14, opacity: s.enabled ? 1 : 0.6, borderLeft: `3px solid ${s.enabled ? 'var(--accent)' : 'var(--border)'}` }}>
-      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
-        {/* Left: info */}
-        <div style={{ flex: 1, minWidth: 0 }}>
-          {/* Title row */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, flexWrap: 'wrap' }}>
-            <span style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--text-0)' }}>{s.name}</span>
-            <span className={`pill ${s.enabled ? 'pill-completed' : 'pill-cancelled'}`} style={{ fontSize: 10 }}>
-              {s.enabled ? 'enabled' : 'paused'}
-            </span>
-            {flags.map(f => (
-              <span key={f} className="pill" style={{ fontSize: 10, color: 'var(--sev-medium)', borderColor: 'oklch(0.80 0.16 70/0.3)', background: 'oklch(0.80 0.16 70/0.08)' }}>{f}</span>
-            ))}
-          </div>
-
-          {s.description && (
-            <p style={{ fontSize: 11.5, color: 'var(--text-2)', marginBottom: 8 }}>{s.description}</p>
-          )}
-
-          {/* Targets */}
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 8 }}>
-            {s.targets.slice(0, 5).map((t, i) => (
-              <span key={i} className="mono" style={{ fontSize: 10.5, background: 'var(--accent-soft)', color: 'var(--accent)', padding: '2px 6px', borderRadius: 4 }}>{t}</span>
-            ))}
-            {s.targets.length > 5 && (
-              <span className="dimmer" style={{ fontSize: 10 }}>+{s.targets.length - 5} more</span>
-            )}
-          </div>
-
-          {/* Profile summary row */}
-          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', fontSize: 11, color: 'var(--text-3)', marginBottom: 8 }}>
-            <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-              <Target size={10} /> <span style={{ color: 'var(--text-2)' }}>{portRange}</span>
-            </span>
-            <span>
-              Plugins: <span style={{ color: 'var(--text-2)' }}>
-                {plugins.includes('*') ? 'all' : plugins.join(', ')}
-              </span>
-            </span>
-            {credentialName && (
-              <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                🔑 <span style={{ color: 'var(--ok)' }}>{credentialName}</span>
-              </span>
-            )}
-            {!credentialName && !profile.credential_id && (
-              <span style={{ color: 'var(--text-3)', fontStyle: 'italic' }}>unauthenticated</span>
-            )}
-          </div>
-
-          {/* Timing row */}
-          <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', fontSize: 11, color: 'var(--text-3)' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-              <span className="mono" style={{ background: 'var(--bg-2)', padding: '2px 6px', borderRadius: 4, color: 'var(--text-1)', fontSize: 11 }}>
-                {s.cron_expr}
-              </span>
-            </div>
-            <span>Next: <span style={{ color: 'var(--text-2)' }}>{fmtDate(s.next_run)}</span></span>
-            <span>Last: <span style={{ color: 'var(--text-2)' }}>{fmtDate(s.last_run)}</span></span>
-            {s.last_scan_id && (
-              <span style={{ color: 'var(--accent)', cursor: 'pointer', textDecoration: 'underline' }}
-                onClick={() => navigator.clipboard.writeText(s.last_scan_id!)}>
-                Last scan ID copied
-              </span>
-            )}
-          </div>
-        </div>
-
-        {/* Right: actions */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, flexShrink: 0 }}>
-          <button onClick={onEdit} className="btn btn-ghost btn-icon btn-sm" title="Edit schedule">
-            <Pencil size={13} style={{ color: 'var(--accent)' }} />
-          </button>
-          <button onClick={onToggle} className="btn btn-ghost btn-icon btn-sm" title={s.enabled ? 'Pause' : 'Enable'}>
-            {s.enabled
-              ? <ToggleRight size={18} style={{ color: 'var(--ok)' }} />
-              : <ToggleLeft size={18} style={{ color: 'var(--text-3)' }} />
-            }
-          </button>
-          <button onClick={onDelete} className="btn btn-ghost btn-icon btn-sm" title="Delete"
-            style={{ color: 'var(--sev-high)' }}>
-            <Trash2 size={13} />
-          </button>
-        </div>
-      </div>
-    </div>
-  )
+  const profile = (() => { try { return JSON.parse(s.scan_profile_json || '{}') } catch { return {} } })()
+  const plugins = Array.isArray(profile.plugins) ? profile.plugins : ['*']
+  const flags = [profile.intrusive && 'intrusive', profile.stealth && 'stealth', profile.brute_force?.enabled && 'brute-force'].filter(Boolean)
+  const fmtDate = (date: string | null) => date ? new Date(date).toLocaleString() : '-'
+  return <div className={`schedule-row ${s.enabled ? '' : 'schedule-row-paused'}`}>
+    <div className="schedule-row-top"><div><span className="schedule-state">{s.enabled ? 'Enabled' : 'Paused'}</span><strong>{s.name}</strong>{s.description && <p>{s.description}</p>}</div><div className="schedule-actions"><button className="setup-button" onClick={onEdit}><Pencil size={12}/> Edit</button><button className="setup-button" onClick={onToggle}>{s.enabled ? 'Pause' : 'Enable'}</button><button className="setup-icon-button" onClick={onDelete} title={`Delete ${s.name}`} aria-label={`Delete ${s.name}`}><Trash2 size={14}/></button></div></div>
+    <div className="schedule-row-meta"><div><span>Targets</span><strong>{s.targets.slice(0,5).join(', ')}{s.targets.length>5?` +${s.targets.length-5} more`:''}</strong></div><div><span>Cron</span><code>{s.cron_expr}</code></div><div><span>Next run</span><strong>{fmtDate(s.next_run)}</strong></div><div><span>Last run</span><strong>{fmtDate(s.last_run)}</strong></div><div><span>Profile</span><strong>{profile.port_range??'-'} / {plugins.includes('*')?'all plugins':`${plugins.length} categories`}{credentialName?` / ${credentialName}`:''}</strong></div></div>
+    {(flags.length>0 || s.last_scan_id) && <div className="schedule-row-foot">{flags.map(flag=><span key={String(flag)}>{flag}</span>)}{s.last_scan_id&&<button onClick={()=>navigator.clipboard.writeText(s.last_scan_id!)}>Copy last scan ID</button>}</div>}
+  </div>
 }
 
 /* ─── Main page ───────────────────────────────────────────────── */
@@ -457,90 +361,12 @@ export default function Schedules() {
 
   const editingSchedule = editId ? schedules.find(s => s.id === editId) : null
 
-  return (
-    <div className="page-pad" style={{ maxWidth: 900 }}>
-      {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <Clock size={18} style={{ color: 'var(--accent)' }} />
-          <div>
-            <h1 style={{ fontSize: 18, fontWeight: 700, color: 'var(--text-0)' }}>Scheduled Scans</h1>
-            <p style={{ fontSize: 11.5, color: 'var(--text-3)', marginTop: 2 }}>Recurring scans run automatically on a cron schedule</p>
-          </div>
-        </div>
-        {!showCreate && !editId && (
-          <button onClick={() => setShowCreate(true)} className="btn btn-primary btn-sm">
-            <Plus size={13} /> New Schedule
-          </button>
-        )}
-      </div>
-
-      {err && (
-        <div style={{ background: 'var(--sev-high)', color: '#fff', padding: '8px 12px', borderRadius: 6, fontSize: 12, marginBottom: 14 }}>
-          {err}
-        </div>
-      )}
-
-      {/* Create form */}
-      {showCreate && (
-        <div className="panel" style={{ marginBottom: 20, padding: 16 }}>
-          <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-0)', marginBottom: 14, display: 'flex', alignItems: 'center', gap: 8 }}>
-            <Plus size={14} style={{ color: 'var(--accent)' }} /> New Schedule
-          </div>
-          <ScheduleForm
-            onSubmit={data => createMut.mutate(data)}
-            onCancel={() => { setShowCreate(false); setErr(null) }}
-            loading={createMut.isPending}
-            submitLabel="Create schedule"
-          />
-        </div>
-      )}
-
-      {/* Edit form */}
-      {editId && editingSchedule && (
-        <div className="panel" style={{ marginBottom: 20, padding: 16 }}>
-          <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-0)', marginBottom: 14, display: 'flex', alignItems: 'center', gap: 8 }}>
-            <Pencil size={14} style={{ color: 'var(--accent)' }} /> Edit Schedule
-          </div>
-          <ScheduleForm
-            initial={editingSchedule}
-            onSubmit={data => updateMut.mutate({ id: editId, data })}
-            onCancel={() => { setEditId(null); setErr(null) }}
-            loading={updateMut.isPending}
-            submitLabel="Save changes"
-          />
-        </div>
-      )}
-
-      {/* List */}
-      {isLoading ? (
-        <div className="dimmer" style={{ fontSize: 13, padding: '20px 0' }}>Loading…</div>
-      ) : schedules.length === 0 && !showCreate ? (
-        <div style={{ textAlign: 'center', padding: '48px 20px', color: 'var(--text-3)' }}>
-          <Calendar size={36} style={{ margin: '0 auto 12px', opacity: 0.3 }} />
-          <p style={{ fontSize: 13 }}>No scheduled scans yet.</p>
-          <button onClick={() => setShowCreate(true)} className="btn btn-primary btn-sm" style={{ marginTop: 12 }}>
-            <Plus size={13} /> Create your first schedule
-          </button>
-        </div>
-      ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-          {schedules.map(s => (
-            editId === s.id ? null : (
-              <ScheduleCard
-                key={s.id}
-                schedule={s}
-                onToggle={() => toggleMut.mutate({ id: s.id, enabled: !s.enabled })}
-                onDelete={() => { if (confirm(`Delete schedule "${s.name}"?`)) deleteMut.mutate(s.id) }}
-                onEdit={() => { setEditId(s.id); setShowCreate(false); setErr(null) }}
-                credentialName={(() => {
-                  try { const pj = JSON.parse(s.scan_profile_json || '{}'); return pj.credential_id ? credMap[pj.credential_id] : undefined } catch { return undefined }
-                })()}
-              />
-            )
-          ))}
-        </div>
-      )}
-    </div>
-  )
+  return <main className="setup-page schedules-page page-pad">
+    <header className="setup-header"><div><h1>Scheduled scans</h1><p>Manage targets, profiles, and scan cadence.</p></div>{!showCreate&&!editId&&<button className="setup-button setup-button-primary" onClick={()=>setShowCreate(true)}><Plus size={14}/> New schedule</button>}</header>
+    <div className="setup-summary"><span>{schedules.length} schedules</span><span>{schedules.filter(s=>s.enabled).length} enabled</span><span>{schedules.filter(s=>!s.enabled).length} paused</span></div>
+    {err&&<div className="setup-error" role="alert">{err}</div>}
+    {showCreate&&<section className="setup-form schedule-form"><div className="setup-form-heading"><strong>New schedule</strong></div><ScheduleForm onSubmit={data=>createMut.mutate(data)} onCancel={()=>{setShowCreate(false);setErr(null)}} loading={createMut.isPending} submitLabel="Create schedule"/></section>}
+    {editId&&editingSchedule&&<section className="setup-form schedule-form"><div className="setup-form-heading"><strong>Edit schedule / {editingSchedule.name}</strong></div><ScheduleForm initial={editingSchedule} onSubmit={data=>updateMut.mutate({id:editId,data})} onCancel={()=>{setEditId(null);setErr(null)}} loading={updateMut.isPending} submitLabel="Save changes"/></section>}
+    <section className="setup-list"><div className="setup-list-heading"><span>Schedules</span><span>{schedules.length} records</span></div>{isLoading?<div className="setup-empty">Loading schedules...</div>:schedules.length===0?<div className="setup-empty">No schedules configured. Create one to run scans on a cadence.</div>:schedules.map(s=>editId===s.id?null:<ScheduleCard key={s.id} schedule={s} onToggle={()=>toggleMut.mutate({id:s.id,enabled:!s.enabled})} onDelete={()=>{if(confirm(`Delete schedule "${s.name}"?`))deleteMut.mutate(s.id)}} onEdit={()=>{setEditId(s.id);setShowCreate(false);setErr(null)}} credentialName={(()=>{try{const pj=JSON.parse(s.scan_profile_json||'{}');return pj.credential_id?credMap[pj.credential_id]:undefined}catch{return undefined}})()}/>)}</section>
+  </main>
 }

@@ -210,7 +210,7 @@ export default function AttackPaths({ scanId }: { scanId: string }) {
               style={{ color: "var(--sev-medium)", marginLeft: 8 }}
               title={`Graph trimmed for display: showing ${data.edges.length} of ${data.totals.edges} edges. Ranked routes are always complete.`}
             >
-              (graph trimmed — routes are complete)
+              (graph trimmed; routes are complete)
             </span>
           )}
         </div>
@@ -275,17 +275,20 @@ export default function AttackPaths({ scanId }: { scanId: string }) {
       {data.paths.length === 0 ? (
         <div
           style={{
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
             textAlign: "center",
-            color: "var(--text-3)",
+            color: "var(--text-2)",
             padding: "32px 20px",
             fontSize: 12,
             lineHeight: 1.7,
           }}
         >
-          <AlertTriangle size={20} style={{ opacity: 0.5, marginBottom: 8 }} />
-          <div style={{ fontWeight: 600, color: "var(--text-2)" }}>No complete attack path found</div>
+          <AlertTriangle size={20} style={{ marginBottom: 8 }} aria-hidden="true" />
+          <div style={{ fontWeight: 600, color: "var(--text-1)" }}>No complete attack path found</div>
           <div style={{ maxWidth: 460, margin: "6px auto 0" }}>
-            Individual findings may still be serious — this view only reports a route
+            Individual findings may still be serious. This view only reports a route
             when every step from the attacker's position to an objective is backed by
             evidence from this scan.
           </div>
@@ -298,7 +301,7 @@ export default function AttackPaths({ scanId }: { scanId: string }) {
                 {data.inferred_paths_available === 1 ? "" : "s"}
               </strong>{" "}
               {data.inferred_paths_available === 1 ? "appears" : "appear"} if credential
-              reuse is assumed — reasoned from the authentication services this scan
+              reuse is assumed. This is reasoned from the authentication services this scan
               observed, but not demonstrated.
               <div style={{ marginTop: 8 }}>
                 <button className="btn btn-ghost btn-sm" onClick={() => setIncludeInferred(true)}>

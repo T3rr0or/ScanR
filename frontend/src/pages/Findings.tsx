@@ -2,10 +2,11 @@ import { useState, useEffect, useRef, type CSSProperties } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { findingsApi, type Finding } from '@/api/findings'
 import { scansApi } from '@/api/scans'
-import { SevTag, relTime, EmptyState } from '@/components/ui'
+import { SevTag, relTime } from '@/components/ui'
 import SortableTh from '@/components/SortableTh'
 import { useSortableFindings } from '@/hooks/useSortableFindings'
 import { safeUrl } from "@/utils/safeUrl"
+import './Findings.css'
 
 const SEVERITIES = ['', 'critical', 'high', 'medium', 'low', 'info']
 
@@ -57,7 +58,7 @@ function statusLabel(f: Finding): string {
 /* ─── Compliance tag chips ─────────────────────── */
 function ComplianceTags({ raw }: { raw: string | null }) {
   const tags = safeParse(raw)
-  if (!tags.length) return <span style={{ color: 'var(--text-3)' }}>—</span>
+  if (!tags.length) return <span style={{ color: 'var(--text-3)' }}>-</span>
   const chipStyle: CSSProperties = {
     fontSize: 10,
     background: 'var(--bg-3)',
@@ -103,7 +104,7 @@ function FindingLifecycle({ findingId }: { findingId: string }) {
           const isRegressed = i > 0 && history[i - 1].remediation_status === 'resolved' && h.remediation_status === 'open'
           const dotColor = h.false_positive ? 'var(--text-3)' : h.remediation_status === 'resolved' ? 'var(--ok)' : isRegressed ? 'var(--sev-critical)' : 'var(--accent)'
           return (
-            <div key={h.finding_id} title={`${h.scan_name} — ${h.remediation_status}`}
+            <div key={h.finding_id} title={`${h.scan_name} - ${h.remediation_status}`}
               style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3, minWidth: 44 }}>
               <div style={{ width: 10, height: 10, borderRadius: '50%', background: dotColor, border: `2px solid ${dotColor}20` }} />
               <div style={{ fontSize: 9, color: 'var(--text-3)', textAlign: 'center', maxWidth: 50, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -131,7 +132,7 @@ function FindingDrawer({
 }) {
   const qc = useQueryClient()
 
-  /* Reset the draft when a different finding is selected — the documented
+  /* Reset the draft when a different finding is selected - the documented
      "adjust state during render" pattern rather than an effect.
      The effect this replaces depended on finding.id alone and deliberately
      omitted analyst_notes: adding it (as the lint rule wants) would overwrite
@@ -167,19 +168,12 @@ function FindingDrawer({
 
   return (
     <div
-      className="panel"
-      style={{
-        width: 380,
-        flexShrink: 0,
-        display: 'flex',
-        flexDirection: 'column',
-        overflow: 'hidden',
-        maxHeight: '100%',
-      }}
+      className="findings-detail"
     >
       {drawerErr && <div style={{ background: 'var(--sev-high)', color: '#fff', padding: '6px 10px', fontSize: 12 }}>{drawerErr}</div>}
       {/* Header */}
       <div
+        className="findings-detail-head"
         style={{
           padding: '12px 14px',
           borderBottom: '1px solid var(--border)',
@@ -209,13 +203,13 @@ function FindingDrawer({
             {finding.title}
           </div>
         </div>
-        <button className="btn btn-icon btn-ghost" onClick={onClose} style={{ flexShrink: 0, marginTop: 2 }}>
+        <button className="btn btn-icon btn-ghost" aria-label="Close finding details" onClick={onClose} style={{ flexShrink: 0, marginTop: 2 }}>
           ×
         </button>
       </div>
 
       {/* Scrollable body */}
-      <div style={{ flex: 1, overflow: 'auto', padding: '14px' }}>
+      <div className="findings-detail-body" style={{ flex: 1, overflow: 'auto', padding: '14px' }}>
 
         {/* Meta row */}
         <div
@@ -311,7 +305,7 @@ function FindingDrawer({
           </div>
         )}
 
-        {/* Validation — how ScanR proved it, so the reader doesn't have to */}
+        {/* Validation - how ScanR proved it, so the reader doesn't have to */}
         {finding.validated && (
           <div style={{ marginBottom: 14 }}>
             <div className="label" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -520,12 +514,12 @@ export default function Findings() {
 
   /* Every filter goes to the server.
      These used to run client-side over whatever the first page happened to
-     contain, so a filter would quietly return fewer rows than exist — five
+     contain, so a filter would quietly return fewer rows than exist - five
      validated findings among 303 showed as four. A filter that under-reports
      without saying so is worse than no filter. */
   const PAGE_LIMIT = 500
   // Ask for one more than we display, so "there are more" is a fact rather than
-  // an inference from a full page — which was wrong at exactly PAGE_LIMIT rows.
+  // an inference from a full page - which was wrong at exactly PAGE_LIMIT rows.
   const apiParams: Record<string, string | number | boolean> = { limit: PAGE_LIMIT + 1 }
   if (severity) apiParams.severity = severity
   if (scanId) apiParams.scan_id = scanId
@@ -605,180 +599,55 @@ export default function Findings() {
 
   const bulkIds = [...selectedIds]
 
+  const counts = {
+    critical: findings.filter(f => f.severity === 'critical').length,
+    high: findings.filter(f => f.severity === 'high').length,
+    verified: findings.filter(f => f.validated).length,
+    open: findings.filter(f => !f.false_positive && f.remediation_status === 'open').length,
+  }
+
   return (
-    <div
-      className="page-pad"
-      style={{
-        display: 'flex',
-        gap: 16,
-        height: '100%',
-        boxSizing: 'border-box',
-        overflow: 'hidden',
-      }}
-    >
-      {/* ── Left: table column ── */}
-      <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 12, overflow: 'hidden' }}>
-        {bulkErr && <div style={{ background: 'var(--sev-high)', color: '#fff', padding: '6px 10px', borderRadius: 4, fontSize: 12 }}>{bulkErr}</div>}
+    <main className={`findings-page page-pad${selected ? ' detail-open' : ''}`}>
+      <div className="findings-main">
+        <header className="findings-hero">
 
-        {/* Page title */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <h1 style={{ margin: 0, fontSize: 18, fontWeight: 700, color: 'var(--text-0)' }}>Findings</h1>
-          <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)' }}>
-            {findings.length} result{findings.length !== 1 ? 's' : ''}
-          </span>
-          {truncated && (
-            <span
-              className="mono"
-              title="Narrow the filters, or use Export CSV for the full set"
-              style={{ fontSize: 11, color: 'var(--sev-medium)' }}
-            >
-              first {PAGE_LIMIT} shown — there are more
-            </span>
-          )}
-        </div>
-
-        {/* Filter bar */}
-        <div className="filter-bar">
-          {/* Search */}
-          <div className="search" style={{ flex: 1, minWidth: 140, maxWidth: 260 }}>
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ color: 'var(--text-3)', flexShrink: 0 }}>
-              <circle cx="11" cy="11" r="8" /><path d="m21 21-4.35-4.35" />
-            </svg>
-            <input
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              placeholder="Search findings…"
-              style={{ minWidth: 0 }}
-            />
+          <div className="findings-hero-body">
+            <div><h1>Findings</h1><p>Search, verify, and triage scanner output.</p></div>
+            <div className="findings-total"><strong>{findings.length}</strong><span>in current view</span></div>
           </div>
+          {truncated && <p className="findings-limit" title="Narrow the filters, or use Export CSV for the full set">First {PAGE_LIMIT} shown. More findings match these filters.</p>}
+        </header>
 
-          {/* Scan filter */}
-          <select
-            className="select-field"
-            value={scanId}
-            onChange={e => setScanId(e.target.value)}
-            style={{ width: 'auto', minWidth: 110 }}
-          >
-            <option value="">All scans</option>
-            {scans.map(s => (
-              <option key={s.id} value={s.id}>{s.name}</option>
-            ))}
-          </select>
+        <section className="findings-overview" aria-label="Findings in current view">
+          <div><span>Critical</span><strong>{counts.critical}</strong></div>
+          <div><span>High</span><strong>{counts.high}</strong></div>
+          <div><span>Verified</span><strong>{counts.verified}</strong></div>
+          <div><span>Open</span><strong>{counts.open}</strong></div>
+        </section>
 
-          {/* Severity filter */}
-          <select
-            className="select-field"
-            value={severity}
-            onChange={e => setSeverity(e.target.value)}
-            style={{ width: 'auto', minWidth: 120 }}
-          >
-            {SEVERITIES.map(s => (
-              <option key={s} value={s}>{s || 'All severities'}</option>
-            ))}
-          </select>
-
-          {/* Compliance filter */}
-          <select
-            className="select-field"
-            value={complianceTag}
-            onChange={e => setComplianceTag(e.target.value)}
-            style={{ width: 'auto', minWidth: 120 }}
-          >
-            <option value="">Compliance</option>
-            <option value="PCI-DSS">PCI-DSS</option>
-            <option value="ISO27001">ISO 27001</option>
-            <option value="CIS">CIS</option>
-            <option value="NIST">NIST</option>
-          </select>
-
-          {/* Triage status filter */}
-          <select
-            className="select-field"
-            value={triageStatus}
-            onChange={e => setTriageStatus(e.target.value as TriageFilter)}
-            style={{ width: 'auto', minWidth: 130 }}
-          >
-            <option value="all">All statuses</option>
-            <option value="open">Open</option>
-            <option value="validated">Verified only</option>
-            <option value="false_positive">False Positive</option>
-            <option value="accepted_risk">Accepted Risk</option>
-            <option value="resolved">Resolved</option>
-          </select>
-
-          {/* Export filtered findings */}
-          <button
-            className="btn btn-ghost btn-sm"
-            style={{ flexShrink: 0 }}
-            onClick={() => {
-              // Mirror every active filter, so the CSV is the list you are
-              // looking at rather than a differently-filtered one.
+        <section className="findings-workspace" aria-label="Filter and review findings">
+          <div className="findings-workspace-head"><span>Filters</span><span>Results update with filters</span></div>
+          <div className="findings-filters">
+            <label className="findings-search"><span>Search</span><input value={search} onChange={e => setSearch(e.target.value)} placeholder="Title, host, CVE, plugin..." /></label>
+            <label><span>Scan</span><select value={scanId} onChange={e => setScanId(e.target.value)}><option value="">All scans</option>{scans.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</select></label>
+            <label><span>Severity</span><select value={severity} onChange={e => setSeverity(e.target.value)}>{SEVERITIES.map(s => <option key={s} value={s}>{s || 'All severities'}</option>)}</select></label>
+            <label><span>Status</span><select value={triageStatus} onChange={e => setTriageStatus(e.target.value as TriageFilter)}><option value="all">All statuses</option><option value="open">Open</option><option value="validated">Verified only</option><option value="false_positive">False Positive</option><option value="accepted_risk">Accepted Risk</option><option value="resolved">Resolved</option></select></label>
+            <label><span>Compliance</span><select value={complianceTag} onChange={e => setComplianceTag(e.target.value)}><option value="">All frameworks</option><option value="PCI-DSS">PCI-DSS</option><option value="ISO27001">ISO 27001</option><option value="CIS">CIS</option><option value="NIST">NIST</option></select></label>
+          </div>
+          <div className="findings-utility">
+            <span>{findings.length} findings matching filters</span>
+            <button onClick={() => {
               const params = new URLSearchParams()
-              for (const [k, v] of Object.entries(apiParams)) {
-                if (k !== 'limit') params.set(k, String(v))
-              }
+              for (const [key, value] of Object.entries(apiParams)) if (key !== 'limit') params.set(key, String(value))
               window.location.href = `/api/v1/findings/export?${params}`
-            }}
-            title="Download filtered findings as CSV"
-          >
-            ↓ Export CSV
-          </button>
-        </div>
-
-        {/* Bulk action toolbar */}
-        {selectedIds.size > 0 && (
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 10,
-              background: 'var(--accent-soft)',
-              border: '1px solid var(--border-strong)',
-              borderRadius: 6,
-              padding: '8px 12px',
-            }}
-          >
-            <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--accent)', marginRight: 4 }}>
-              {selectedIds.size} selected
-            </span>
-            <button
-              className="btn btn-sm"
-              onClick={() => bulkFpMut.mutate(bulkIds)}
-              disabled={bulkFpMut.isPending}
-            >
-              Mark False Positive ({selectedIds.size})
-            </button>
-            <button
-              className="btn btn-sm"
-              onClick={() => bulkArMut.mutate(bulkIds)}
-              disabled={bulkArMut.isPending}
-            >
-              Mark Accepted Risk ({selectedIds.size})
-            </button>
-            <button
-              className="btn btn-ghost btn-sm"
-              onClick={() => setSelectedIds(new Set())}
-              style={{ marginLeft: 'auto' }}
-            >
-              Clear Selection
-            </button>
+            }} title="Download filtered findings as CSV">Export CSV</button>
           </div>
-        )}
-
-        {/* Table */}
-        <div className="panel" style={{ flex: 1, overflow: 'auto' }}>
-          <table className="tbl">
-            <thead>
-              <tr>
-                <th style={{ width: 36, paddingLeft: 14, paddingRight: 6 }}>
-                  <input
-                    ref={selectAllRef}
-                    type="checkbox"
-                    checked={allSelected}
-                    onChange={toggleAll}
-                    style={{ cursor: 'pointer', accentColor: 'var(--accent)' }}
-                  />
-                </th>
+          {bulkErr && <div className="findings-error" role="alert">{bulkErr}</div>}
+          {selectedIds.size > 0 && <div className="findings-bulk"><strong>{selectedIds.size} selected</strong><button onClick={() => bulkFpMut.mutate(bulkIds)} disabled={bulkFpMut.isPending}>Mark false positive</button><button onClick={() => bulkArMut.mutate(bulkIds)} disabled={bulkArMut.isPending}>Accept risk</button><button onClick={() => setSelectedIds(new Set())}>Clear selection</button></div>}
+          <div className="findings-table-wrap">
+            <table className="tbl findings-table">
+              <thead><tr>
+                <th className="findings-checkbox-cell"><input ref={selectAllRef} type="checkbox" checked={allSelected} onChange={toggleAll} aria-label="Select all visible findings" /></th>
                 <SortableTh label="Severity" sortKey="severity" active={sortKey} dir={sortDir} onSort={toggleSort} />
                 <SortableTh label="Title" sortKey="title" active={sortKey} dir={sortDir} onSort={toggleSort} />
                 <th>Host</th>
@@ -787,97 +656,30 @@ export default function Findings() {
                 <SortableTh label="CVSS" sortKey="cvss" active={sortKey} dir={sortDir} onSort={toggleSort} />
                 <SortableTh label="Status" sortKey="status" active={sortKey} dir={sortDir} onSort={toggleSort} />
                 <th>Tags</th>
-              </tr>
-            </thead>
-            <tbody>
-              {findings.length === 0 && (
-                <EmptyState
-                  icon={
-                    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-                      <circle cx="11" cy="11" r="8" /><path d="m21 21-4.35-4.35" />
-                    </svg>
-                  }
-                  message="No findings match the current filters"
-                />
-              )}
-              {findings.map(f => {
-                const isSelected = selectedIds.has(f.id)
-                const isActive = selected?.id === f.id
-                return (
-                  <tr
-                    key={f.id}
-                    className={isSelected || isActive ? 'selected' : ''}
-                    style={{ opacity: f.false_positive ? 0.5 : 1 }}
-                    onClick={() => setSelected(f)}
-                  >
-                    {/* Checkbox cell — stop propagation so clicking the checkbox doesn't open the drawer */}
-                    <td
-                      style={{ paddingLeft: 14, paddingRight: 6 }}
-                      onClick={e => { e.stopPropagation(); toggleRow(f.id) }}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={isSelected}
-                        onChange={() => toggleRow(f.id)}
-                        onClick={e => e.stopPropagation()}
-                        style={{ cursor: 'pointer', accentColor: 'var(--accent)' }}
-                      />
-                    </td>
+              </tr></thead>
+              <tbody>
+                {findings.length === 0 && <tr><td colSpan={9} className="findings-empty"><strong>No findings in this view.</strong><span>Adjust the filters to see a different set.</span></td></tr>}
+                {findings.map(f => {
+                  const isSelected = selectedIds.has(f.id)
+                  const isActive = selected?.id === f.id
+                  return <tr key={f.id} className={`${isSelected || isActive ? 'selected' : ''} ${f.false_positive ? 'findings-false-positive' : ''}`} onClick={() => setSelected(f)} tabIndex={0} onKeyDown={event => { if (event.key === 'Enter') setSelected(f) }}>
+                    <td className="findings-checkbox-cell" onClick={e => e.stopPropagation()}><input type="checkbox" checked={isSelected} onChange={() => toggleRow(f.id)} aria-label={`Select ${f.title}`} /></td>
                     <td><SevTag severity={f.severity} /></td>
-                    <td
-                      style={{
-                        maxWidth: 260,
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        fontWeight: 500,
-                        color: 'var(--text-0)',
-                      }}
-                    >
-                      {f.validated && <><VerifiedTag method={f.validation_method} />{' '}</>}
-                      {f.title}
-                    </td>
-                    <td className="mono" style={{ fontSize: 11.5, color: 'var(--text-2)' }}>
-                      {f.host_ip ?? '—'}
-                    </td>
-                    <td className="mono" style={{ fontSize: 11.5, color: 'var(--text-2)' }}>
-                      {f.port_number != null ? `${f.port_number}/${f.protocol}` : '—'}
-                    </td>
-                    <td>
-                      {f.vpr_score != null ? (
-                        <span style={{
-                          fontFamily: 'var(--font-mono)', fontSize: 11,
-                          fontWeight: 700, padding: '2px 5px', borderRadius: 3,
-                          background: f.vpr_score >= 8 ? 'oklch(0.70 0.22 352 / 0.15)' : f.vpr_score >= 5 ? 'oklch(0.68 0.21 27 / 0.15)' : 'oklch(0.80 0.16 70 / 0.15)',
-                          color: f.vpr_score >= 8 ? 'var(--sev-critical)' : f.vpr_score >= 5 ? 'var(--sev-high)' : 'var(--sev-medium)',
-                        }}>{f.vpr_score.toFixed(1)}</span>
-                      ) : <span className="dimmer" style={{ fontSize: 11 }}>—</span>}
-                    </td>
-                    <td className="mono" style={{ fontSize: 11.5, color: 'var(--text-1)' }}>
-                      {f.cvss_score != null ? f.cvss_score.toFixed(1) : '—'}
-                    </td>
-                    <td>
-                      <span className={statusPillClass(f.remediation_status, f.false_positive)}>
-                        {statusLabel(f)}
-                      </span>
-                    </td>
-                    <td>
-                      <ComplianceTags raw={f.compliance_tags} />
-                    </td>
+                    <td className="findings-title-cell">{f.validated && <VerifiedTag method={f.validation_method} />}<span>{f.title}</span></td>
+                    <td className="findings-mono">{f.host_ip ?? '-'}</td>
+                    <td className="findings-mono">{f.port_number != null ? `${f.port_number}/${f.protocol}` : '-'}</td>
+                    <td className="findings-score">{f.vpr_score != null ? f.vpr_score.toFixed(1) : '-'}</td>
+                    <td className="findings-score">{f.cvss_score != null ? f.cvss_score.toFixed(1) : '-'}</td>
+                    <td><span className={statusPillClass(f.remediation_status, f.false_positive)}>{statusLabel(f)}</span></td>
+                    <td><ComplianceTags raw={f.compliance_tags} /></td>
                   </tr>
-                )
-              })}
-            </tbody>
-          </table>
-        </div>
+                })}
+              </tbody>
+            </table>
+          </div>
+        </section>
       </div>
-
-      {/* ── Right: detail drawer ── */}
-      {selected && (
-        <FindingDrawer
-          finding={selected}
-          onClose={() => setSelected(null)}
-        />
-      )}
-    </div>
+      {selected && <FindingDrawer finding={fetched.find(f => f.id === selected.id) ?? selected} onClose={() => setSelected(null)} />}
+    </main>
   )
 }
