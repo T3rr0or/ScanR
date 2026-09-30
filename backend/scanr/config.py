@@ -124,6 +124,16 @@ class Settings(BaseSettings):
     # NVD CVE feed cache
     nvd_cache_dir: Path = Path("./nvd_cache")
 
+    # PEM bundle of extra CAs trusted for authenticated LDAP (e.g. an internal
+    # AD CS root). Certificates are always validated; this only adds trust.
+    ldap_ca_file: Path | None = None
+
+    @field_validator("ldap_ca_file", mode="before")
+    @classmethod
+    def _empty_ca_file_is_unset(cls, value):
+        # Compose passes an unset variable through as "".
+        return None if value is None or str(value).strip() == "" else value
+
     # Admin bootstrap (first-run seed)
     admin_email: str = "admin@scanr.local"
     admin_password: str = ""

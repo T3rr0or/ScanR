@@ -6,6 +6,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from scanr.core.plugin_base import FindingData, PluginBase, PluginCategory, Severity
+from scanr.plugins.services._ldap_secure import LdapTlsError, warn_ldap_tls
 
 if TYPE_CHECKING:
     from scanr.core.context import ScanContext
@@ -29,19 +30,30 @@ class TrustEnumPlugin(PluginBase):
         if not cred or not cred.get("username") or not cred.get("domain"):
             return []
         # LDAP simple binds are only allowed over the encrypted standard ports.
+        tls_error: LdapTlsError | None = None
+        tls_ok = False  # some port got past TLS, so the certificate is not the problem
         for port in host.ports:
             if port.number not in (389, 636, 3268, 3269) or port.state != "open":
                 continue
-            trusts = await self._enumerate_trusts(host.ip, port.number, cred)
+            try:
+                trusts = await self._enumerate_trusts(host.ip, port.number, cred, host.hostname)
+            except LdapTlsError as exc:
+                tls_error = exc  # another port may still validate
+                continue
+            tls_ok = True
             if trusts:
                 return [self._build_finding(host.ip, port.number, trusts)]
+        if tls_error is not None and not tls_ok:
+            await warn_ldap_tls(context, self.id, host.ip, tls_error)
         return []
 
-    async def _enumerate_trusts(self, ip: str, port: int, cred: dict) -> list[dict]:
+    async def _enumerate_trusts(self, ip: str, port: int, cred: dict,
+                                hostname: str | None = None) -> list[dict]:
         loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(None, self._ldap_trusts, ip, port, cred)
+        return await loop.run_in_executor(None, self._ldap_trusts, ip, port, cred, hostname)
 
-    def _ldap_trusts(self, ip: str, port: int, cred: dict) -> list[dict]:
+    def _ldap_trusts(self, ip: str, port: int, cred: dict,
+                     hostname: str | None = None) -> list[dict]:
         try:
             import ldap3
             from scanr.plugins.services._ldap_secure import secure_ldap_connection
@@ -51,7 +63,8 @@ class TrustEnumPlugin(PluginBase):
             if "\\" not in bind_user and "@" not in bind_user:
                 bind_user = f"{domain}\\{bind_user}"
             conn = secure_ldap_connection(
-                ldap3, ip, port, bind_user, cred.get("password", "")
+                ldap3, ip, port, bind_user, cred.get("password", ""),
+                hostnames=(hostname,),
             )
             try:
                 base_dn = "CN=System," + ",".join(
@@ -67,6 +80,8 @@ class TrustEnumPlugin(PluginBase):
                 return parse_trust_entries(conn.entries)
             finally:
                 conn.unbind()
+        except LdapTlsError:
+            raise
         except Exception as exc:
             logger.debug("LDAP trust enumeration failed for %s:%s: %s", ip, port, exc)
             return []

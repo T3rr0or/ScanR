@@ -4,10 +4,10 @@ Requests TGS tickets for accounts with Service Principal Names set.
 These tickets can be cracked offline to recover service account passwords.
 """
 from __future__ import annotations
-import asyncio
 import logging
 from typing import TYPE_CHECKING
 from scanr.core.plugin_base import FindingData, PluginBase, PluginCategory, Severity
+from scanr.plugins.services._ldap_secure import LdapTlsError, run_ldap_check
 
 if TYPE_CHECKING:
     from scanr.core.context import ScanContext
@@ -38,12 +38,12 @@ class KerberoastablePlugin(PluginBase):
         if not domain:
             return []
 
-        results = await asyncio.get_running_loop().run_in_executor(
-            None, self._find_spns, host.ip, username, password, domain
+        results = await run_ldap_check(
+            context, self.id, host.ip, self._find_spns, host.ip, username, password, domain, host.hostname
         )
         return results
 
-    def _find_spns(self, dc_ip: str, username: str, password: str, domain: str) -> list[FindingData]:
+    def _find_spns(self, dc_ip: str, username: str, password: str, domain: str, hostname: str | None = None) -> list[FindingData]:
         try:
             import ldap3
         except ImportError:
@@ -53,7 +53,7 @@ class KerberoastablePlugin(PluginBase):
         try:
             bind_user = f"{domain}\\{username}" if "\\" not in username else username
             from scanr.plugins.services._ldap_secure import secure_ldap_connection
-            conn = secure_ldap_connection(ldap3, dc_ip, 389, bind_user, password)
+            conn = secure_ldap_connection(ldap3, dc_ip, 389, bind_user, password, hostnames=(hostname,))
 
             base_dn = ",".join(f"DC={p}" for p in domain.replace("\\", "").split(".") if p)
             conn.search(
@@ -91,6 +91,8 @@ class KerberoastablePlugin(PluginBase):
                     "Remove SPNs from accounts that no longer need them."
                 ),
             )]
+        except LdapTlsError:
+            raise
         except Exception as exc:
             logger.debug("Kerberoastable check failed on %s: %s", dc_ip, exc)
             return []

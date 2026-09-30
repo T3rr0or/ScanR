@@ -4,9 +4,9 @@ Requires primary_domain credentials. Enumerates domain users, groups,
 and computers. Flags privileged group membership and stale accounts.
 """
 from __future__ import annotations
-import asyncio
 import logging
 from typing import TYPE_CHECKING
+from scanr.plugins.services._ldap_secure import LdapTlsError, run_ldap_check
 from scanr.core.plugin_base import FindingData, PluginBase, PluginCategory, Severity
 
 if TYPE_CHECKING:
@@ -37,13 +37,15 @@ class LdapUserEnumPlugin(PluginBase):
         domain = creds.get("domain", "")
 
         open_ports = [p.number for p in host.ports if p.number in (389, 636) and p.state == "open"]
-        results = await asyncio.get_running_loop().run_in_executor(
-            None, self._enumerate_ldap, host.ip, username, password, domain, open_ports
+        results = await run_ldap_check(
+            context, self.id, host.ip, self._enumerate_ldap,
+            host.ip, username, password, domain, open_ports, host.hostname,
         )
         return results
 
     def _enumerate_ldap(self, ip: str, username: str, password: str, domain: str,
-                        open_ports: list[int] | None = None) -> list[FindingData]:
+                        open_ports: list[int] | None = None,
+                        hostname: str | None = None) -> list[FindingData]:
         try:
             import ldap3
         except ImportError:
@@ -51,6 +53,8 @@ class LdapUserEnumPlugin(PluginBase):
             return []
 
         findings = []
+        tls_error: LdapTlsError | None = None
+        tls_ok = False  # some port got past TLS, so the certificate is not the problem
         # Build base DN from domain
         if domain:
             base_dn = ",".join(f"DC={part}" for part in domain.replace("\\", "").split(".") if part)
@@ -64,7 +68,9 @@ class LdapUserEnumPlugin(PluginBase):
             try:
                 # Build UPN or domain\user bind
                 bind_user = f"{domain}\\{username}" if domain and "\\" not in username else username
-                conn = secure_ldap_connection(ldap3, ip, port, bind_user, password)
+                conn = secure_ldap_connection(
+                    ldap3, ip, port, bind_user, password, hostnames=(hostname,)
+                )
 
                 if not base_dn:
                     # Try to get base DN from rootDSE
@@ -136,7 +142,12 @@ class LdapUserEnumPlugin(PluginBase):
                 ))
                 return findings  # success on first working port
 
+            except LdapTlsError as exc:
+                tls_error = exc  # try the next port before reporting
             except Exception as exc:
+                tls_ok = True
                 logger.debug("LDAP enum failed on %s:%s — %s", ip, port, exc)
 
+        if not findings and tls_error is not None and not tls_ok:
+            raise tls_error
         return findings

@@ -7,11 +7,11 @@ compromises the machine to capture TGTs for any user who authenticates to it.
 """
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import TYPE_CHECKING
 
 from scanr.core.plugin_base import FindingData, PluginBase, PluginCategory, Severity
+from scanr.plugins.services._ldap_secure import LdapTlsError, run_ldap_check
 
 if TYPE_CHECKING:
     from scanr.core.context import ScanContext
@@ -41,11 +41,11 @@ class UnconstrainedDelegationPlugin(PluginBase):
         if not username or not domain:
             return []
 
-        return await asyncio.get_running_loop().run_in_executor(
-            None, self._find_delegation, host.ip, username, password, domain
+        return await run_ldap_check(
+            context, self.id, host.ip, self._find_delegation, host.ip, username, password, domain, host.hostname
         )
 
-    def _find_delegation(self, ip: str, username: str, password: str, domain: str) -> list[FindingData]:
+    def _find_delegation(self, ip: str, username: str, password: str, domain: str, hostname: str | None = None) -> list[FindingData]:
         try:
             import ldap3
         except ImportError:
@@ -57,7 +57,7 @@ class UnconstrainedDelegationPlugin(PluginBase):
 
         try:
             from scanr.plugins.services._ldap_secure import secure_ldap_connection
-            conn = secure_ldap_connection(ldap3, ip, 389, bind_user, password)
+            conn = secure_ldap_connection(ldap3, ip, 389, bind_user, password, hostnames=(hostname,))
 
             # Find unconstrained delegation (UAC & 0x80000 = 524288)
             # Exclude DCs (objectCategory=computer AND NOT in Domain Controllers OU)
@@ -138,6 +138,8 @@ class UnconstrainedDelegationPlugin(PluginBase):
                 ))
 
             conn.unbind()
+        except LdapTlsError:
+            raise
         except Exception as exc:
             logger.debug("Delegation check failed on %s: %s", ip, exc)
 
