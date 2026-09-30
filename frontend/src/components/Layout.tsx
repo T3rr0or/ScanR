@@ -106,7 +106,7 @@ export default function Layout() {
     queryKey: ["system-update-status"],
     queryFn: () => api.get("/system/update/status").then(r => r.data),
     enabled: Boolean(versionData?.self_update_enabled) && role === "admin",
-    refetchInterval: query => query.state.data?.state === "running" || query.state.data?.state === "queued" ? 2500 : false,
+    refetchInterval: query => query.state.data?.state === "running" || query.state.data?.state === "queued" || query.state.data?.state === "restarting" ? 2500 : false,
   });
   const updateMut = useMutation({
     mutationFn: () => api.post("/system/update").then(r => r.data),
@@ -115,7 +115,7 @@ export default function Layout() {
 
   const activeSection = SECTIONS.find(s => s.pages.some(p => p.id === page)) ?? SECTIONS[0];
   const PageComponent = PAGES[page];
-  const updateRunning = updateStatus?.state === "running" || updateStatus?.state === "queued";
+  const updateRunning = updateStatus?.state === "running" || updateStatus?.state === "queued" || updateStatus?.state === "restarting";
 
   return (
     <div className="console-shell">
@@ -151,8 +151,10 @@ export default function Layout() {
           <div className="console-update">
             <strong>Update available</strong><span>ScanR v{versionData.latest}</span>
             {versionData.release_url && <a href={versionData.release_url} target="_blank" rel="noreferrer">Release notes</a>}
+            {updateStatus?.state === "restarting" && <span>Restarting services. Waiting for ScanR to come back.</span>}
+            {updateMut.isError && <span role="alert">Could not start update. Check Settings → System.</span>}
             {updateStatus?.state === "failed" && <span>Update failed: {updateStatus.message}</span>}
-            {updateStatus?.state === "succeeded" && <span>Update complete. ScanR may restart.</span>}
+            {updateStatus?.state === "succeeded" && <span>Update command completed.</span>}
             {Boolean(versionData.self_update_enabled) && role === "admin" && (
               <button className="btn btn-primary btn-sm" onClick={() => updateMut.mutate()} disabled={updateRunning || updateMut.isPending}>{updateRunning || updateMut.isPending ? "Updating…" : "Update now"}</button>
             )}
