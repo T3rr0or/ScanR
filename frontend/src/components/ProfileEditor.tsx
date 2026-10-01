@@ -46,6 +46,7 @@ export interface ProfileConfig {
     scanners: ('tcp_connect' | 'syn' | 'udp')[]
     firewall_strategy: 'default' | 'skip_ping'
     timing: number
+    masscan: boolean
   }
   enumeration: {
     service_detection: boolean
@@ -91,6 +92,7 @@ const DEFAULT_PROFILE: ProfileConfig = {
     scanners: ['tcp_connect' as const],
     firewall_strategy: 'default' as const,
     timing: 4,
+    masscan: true,
   },
   enumeration: {
     service_detection: true,
@@ -153,7 +155,7 @@ export function configToJson(c: ProfileConfig): Record<string, unknown> {
     performance: c.performance,
     external_recon: c.scan_context === 'external',
     subdomain_enum: c.enumeration.subdomain_enum,
-    disable_masscan: c.scan_context === 'external' && targetType === 'domain',
+    disable_masscan: !c.port_scanning.masscan || (c.scan_context === 'external' && targetType === 'domain'),
     allow_full_port_scan: c.port_range === '1-65535' || c.port_range === 'all',
     intrusive: c.safety_level === 'aggressive',
     masscan_rate: c.performance.masscan_rate,
@@ -177,6 +179,10 @@ export function jsonToConfig(pj: Record<string, unknown> | null | undefined): Pr
     ...(portScanningRaw.firewall_strategy !== undefined ? { firewall_strategy: portScanningRaw.firewall_strategy as 'default' | 'skip_ping' } : {}),
     ...(scannersArr?.length ? { scanners: scannersArr as ProfileConfig['port_scanning']['scanners'] }
       : legacyScanner ? { scanners: [legacyScanner as 'tcp_connect' | 'syn' | 'udp'] }
+      : {}),
+    // External domain scans force masscan off; that is not an operator choice.
+    ...(pj.disable_masscan && !(pj.scan_context === 'external' && pj.target_type === 'domain')
+      ? { masscan: false }
       : {}),
   }
   const enumeration = (pj.enumeration ?? {}) as Partial<ProfileConfig['enumeration']>
@@ -351,7 +357,7 @@ export function ProfileEditor({
               {(['tcp_connect', 'syn', 'udp'] as const).map(scanner => (
                 <Toggle
                   key={scanner}
-                  label={scanner === 'tcp_connect' ? 'TCP connect' : scanner === 'syn' ? 'SYN / masscan' : 'UDP'}
+                  label={scanner === 'tcp_connect' ? 'TCP connect' : scanner === 'syn' ? 'SYN' : 'UDP'}
                   checked={config.port_scanning.scanners.includes(scanner)}
                   onChange={checked => onChange({
                     ...config,
@@ -366,6 +372,11 @@ export function ProfileEditor({
               ))}
             </div>
           </Field>
+          <Toggle
+            label="masscan pre-sweep: fast open-port discovery before nmap (IP targets)"
+            checked={config.port_scanning.masscan}
+            onChange={checked => onChange({ ...config, port_scanning: { ...config.port_scanning, masscan: checked } })}
+          />
           <Field label="Nmap timing">
             <select
               className="select-field"

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, computed_field, field_validator
 
 
 class ScanCredentialIn(BaseModel):
@@ -122,6 +122,17 @@ class ScanSummary(BaseModel):
         if isinstance(v, list):
             return [t.value if hasattr(t, 'value') else str(t) for t in v]
         return v
+
+    @computed_field  # type: ignore[prop-decorator]  # pydantic-documented pattern
+    @property
+    def duration_s(self) -> int | None:
+        """Whole seconds of run time; None until the scan has started and finished."""
+        if not self.started_at or not self.finished_at:
+            return None
+        try:
+            return max(0, round((self.finished_at - self.started_at).total_seconds()))
+        except TypeError:  # one naive, one aware timestamp (legacy rows)
+            return None
 
 
 class ScanRead(ScanSummary):

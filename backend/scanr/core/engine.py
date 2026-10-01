@@ -51,6 +51,22 @@ def _plugin_allowed(plugin_id: str, filters: list[str]) -> bool:
     return False
 
 
+def port_scan_failure(live_hosts: int, hosts_scanned: int, errors: dict[str, str]) -> str | None:
+    """Why the scan must fail, when no live host could be port-scanned at all.
+
+    Only errors count: a host that answered with zero open ports is a valid
+    result, and a host the scanner errored on is not. Any scanned host means a
+    partial result, which completes with a warning instead.
+    """
+    if not live_hosts or hosts_scanned or not errors:
+        return None
+    ip, error = next(iter(errors.items()))
+    return (
+        f"Port scanning failed on all {len(errors)} live host(s) that were "
+        f"attempted (e.g. {ip}: {error})"
+    )
+
+
 def _plugin_applies_to_host_data(plugin, ports: list[dict]) -> bool:
     if plugin.ports is None:
         return True
@@ -496,6 +512,10 @@ class ScanEngine:
             plugins = [p for p in plugins if not p.requires_auth]
 
         await scan_log.info(f"Loaded {len(plugins)} plugins (profile filter: {profile_filter or '*'})", phase="engine")
+        context.plugin_ports = sorted({
+            p for plugin in plugins for p in (getattr(plugin, "ports", None) or ())
+            if isinstance(p, int)
+        })
 
         domain_mode = _is_domain_mode(_pj, all_targets)
         if domain_mode:
@@ -715,6 +735,15 @@ class ScanEngine:
                 phase="portscan",
             )
 
+        from scanr.scanner.port_scanner.nmap_wrapper import nmap_can_use_raw_sockets
+
+        if not nmap_can_use_raw_sockets() and ({"syn", "udp"} & set(scanners)):
+            await scan_log.warn(
+                "nmap has no raw-socket access in this worker — SYN scans run as "
+                "TCP connect, and UDP scans and OS detection are skipped",
+                phase="portscan",
+            )
+
         # Phase 2+3+4: Per-host port scan + service fingerprint + plugin dispatch
         sem = rate_limiter.host_slot()
         tasks = [
@@ -745,6 +774,24 @@ class ScanEngine:
             scan.status = ScanStatus.cancelled
             await self.db.commit()
             return
+
+        # Every live host's port scan errored: the scanner itself is broken
+        # (privileges, missing binary, crashes). Completing would report a
+        # clean result, and `scanr ci` would pass the build on a scan that
+        # never looked at a single port.
+        message = port_scan_failure(len(live_targets), context.hosts_scanned, context.port_scan_errors)
+        if message:
+            await scan_log.error(message, phase="engine")
+            scan.status = ScanStatus.failed
+            scan.error_message = message[:1000]
+            await self.db.commit()
+            return
+        if context.port_scan_errors:
+            await scan_log.warn(
+                f"Port scanning failed on {len(context.port_scan_errors)} of "
+                f"{len(live_targets)} live host(s); results for those hosts are missing",
+                phase="engine",
+            )
 
         # Warn if nothing was scanned AND masscan also found nothing — strong signal
         # of a privilege/network problem. Don't raise: zero open ports is a valid
@@ -937,7 +984,11 @@ class ScanEngine:
                         ],
                     }
                 else:
-                    await context.log.warn(f"{ip} — no response from nmap", phase="portscan", host=ip)
+                    error = context.port_scan_errors.get(ip)
+                    if error:
+                        await context.log.error(f"{ip} — {error}", phase="portscan", host=ip)
+                    else:
+                        await context.log.warn(f"{ip} — no response from nmap", phase="portscan", host=ip)
                     return
 
             actual_address = host_data.get("address") or ip

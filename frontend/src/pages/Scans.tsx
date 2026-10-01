@@ -1149,7 +1149,7 @@ function NewScanModal({
                   {(['tcp_connect', 'syn', 'udp'] as const).map(scanner => (
                     <Toggle
                       key={scanner}
-                      label={scanner === 'tcp_connect' ? 'TCP connect (works without root, slower)' : scanner === 'syn' ? 'SYN / masscan (needs root, faster)' : 'UDP (SNMP, DNS, DHCP discovery)'}
+                      label={scanner === 'tcp_connect' ? 'TCP connect (works without root, slower)' : scanner === 'syn' ? 'SYN (raw sockets, faster; falls back to TCP connect)' : 'UDP (SNMP, DNS, DHCP discovery)'}
                       checked={profileConfig.port_scanning.scanners.includes(scanner)}
                       onChange={checked => setProfileConfig(p => ({
                         ...p,
@@ -1162,6 +1162,13 @@ function NewScanModal({
                       }))}
                     />
                   ))}
+                </div>
+                <div style={{ marginTop: 8 }}>
+                  <Toggle
+                    label="masscan pre-sweep (fast open-port discovery on IP targets before nmap)"
+                    checked={profileConfig.port_scanning.masscan}
+                    onChange={masscan => setProfileConfig(p => ({ ...p, port_scanning: { ...p.port_scanning, masscan } }))}
+                  />
                 </div>
                 <div style={{ marginTop: 8 }}>
                   <span className="mono" style={{ fontSize: 11, color: 'var(--text-3)', marginBottom: 4, display: 'block' }}>Nmap timing:</span>

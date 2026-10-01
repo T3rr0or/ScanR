@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 
@@ -16,6 +17,7 @@ from scanr.config import get_settings
 from scanr.db.init_db import run_migrations, seed_admin, seed_plugins, seed_templates, _seed_builtin_wordlists
 from scanr.db.redis import init_redis, close_redis
 from scanr.db.session import AsyncSessionLocal
+from scanr.utils.ip_utils import warm_denylist_cache
 from scanr.utils.logging import configure_logging
 
 from scanr.core.limiter import limiter
@@ -57,8 +59,12 @@ async def lifespan(app: FastAPI):
         await seed_plugins(db)
         await seed_templates(db)
         await _seed_builtin_wordlists(db)
+    # Resolve the scan denylist in the background so the first scan creation
+    # does not pay for Docker DNS timeouts on names this network cannot see.
+    warmup = asyncio.create_task(warm_denylist_cache(settings.scan_denylist))
     logger.info("ScanR ready")
     yield
+    warmup.cancel()
     await close_redis()
     logger.info("ScanR shutting down")
 

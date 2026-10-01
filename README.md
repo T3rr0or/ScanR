@@ -120,6 +120,26 @@ indistinguishable from a clean report. `--fail-on never` gives report-only mode
 for teams adopting the gate before enforcing it. A SARIF write failure never
 changes the verdict — the scan already ran.
 
+**Installing the CLI.** `scanr` ships inside the worker image, so the
+simplest way to run it anywhere Docker is available is:
+
+```bash
+docker run --rm --user "$(id -u):$(id -g)" \
+  -e SCANR_URL -e SCANR_TOKEN -v "$PWD:/work" -w /work \
+  --entrypoint scanr ghcr.io/t3rr0or/scanr-worker:latest \
+  ci --target 192.0.2.0/24 --fail-on high --sarif scanr.sarif
+```
+
+Add `--network host` when `SCANR_URL` points at `localhost`. To install it with
+Python 3.12+ instead, use the same pinned dependencies as the image (this is
+what the GitHub Action below does):
+
+```bash
+python3 -m venv ~/.scanr-cli && . ~/.scanr-cli/bin/activate
+pip install --require-hashes -r backend/requirements.txt
+pip install --no-deps ./backend
+```
+
 The CLI verifies the API's TLS certificate. Every request carries your API key,
 and the `ci` verdict is something a pipeline acts on, so neither should travel
 over a connection an interceptor can read or forge. A ScanR behind a private CA

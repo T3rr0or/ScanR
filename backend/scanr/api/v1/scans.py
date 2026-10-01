@@ -47,9 +47,11 @@ async def _validate_targets(targets: list[str]) -> None:
         expand_targets as _expand,
         is_forbidden_target,
         validate_target_batch,
+        warm_denylist_cache,
     )
 
     denylist = get_settings().scan_denylist
+    await warm_denylist_cache(denylist)
     try:
         # Check raw-count and aggregate expansion bounds before this route
         # materialises any individual CIDR/range. Keep this in the shared helper

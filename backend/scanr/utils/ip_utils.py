@@ -5,6 +5,7 @@ import ipaddress
 import logging
 import re
 import socket
+from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
 from typing import Iterator
 
@@ -231,18 +232,41 @@ def _denylist_hostname_ips(denylist: frozenset[str]) -> frozenset[str]:
     Resolution failures are skipped (a name that does not resolve cannot be the
     IP an attacker reaches either).
     """
-    ips: set[str] = set()
-    for name in denylist:
+    def _resolve(name: str) -> set[str]:
+        found: set[str] = set()
         try:
             for info in socket.getaddrinfo(name, None, type=socket.SOCK_STREAM):
                 # sockaddr[0] is the address; typed str | int because sockaddr is
                 # a union across address families.
                 canon = canonical_ip(str(info[4][0]))
                 if canon:
-                    ips.add(canon)
+                    found.add(canon)
         except (OSError, UnicodeError):
             logger.debug("Denylisted hostname %r does not resolve — skipping", name)
+        return found
+
+    # Resolve in parallel: a Compose service that is not on this container's
+    # network (sandbox-runner from the API, say) takes Docker's DNS ~7s to
+    # fail, and the default denylist has several. Serially that was 30s+ on
+    # the first target check, longer than the UI's request timeout.
+    ips: set[str] = set()
+    names = sorted(denylist)
+    if names:
+        with ThreadPoolExecutor(max_workers=min(len(names), 16)) as pool:
+            for found in pool.map(_resolve, names):
+                ips |= found
     return frozenset(ips)
+
+
+async def warm_denylist_cache(denylist: set[str] | frozenset[str]) -> None:
+    """Resolve the infrastructure denylist in a worker thread.
+
+    is_forbidden_target is synchronous and resolves the denylist on first use;
+    called from a request handler, that DNS work would block the event loop
+    for every in-flight request. Warming it off-loop first keeps it cheap.
+    """
+    if denylist:
+        await asyncio.to_thread(_denylist_hostname_ips, frozenset(denylist))
 
 
 def is_forbidden_target(value: str, extra_denylist: set[str] | None = None) -> bool:
