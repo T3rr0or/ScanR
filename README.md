@@ -261,6 +261,32 @@ All screenshots use documentation-safe demo data: `example.com` hosts and the
 
 ## Quick Start
 
+### Shell installer
+
+With Docker Engine, Docker Compose v2, Git and Python 3.10+ installed, download
+and run the installer on the Docker host:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/T3rr0or/ScanR/master/install.sh -o /tmp/scanr-install.sh
+sh /tmp/scanr-install.sh --admin-email you@example.com
+```
+
+It downloads ScanR into `$HOME/scanr`, generates unique secrets in a private
+`.env`, pulls the prebuilt images and waits for the services to become healthy.
+Open **http://localhost** on that host; the initial password is in
+`$HOME/scanr/.env`. Set `SCANR_INSTALL_DIR` to use a different new directory.
+Existing directories are never overwritten. To restart or update that install,
+run `python3 scripts/setup.py --start` from its directory.
+
+For access from another computer, add `--origin https://scanr.example.com` and
+configure an HTTPS reverse proxy as described below. The installer keeps the
+application bound to loopback and does not install Docker or configure TLS.
+
+The [Docker Compose file](docker-compose.yml) is the complete deployment
+template if you prefer managing the stack yourself. ScanR needs a database,
+queue and workers in addition to its web interface; use the full stack and
+generate its required secrets using the setup helper below.
+
 ### Prerequisites
 
 - Docker Engine 24+
