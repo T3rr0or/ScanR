@@ -275,8 +275,19 @@ It downloads ScanR into `$HOME/scanr`, generates unique secrets in a private
 `.env`, pulls the prebuilt images and waits for the services to become healthy.
 Open **http://localhost** on that host; the initial password is in
 `$HOME/scanr/.env`. Set `SCANR_INSTALL_DIR` to use a different new directory.
-Existing directories are never overwritten. To restart or update that install,
-run `python3 scripts/setup.py --start` from its directory.
+Existing directories are never overwritten.
+
+To update later, run the same script with `--update`:
+
+```bash
+sh ~/scanr/install.sh --update
+```
+
+It pulls the latest ScanR into the install directory, downloads the new images
+and restarts the stack; `.env` and all data are kept, and database changes are
+applied automatically on startup. If files in the directory were edited by
+hand, the update stops and says so rather than overwriting them. To restart
+without updating, run `python3 scripts/setup.py --start` from that directory.
 
 For access from another computer, add `--origin https://scanr.example.com` and
 configure an HTTPS reverse proxy as described below. The installer keeps the
