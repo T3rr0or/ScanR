@@ -6,7 +6,7 @@ import { parseJwtRole } from "@/utils/jwt";
 import { Logo } from "@/components/Logo";
 import api from "@/api/client";
 
-type PageId = "dashboard" | "scans" | "findings" | "assets" | "vulnerabilities" |
+type PageId = "dashboard" | "scans" | "findings" | "assets" | "vulnerabilities" | "trends" |
   "templates" | "schedules" | "agents" | "credentials" | "wordlists" |
   "plugins" | "reports" | "settings";
 
@@ -22,6 +22,7 @@ const Scans = lazy(() => import("@/pages/Scans")) as ComponentType<PageProps>;
 const Findings = lazy(() => import("@/pages/Findings")) as ComponentType<PageProps>;
 const Assets = lazy(() => import("@/pages/Assets")) as ComponentType<PageProps>;
 const Vulnerabilities = lazy(() => import("@/pages/Vulnerabilities")) as ComponentType<PageProps>;
+const Trends = lazy(() => import("@/pages/Trends")) as ComponentType<PageProps>;
 const Agents = lazy(() => import("@/pages/Agents")) as ComponentType<PageProps>;
 const Schedules = lazy(() => import("@/pages/Schedules")) as ComponentType<PageProps>;
 const Credentials = lazy(() => import("@/pages/Credentials")) as ComponentType<PageProps>;
@@ -34,7 +35,7 @@ const ScanDetail = lazy(() => import("@/pages/ScanDetail"));
 
 const PAGES: Record<PageId, ComponentType<PageProps>> = {
   dashboard: Dashboard, scans: Scans, findings: Findings, assets: Assets,
-  vulnerabilities: Vulnerabilities, agents: Agents, schedules: Schedules,
+  vulnerabilities: Vulnerabilities, trends: Trends, agents: Agents, schedules: Schedules,
   credentials: Credentials, plugins: Plugins, templates: Templates,
   wordlists: Wordlists, reports: Reports, settings: SettingsPage,
 };
@@ -47,7 +48,7 @@ const SECTIONS: { label: string; pages: { id: PageId; label: string }[] }[] = [
   ] },
   { label: "Results", pages: [
     { id: "findings", label: "Findings" }, { id: "assets", label: "Assets" },
-    { id: "vulnerabilities", label: "Vulnerabilities" },
+    { id: "vulnerabilities", label: "Vulnerabilities" }, { id: "trends", label: "Trends" },
   ] },
   { label: "Tools", pages: [
     { id: "plugins", label: "Plugins" }, { id: "templates", label: "Templates" },

@@ -261,3 +261,17 @@ async def remediation_groups(
         }
         for r in result.all()
     ]
+
+
+@router.get("/exposure-trend")
+async def exposure_trend(
+    weeks: int = Query(12, ge=4, le=52),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_scope("findings:read")),
+):
+    """Weekly open issues, time to fix and SLA status. See scanr/core/exposure.py."""
+    from scanr.config import get_settings
+    from scanr.core.exposure import load_issues, summarize
+
+    issues = await load_issues(db, current_user.id)
+    return summarize(issues, weeks, get_settings().sla_days)

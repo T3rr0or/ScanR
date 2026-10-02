@@ -51,3 +51,50 @@ export const analyticsApi = {
       '/analytics/plugin-hit-rate', { params: { limit } }
     ).then(r => r.data),
 }
+
+export type TrendSeverity = 'critical' | 'high' | 'medium' | 'low'
+
+export interface ExposurePoint {
+  date: string
+  critical: number
+  high: number
+  medium: number
+  low: number
+  /** Open issues scoring 80+ on the fix-first scale. */
+  fix_now: number
+  kev: number
+  /** Issues first seen / fixed in the week ending on `date`. */
+  new: number
+  fixed: number
+}
+
+export interface SeverityStats {
+  sla_days: number
+  open: number
+  overdue: number
+  fixed: number
+  mean_days_to_fix: number | null
+  median_days_to_fix: number | null
+  fixed_within_sla: number | null
+}
+
+export interface OverdueIssue {
+  title: string
+  location: string
+  severity: TrendSeverity
+  priority: number | null
+  kev: boolean
+  age_days: number
+  sla_days: number
+}
+
+export interface ExposureTrend {
+  generated_at: string
+  weeks: number
+  points: ExposurePoint[]
+  by_severity: Record<TrendSeverity, SeverityStats>
+  overdue: OverdueIssue[]
+}
+
+export const exposureTrend = (weeks: number) =>
+  api.get<ExposureTrend>('/analytics/exposure-trend', { params: { weeks } }).then(r => r.data)
