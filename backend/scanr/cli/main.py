@@ -71,6 +71,9 @@ def cli(ctx, url, token, insecure):
 def login(ctx, email, password):
     """Login and print access token."""
     data = _api(ctx, "/api/v1/auth/login", "POST", {"email": email, "password": password})
+    if data.get("mfa_required"):
+        code = click.prompt("Authentication code (or recovery code)")
+        data = _api(ctx, "/api/v1/auth/login/mfa", "POST", {"mfa_token": data["mfa_token"], "code": code})
     console.print(f"[green]Token:[/green] {data['access_token']}")
     console.print("[dim]Set env: export SCANR_TOKEN=<token>[/dim]")
 

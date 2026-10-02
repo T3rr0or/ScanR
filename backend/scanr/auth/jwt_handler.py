@@ -48,3 +48,21 @@ def decode_token(token: str) -> dict:
         return payload
     except JWTError as exc:
         raise ValueError("Invalid token") from exc
+
+
+MFA_TOKEN_MINUTES = 5
+
+
+def create_mfa_token(subject: str, password_generation: str | None = None) -> str:
+    """Proof that the password step passed, valid only for /auth/login/mfa."""
+    return jwt.encode(
+        {
+            "sub": subject,
+            "exp": _now() + timedelta(minutes=MFA_TOKEN_MINUTES),
+            "type": "mfa",
+            "jti": str(uuid.uuid4()),
+            **({"pw_generation": password_generation} if password_generation else {}),
+        },
+        settings.secret_key,
+        algorithm=settings.algorithm,
+    )

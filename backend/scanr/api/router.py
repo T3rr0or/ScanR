@@ -14,6 +14,7 @@ from .v1 import (
     findings,
     host_tags,
     integrations,
+    oidc,
     plugins,
     profile_suggest,
     reports,
@@ -31,6 +32,7 @@ from .websocket import router as ws_router
 
 api_router = APIRouter(prefix="/api/v1")
 api_router.include_router(auth.router)
+api_router.include_router(oidc.router)
 api_router.include_router(ai.router)
 api_router.include_router(profile_suggest.router)
 api_router.include_router(scans.router)

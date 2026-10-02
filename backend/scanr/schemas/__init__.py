@@ -1,4 +1,4 @@
-from .auth import LoginRequest, TokenResponse
+from .auth import LoginRequest, LoginResponse, MfaLoginRequest, TokenResponse
 from .credential import CredentialCreate, CredentialRead
 from .finding import FindingBulkUpdate, FindingRead, FindingUpdate
 from .host import HostRead
@@ -9,7 +9,7 @@ from .schedule import ScheduleCreate, ScheduleRead
 from .user import UserCreate, UserRead
 
 __all__ = [
-    "LoginRequest", "TokenResponse",
+    "LoginRequest", "LoginResponse", "MfaLoginRequest", "TokenResponse",
     "ScanCreate", "ScanCredentialIn", "ScanCredentialRead", "ScanRead", "ScanSummary",
     "HostRead",
     "FindingRead", "FindingUpdate", "FindingBulkUpdate",

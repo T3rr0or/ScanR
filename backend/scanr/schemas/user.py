@@ -22,5 +22,6 @@ class UserRead(BaseModel):
     full_name: str | None
     role: str
     is_active: bool
+    mfa_enabled: bool = False
 
     model_config = {"from_attributes": True}

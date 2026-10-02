@@ -14,8 +14,10 @@ import { webhooksApi } from "@/api/webhooks";
 import api from "@/api/client";
 import { relTime } from "@/components/ui";
 import AutonomyModeInfo from "@/components/AutonomyModeInfo";
+import TwoFactorPanel from "@/components/TwoFactorPanel";
 import { useAuthStore } from "@/store/auth";
 import { integrationsApi } from "@/api/integrations";
+import { usersApi } from "@/api/users";
 import { parseJwtRole } from "@/utils/jwt";
 import { apiErrorMessage } from "@/utils/apiError";
 import "./Settings.css";
@@ -626,6 +628,8 @@ function ProfileSection() {
 					</button>
 				</div>
 			</div>
+
+			<TwoFactorPanel />
 		</div>
 	);
 }
@@ -873,6 +877,11 @@ function UserManagementSection() {
 		},
 	});
 
+	const resetMfaMut = useMutation({
+		mutationFn: (id: string) => usersApi.resetMfa(id),
+		onSuccess: () => qc.invalidateQueries({ queryKey: ["admin-users"] }),
+	});
+
 	return (
 		<div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
 			<div
@@ -978,6 +987,7 @@ function UserManagementSection() {
 							<th>Name</th>
 							<th>Role</th>
 							<th>Status</th>
+							<th>2FA</th>
 							<th></th>
 						</tr>
 					</thead>
@@ -989,6 +999,7 @@ function UserManagementSection() {
 								full_name: string | null;
 								role: string;
 								is_active: boolean;
+								mfa_enabled?: boolean;
 							}[]
 						).map((u) => (
 							<tr key={u.id}>
@@ -1007,6 +1018,13 @@ function UserManagementSection() {
 									</span>
 								</td>
 								<td>
+									{u.mfa_enabled ? (
+										<span className="pill pill-ok">On</span>
+									) : (
+										<span style={{ fontSize: 12, color: "var(--text-3)" }}>Off</span>
+									)}
+								</td>
+								<td>
 									<div style={{ display: "flex", gap: 6, alignItems: "center" }}>
 										<button
 											className="btn btn-ghost btn-sm"
@@ -1017,6 +1035,20 @@ function UserManagementSection() {
 										>
 											{u.is_active ? "Disable" : "Enable"}
 										</button>
+										{u.mfa_enabled && me?.id !== u.id && (
+											<button
+												className="btn btn-ghost btn-sm"
+												style={{ fontSize: 11 }}
+												title="Remove this user's authenticator, e.g. after a lost phone"
+												onClick={() => {
+													if (window.confirm(`Reset two-factor authentication for ${u.email}? They will sign in with just their password until they set it up again.`)) {
+														resetMfaMut.mutate(u.id);
+													}
+												}}
+											>
+												Reset 2FA
+											</button>
+										)}
 										{me?.id !== u.id && (
 											confirmDeleteId === u.id ? (
 												<>
