@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import uuid
 from typing import Annotated
@@ -15,6 +16,8 @@ from scanr.auth.password import (
     password_within_bcrypt_limit,
     verify_password,
 )
+from scanr.auth import totp
+from scanr.auth.mfa import decrypt_secret, encrypt_secret, recovery_hashes, verify_second_factor
 from scanr.core.limiter import limiter
 from scanr.db import get_db
 from scanr.deps import get_current_user, require_admin_scope, require_session_user
@@ -127,6 +130,156 @@ async def change_password(
         response, create_refresh_token(current_user.id, generation)
     )
     logger.info("Password changed for user=%s — existing refresh tokens revoked", current_user.email)
+
+
+# ── Two-factor authentication ────────────────────────────────────────────────
+
+class MfaStatus(BaseModel):
+    enabled: bool
+    recovery_codes_remaining: int
+
+
+class MfaSetupRequest(BaseModel):
+    password: str
+
+
+class MfaSetupResponse(BaseModel):
+    secret: str
+    otpauth_uri: str
+
+
+class MfaCodeRequest(BaseModel):
+    code: str = Field(..., min_length=6, max_length=32)
+
+
+class MfaDisableRequest(BaseModel):
+    password: str
+    code: str = Field(..., min_length=6, max_length=32)
+
+
+class MfaRecoveryCodes(BaseModel):
+    recovery_codes: list[str]
+
+
+def _issue_recovery_codes(user: User) -> list[str]:
+    codes = totp.generate_recovery_codes()
+    user.totp_recovery_codes = json.dumps([totp.hash_recovery_code(c) for c in codes])
+    return codes
+
+
+def _vault_unavailable(exc: Exception) -> HTTPException:
+    logger.error("Two-factor secret could not be stored or read: %s", exc)
+    return HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail="Two-factor authentication needs a valid VAULT_KEY on the server",
+    )
+
+
+@router.get("/me/mfa", response_model=MfaStatus)
+async def mfa_status(current_user: User = Depends(require_session_user)):
+    return MfaStatus(
+        enabled=current_user.totp_enabled,
+        recovery_codes_remaining=len(recovery_hashes(current_user)) if current_user.totp_enabled else 0,
+    )
+
+
+@router.post("/me/mfa/setup", response_model=MfaSetupResponse)
+# Verifies the password, so it is an oracle like change-password.
+@limiter.limit("5/minute")
+async def mfa_setup(
+    request: Request,
+    body: MfaSetupRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_session_user),
+):
+    """Start enrolment. Nothing is enforced until /me/mfa/enable confirms a code."""
+    if current_user.totp_enabled:
+        raise HTTPException(status_code=409, detail="Two-factor authentication is already enabled")
+    if not verify_password(body.password, current_user.hashed_password):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Password is incorrect")
+    secret = totp.generate_secret()
+    try:
+        current_user.totp_secret = encrypt_secret(secret)
+    except Exception as exc:
+        raise _vault_unavailable(exc) from exc
+    current_user.totp_last_step = None
+    await db.commit()
+    return MfaSetupResponse(secret=secret, otpauth_uri=totp.provisioning_uri(secret, current_user.email))
+
+
+@router.post("/me/mfa/enable", response_model=MfaRecoveryCodes)
+@limiter.limit("10/minute")
+async def mfa_enable(
+    request: Request,
+    body: MfaCodeRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_session_user),
+):
+    """Confirm the authenticator works, turn 2FA on and return recovery codes once."""
+    if current_user.totp_enabled:
+        raise HTTPException(status_code=409, detail="Two-factor authentication is already enabled")
+    if not current_user.totp_secret:
+        raise HTTPException(status_code=400, detail="Start two-factor setup first")
+    try:
+        secret = decrypt_secret(current_user.totp_secret)
+    except Exception as exc:
+        raise _vault_unavailable(exc) from exc
+    step = totp.verify(secret, body.code, current_user.totp_last_step)
+    if step is None:
+        raise HTTPException(status_code=400, detail="That code does not match. Check the time on your phone and try again.")
+    current_user.totp_last_step = step
+    current_user.totp_enabled = True
+    codes = _issue_recovery_codes(current_user)
+    await db.commit()
+    logger.info("Two-factor authentication enabled for user=%s", current_user.email)
+    return MfaRecoveryCodes(recovery_codes=codes)
+
+
+@router.post("/me/mfa/recovery-codes", response_model=MfaRecoveryCodes)
+@limiter.limit("5/minute")
+async def mfa_regenerate_recovery_codes(
+    request: Request,
+    body: MfaCodeRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_session_user),
+):
+    """Replace every recovery code. Requires a current second factor."""
+    if not current_user.totp_enabled:
+        raise HTTPException(status_code=400, detail="Two-factor authentication is not enabled")
+    if not await verify_second_factor(db, current_user, body.code):
+        raise HTTPException(status_code=400, detail="Invalid authentication code")
+    codes = _issue_recovery_codes(current_user)
+    await db.commit()
+    logger.info("Recovery codes regenerated for user=%s", current_user.email)
+    return MfaRecoveryCodes(recovery_codes=codes)
+
+
+def _clear_mfa(user: User) -> None:
+    user.totp_enabled = False
+    user.totp_secret = None
+    user.totp_last_step = None
+    user.totp_recovery_codes = None
+
+
+@router.post("/me/mfa/disable", status_code=204)
+@limiter.limit("5/minute")
+async def mfa_disable(
+    request: Request,
+    body: MfaDisableRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_session_user),
+):
+    """Turn 2FA off. Requires both the password and a current second factor, so
+    a stolen browser session alone cannot remove it."""
+    if not current_user.totp_enabled:
+        raise HTTPException(status_code=400, detail="Two-factor authentication is not enabled")
+    if not verify_password(body.password, current_user.hashed_password):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Password is incorrect")
+    if not await verify_second_factor(db, current_user, body.code):
+        raise HTTPException(status_code=400, detail="Invalid authentication code")
+    _clear_mfa(current_user)
+    await db.commit()
+    logger.info("Two-factor authentication disabled for user=%s", current_user.email)
 
 
 # ── Admin user management ─────────────────────────────────────────────────────
@@ -270,3 +423,22 @@ async def delete_user(
     await db.delete(user)
     await db.commit()
     logger.info("Admin %s permanently deleted user=%s", admin.email, user.email)
+
+
+@router.post("/{user_id}/mfa/reset", response_model=UserRead)
+async def reset_user_mfa(
+    user_id: str,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_admin_scope("users:manage")),
+):
+    """Remove a user's second factor, e.g. after they lost their phone and
+    recovery codes. They can sign in with their password and enrol again."""
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    _clear_mfa(user)
+    await db.commit()
+    await db.refresh(user)
+    logger.warning("Admin %s reset two-factor authentication for user=%s", admin.email, user.email)
+    return user

@@ -41,6 +41,8 @@ _ALLOWED_UNGATED = {
     "auth.py:login",
     "auth.py:refresh",
     "auth.py:logout",
+    # Second login step; authorized by the short-lived challenge token it carries.
+    "auth.py:login_mfa",
 }
 
 # Reads with no scope gate. Two very different categories, kept apart on
@@ -67,6 +69,12 @@ _UNGATED_READ_BY_DESIGN = {
     # Self-service: authorization is "you are this user", enforced by reading
     # current_user rather than an id from the request.
     "users.py:get_profile",
+    # Single sign-on: whether SSO is offered, and the browser redirects that
+    # establish a session. The callback is authorized by the state cookie and
+    # the provider's signed ID token.
+    "oidc.py:oidc_config",
+    "oidc.py:oidc_login",
+    "oidc.py:oidc_callback",
 }
 
 # (2) Recorded scope-enforcement debt. Keep this separate from deliberate
@@ -79,7 +87,12 @@ _ALLOWED_UNGATED_READS = _UNGATED_READ_BY_DESIGN | _UNGATED_READ_KNOWN_GAP
 
 # Reads that may skip authentication entirely. Everything else must at minimum
 # identify the caller, even when it declares no scope.
-_UNAUTHENTICATED_READS = {"system.py:health"}
+_UNAUTHENTICATED_READS = {
+    "system.py:health",
+    "oidc.py:oidc_config",
+    "oidc.py:oidc_login",
+    "oidc.py:oidc_callback",
+}
 
 _V1 = pathlib.Path(__file__).resolve().parents[2] / "scanr" / "api" / "v1"
 

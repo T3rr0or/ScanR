@@ -967,6 +967,8 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .login-submit:hover { background: var(--text-0); }
 .login-submit:disabled { opacity: .5; cursor: wait; }
 .login-submit span { font-size: 18px; line-height: 1; }
+.login-sso { display: block; width: 100%; margin-top: 8px; padding: 12px 15px; border: 1px solid var(--border); background: transparent; color: var(--text-1); font-size: 10px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; text-align: center; text-decoration: none; cursor: pointer; }
+.login-sso:hover { border-color: var(--accent); color: var(--text-0); }
 .login-console-note { margin-top: 16px; color: var(--text-3); font-size: 10px; }
 .login-console-footer { border-top: 1px solid var(--border); border-bottom: 0; }
 @media (max-width: 600px) { .login-console-header > span:last-child { display: none; } .login-console-form { padding: 20px; } .login-console-footer { padding: 16px 20px; } }

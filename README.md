@@ -868,6 +868,42 @@ to turn them on. A local `make dev` run has them on by default.
 
 ---
 
+## Sign-in security
+
+### Two-factor authentication
+
+Every user can turn on two-factor authentication under **Settings → Profile**:
+confirm the password, scan the QR code with an authenticator app (Microsoft
+Authenticator, Google Authenticator, 1Password, …) and enter a code. ScanR then
+shows ten single-use recovery codes once; store them somewhere safe.
+
+After that, signing in asks for a 6-digit code after the password. A code can be
+used only once, wrong codes count towards the account lockout, and turning 2FA
+off requires both the password and a current code. If someone loses their phone
+and their recovery codes, an admin can use **Reset 2FA** under **Settings →
+Users**. The `scanr login` CLI command prompts for the code too; API keys are
+unaffected.
+
+### Single sign-on (OpenID Connect)
+
+ScanR can delegate sign-in to Microsoft Entra ID, Google Workspace, Okta,
+Keycloak, Authentik or any other OpenID Connect provider:
+
+1. Register a web application with the provider, with redirect URI
+   `https://scanr.example.com/api/v1/auth/oidc/callback` (your HTTPS origin).
+2. Set `OIDC_ISSUER`, `OIDC_CLIENT_ID` and `OIDC_CLIENT_SECRET` in `.env` and
+   restart the API. For Entra ID, use the tenant-specific issuer
+   `https://login.microsoftonline.com/<tenant-id>/v2.0`.
+3. The login page now shows **Sign in with …**.
+
+By default only people who already have a ScanR account can use SSO; their
+account is matched by email on first use and then bound to the provider's
+stable user id. Set `OIDC_AUTO_CREATE_USERS=true` to create accounts
+automatically (with `OIDC_DEFAULT_ROLE`, `viewer` by default), and
+`OIDC_ALLOWED_DOMAINS` to restrict who may sign in. SSO logins skip ScanR's own
+two-factor prompt: enforce MFA in the identity provider instead. Password login
+keeps working alongside SSO.
+
 ## Configuration
 
 | Variable | Default | Description |
@@ -919,6 +955,14 @@ to turn them on. A local `make dev` run has them on by default.
 | `SELF_UPDATE_ENABLED` | `false` | Enables admin-only in-app update when using the self-update Compose override |
 | `SELF_UPDATE_COMMAND` | compose pull/up | Command run by the self-update action |
 | `SELF_UPDATE_WORKDIR` | `/opt/scanr` | Directory where the self-update command runs |
+| `OIDC_ISSUER` | empty | OpenID Connect issuer URL; SSO is enabled when issuer, client id and secret are set |
+| `OIDC_CLIENT_ID` / `OIDC_CLIENT_SECRET` | empty | Client registered with the identity provider |
+| `OIDC_REDIRECT_URI` | derived | Defaults to `<first ALLOWED_ORIGINS entry>/api/v1/auth/oidc/callback` |
+| `OIDC_SCOPES` | `openid email profile` | Scopes requested at login |
+| `OIDC_DISPLAY_NAME` | `single sign-on` | Login button label |
+| `OIDC_AUTO_CREATE_USERS` | `false` | Create an account on first SSO login instead of requiring an admin-created one |
+| `OIDC_DEFAULT_ROLE` | `viewer` | Role for automatically created SSO accounts |
+| `OIDC_ALLOWED_DOMAINS` | empty | Comma-separated email domains allowed to use SSO |
 
 ---
 

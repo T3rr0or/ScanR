@@ -9,13 +9,15 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from scanr.auth import create_access_token, create_refresh_token, decode_token, verify_password
+from scanr.auth.jwt_handler import create_mfa_token
+from scanr.auth.mfa import verify_second_factor
 from scanr.auth.password import dummy_verify, hash_password, needs_rehash
 from scanr.config import get_settings
 from scanr.db import get_db
 from scanr.core.limiter import limiter
 from scanr.models import User
 from scanr.models.user import _MAX_FAILED_ATTEMPTS, _LOCKOUT_MINUTES
-from scanr.schemas import LoginRequest, TokenResponse
+from scanr.schemas import LoginRequest, LoginResponse, MfaLoginRequest, TokenResponse
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 logger = logging.getLogger(__name__)
@@ -121,7 +123,52 @@ class LogoutRequest(BaseModel):
     refresh_token: str | None = None  # optional — prefer HttpOnly cookie
 
 
-@router.post("/login", response_model=TokenResponse)
+async def _record_failed_login(db: AsyncSession, user: User, now: datetime) -> None:
+    """Count a failed password or second-factor attempt towards the lockout."""
+    from datetime import timedelta
+
+    user.failed_login_count = (user.failed_login_count or 0) + 1
+    if user.failed_login_count >= _MAX_FAILED_ATTEMPTS:
+        user.locked_until = now + timedelta(minutes=_LOCKOUT_MINUTES)
+        user.failed_login_count = 0
+        logger.warning("Account locked: email=%s after %d failures", user.email, _MAX_FAILED_ATTEMPTS)
+    await db.commit()
+
+
+def _raise_if_locked(user: User | None, now: datetime, ip: str) -> None:
+    if user and user.locked_until and _as_utc(user.locked_until) > now:
+        logger.warning("Locked account login attempt: email=%s ip=%s", user.email, ip)
+        # Generic detail: a distinctive message would confirm the account exists.
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many failed attempts. Please try again later.",
+        )
+
+
+async def _token_generation(user: User) -> str | None:
+    try:
+        return await _password_generation(user)
+    except Exception:
+        logger.error("Redis unavailable during login token issuance — failing closed")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Token service unavailable, please try again",
+        )
+
+
+async def start_session(db: AsyncSession, response: Response, user: User) -> str:
+    """Finish a fully authenticated login: clear lockout state, set the refresh
+    cookie and return a new access token. Shared by password, MFA and SSO."""
+    if user.failed_login_count or user.locked_until:
+        user.failed_login_count = 0
+        user.locked_until = None
+    await db.commit()
+    generation = await _token_generation(user)
+    _set_refresh_cookie(response, create_refresh_token(user.id, generation))
+    return create_access_token(user.id, user.role)
+
+
+@router.post("/login", response_model=LoginResponse, response_model_exclude_none=True)
 @limiter.limit("10/minute")
 async def login(
     request: Request,
@@ -129,20 +176,13 @@ async def login(
     body: LoginRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    from datetime import timedelta
     now = datetime.now(timezone.utc)
     ip = request.client.host if request.client else "unknown"
 
     result = await db.execute(select(User).where(User.email == body.email.lower().strip(), User.is_active == True))
     user = result.scalar_one_or_none()
 
-    if user and user.locked_until and _as_utc(user.locked_until) > now:
-        logger.warning("Locked account login attempt: email=%s ip=%s", body.email, ip)
-        # Generic detail: a distinctive message would confirm the account exists.
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="Too many failed attempts. Please try again later.",
-        )
+    _raise_if_locked(user, now, ip)
 
     if not user:
         # Spend the same bcrypt time as a real verify: returning early here is a
@@ -152,41 +192,78 @@ async def login(
     if not user or not verify_password(body.password, user.hashed_password):
         logger.warning("Failed login attempt from ip=%s email=%s", ip, body.email)
         if user:
-            user.failed_login_count = (user.failed_login_count or 0) + 1
-            if user.failed_login_count >= _MAX_FAILED_ATTEMPTS:
-                user.locked_until = now + timedelta(minutes=_LOCKOUT_MINUTES)
-                user.failed_login_count = 0
-                logger.warning("Account locked: email=%s after %d failures", body.email, _MAX_FAILED_ATTEMPTS)
-            await db.commit()
+            await _record_failed_login(db, user, now)
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
-
-    needs_update = bool(user.failed_login_count or user.locked_until)
-    if user.failed_login_count:
-        user.failed_login_count = 0
-    if user.locked_until:
-        user.locked_until = None
 
     # Transparently upgrade bcrypt cost factor on successful login
     if needs_rehash(user.hashed_password):
         user.hashed_password = hash_password(body.password)
-        needs_update = True
+        await db.commit()
         logger.info("Rehashed password for user=%s (upgraded bcrypt rounds)", user.email)
 
-    if needs_update:
-        await db.commit()
+    if user.totp_enabled:
+        # The failure counter is deliberately left alone until the second factor
+        # passes too: resetting it here would let someone holding the password
+        # interleave correct passwords with unlimited code guesses.
+        logger.info("Password accepted, second factor required: user=%s ip=%s", user.email, ip)
+        generation = await _token_generation(user)
+        return LoginResponse(mfa_required=True, mfa_token=create_mfa_token(user.id, generation))
 
     logger.info("Successful login: user=%s ip=%s", user.email, ip)
+    return LoginResponse(access_token=await start_session(db, response, user))
+
+
+@router.post("/login/mfa", response_model=TokenResponse)
+@limiter.limit("10/minute")
+async def login_mfa(
+    request: Request,
+    response: Response,
+    body: MfaLoginRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    now = datetime.now(timezone.utc)
+    ip = request.client.host if request.client else "unknown"
+    expired = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Sign-in expired — enter your password again",
+    )
     try:
-        generation = await _password_generation(user)
+        payload = decode_token(body.mfa_token)
+    except ValueError:
+        raise expired
+    if payload.get("type") != "mfa" or not payload.get("jti"):
+        raise expired
+
+    result = await db.execute(select(User).where(User.id == payload.get("sub"), User.is_active == True))
+    user = result.scalar_one_or_none()
+    if not user or not user.totp_enabled:
+        raise expired
+    _raise_if_locked(user, now, ip)
+    # A password change since the challenge was issued invalidates it.
+    generation = await _token_generation(user)
+    if generation and payload.get("pw_generation") != generation:
+        raise expired
+
+    if not await verify_second_factor(db, user, body.code):
+        logger.warning("Failed second factor from ip=%s email=%s", ip, user.email)
+        await _record_failed_login(db, user, now)
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid authentication code")
+
+    # One challenge, one session: a captured challenge plus a later code must
+    # not mint a second session.
+    try:
+        claimed = await _claim_jti(payload["jti"], payload["exp"])
     except Exception:
-        logger.error("Redis unavailable during login token issuance — failing closed")
+        logger.error("Redis unavailable during MFA login — failing closed")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Token service unavailable, please try again",
         )
-    refresh_token = create_refresh_token(user.id, generation)
-    _set_refresh_cookie(response, refresh_token)
-    return TokenResponse(access_token=create_access_token(user.id, user.role))
+    if not claimed:
+        raise expired
+
+    logger.info("Successful login with second factor: user=%s ip=%s", user.email, ip)
+    return TokenResponse(access_token=await start_session(db, response, user))
 
 
 @router.post("/refresh", response_model=TokenResponse)

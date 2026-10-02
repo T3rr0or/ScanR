@@ -134,6 +134,48 @@ class Settings(BaseSettings):
         # Compose passes an unset variable through as "".
         return None if value is None or str(value).strip() == "" else value
 
+    # ── Single sign-on (OpenID Connect) ───────────────────────────────────────
+    # Enabled when issuer, client id and client secret are all set. Works with
+    # Microsoft Entra ID, Google, Okta, Keycloak, Authentik and other OIDC
+    # providers. Register the redirect URI
+    #   <first ALLOWED_ORIGINS entry>/api/v1/auth/oidc/callback
+    # with the provider, or set OIDC_REDIRECT_URI explicitly.
+    oidc_issuer: str = ""
+    oidc_client_id: str = ""
+    oidc_client_secret: str = ""
+    oidc_redirect_uri: str = ""
+    oidc_scopes: str = "openid email profile"
+    oidc_display_name: str = "single sign-on"
+    # Create an account on first SSO login. Off = only users an admin created
+    # (matched by email) may sign in with SSO.
+    oidc_auto_create_users: bool = False
+    oidc_default_role: str = "viewer"
+    # Comma-separated email domains allowed to sign in with SSO. Empty = any
+    # identity the provider vouches for.
+    oidc_allowed_domains: str = ""
+
+    @property
+    def oidc_enabled(self) -> bool:
+        return bool(self.oidc_issuer and self.oidc_client_id and self.oidc_client_secret)
+
+    @property
+    def oidc_callback_url(self) -> str:
+        if self.oidc_redirect_uri:
+            return self.oidc_redirect_uri
+        origin = (self.cors_origins or ["http://localhost"])[0].rstrip("/")
+        return f"{origin}/api/v1/auth/oidc/callback"
+
+    @property
+    def oidc_domain_list(self) -> set[str]:
+        return {d.strip().lower().lstrip("@") for d in self.oidc_allowed_domains.split(",") if d.strip()}
+
+    @field_validator("oidc_default_role")
+    @classmethod
+    def _check_oidc_role(cls, v: str) -> str:
+        if v not in {"admin", "analyst", "viewer"}:
+            raise ValueError("OIDC_DEFAULT_ROLE must be admin, analyst or viewer")
+        return v
+
     # Admin bootstrap (first-run seed)
     admin_email: str = "admin@scanr.local"
     admin_password: str = ""
