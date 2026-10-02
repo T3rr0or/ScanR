@@ -100,6 +100,13 @@ services:
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
       # Daily EPSS + CISA KEV download for fix-first ranking (API has egress).
       THREAT_FEED_AUTO_REFRESH: ${THREAT_FEED_AUTO_REFRESH:-true}
+      # Email notification channels (optional); see .env.example.
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM: ${SMTP_FROM:-}
+      SMTP_SECURITY: ${SMTP_SECURITY:-starttls}
       # Single sign-on (OpenID Connect); off unless issuer, client id and
       # secret are set. See .env.example.
       OIDC_ISSUER: ${OIDC_ISSUER:-}
@@ -163,6 +170,15 @@ services:
       SCANR_REQUIRE_BROWSER_SERVICE: "true"
       # Extra CA trusted for authenticated LDAP, e.g. /app/certs/ldap-ca.pem
       LDAP_CA_FILE: ${LDAP_CA_FILE:-}
+      # Email notification channels (optional); see .env.example.
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM: ${SMTP_FROM:-}
+      SMTP_SECURITY: ${SMTP_SECURITY:-starttls}
+      # Links in notifications point here.
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost}
     cap_add:
       - NET_RAW
     volumes:

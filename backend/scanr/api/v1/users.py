@@ -367,6 +367,7 @@ async def delete_user(
     from scanr.models.schedule import Schedule
     from scanr.models.screenshot import Screenshot
     from scanr.models.target import Target
+    from scanr.models.notification_channel import NotificationChannel
     from scanr.models.webhook import Webhook
     from scanr.models.wordlist import Wordlist
 
@@ -380,6 +381,7 @@ async def delete_user(
     # Revoke tokens and remove user-owned non-scan data.
     await db.execute(delete(APIKey).where(APIKey.user_id == user_id))
     await db.execute(delete(Webhook).where(Webhook.user_id == user_id))
+    await db.execute(delete(NotificationChannel).where(NotificationChannel.user_id == user_id))
     await db.execute(delete(Schedule).where(Schedule.user_id == user_id))
     # Detach any scan (this user's or another's) that references one of this
     # user's scan agents before deleting the agents — Scan.agent_id is a

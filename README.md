@@ -498,6 +498,26 @@ Triage actions:
 - track remediation status
 - compare against previous scans to identify new/resolved findings
 
+### Notifications
+
+Under **Settings → Notifications** each user can add channels that receive a
+short summary when one of their scans finishes or fails: the counts, the top
+five findings to fix first, and a link back to ScanR.
+
+- **Microsoft Teams:** in the channel, open ⋯ → *Workflows* → "Post to a channel
+  when a webhook request is received", and paste the URL. Classic
+  `*.webhook.office.com` incoming webhooks work too.
+- **Slack:** paste an incoming-webhook URL (`https://hooks.slack.com/...`).
+- **Email:** enter an address. An administrator sets `SMTP_HOST`, `SMTP_FROM`
+  and, if needed, `SMTP_USERNAME`/`SMTP_PASSWORD` in `.env`.
+
+A channel can stay quiet unless something scores at least 40, 60 or 80 on the
+priority scale, so a weekly scan with nothing new to act on doesn't post.
+**Test** sends an example message immediately. Webhook URLs are stored
+encrypted and must point at the official Teams or Slack hosts. Summaries
+contain finding titles and host addresses, so send them only to channels you
+trust with that information.
+
 ### Fix-first priority
 
 Severity alone ranks a theoretical critical above a medium that attackers are
@@ -977,6 +997,10 @@ keeps working alongside SSO.
 | `SELF_UPDATE_ENABLED` | `false` | Enables admin-only in-app update when using the self-update Compose override |
 | `SELF_UPDATE_COMMAND` | compose pull/up | Command run by the self-update action |
 | `SELF_UPDATE_WORKDIR` | `/opt/scanr` | Directory where the self-update command runs |
+| `SMTP_HOST` / `SMTP_PORT` | empty / `587` | Mail server for email notification channels |
+| `SMTP_USERNAME` / `SMTP_PASSWORD` | empty | SMTP login, if the server requires one |
+| `SMTP_FROM` | empty | Sender address; email channels are enabled when host and sender are set |
+| `SMTP_SECURITY` | `starttls` | `starttls`, `ssl` (port 465) or `none` (trusted LAN relay only) |
 | `THREAT_FEED_AUTO_REFRESH` | `true` | Download EPSS and CISA KEV daily from the API container and re-rank findings |
 | `OIDC_ISSUER` | empty | OpenID Connect issuer URL; SSO is enabled when issuer, client id and secret are set |
 | `OIDC_CLIENT_ID` / `OIDC_CLIENT_SECRET` | empty | Client registered with the identity provider |

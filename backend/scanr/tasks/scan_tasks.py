@@ -262,6 +262,11 @@ async def _run_scan_async(task, scan_id: str) -> dict:
                     }, user_id, db)
             except Exception as exc:
                 logger.warning("Webhook dispatch failed for scan %s: %s", scan_id, exc)
+            try:
+                from scanr.core.notifications import notify_scan_finished
+                await notify_scan_finished(db, scan_id)
+            except Exception as exc:
+                logger.warning("Notifications failed for scan %s: %s", scan_id, exc)
     finally:
         await db_engine.dispose()
 

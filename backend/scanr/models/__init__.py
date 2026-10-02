@@ -17,6 +17,7 @@ from .scan_agent import ScanAgent
 from .scan_credential import ScanCredential
 from .scan_template import ScanTemplate
 from .schedule import Schedule
+from .notification_channel import NotificationChannel
 from .screenshot import Screenshot
 from .service import Service
 from .setting import AppSetting
@@ -58,6 +59,7 @@ __all__ = [
     "ReportFormat",
     "Schedule",
     "Screenshot",
+    "NotificationChannel",
     "AiResult",
     "AiAgentRun",
     "APIKey",

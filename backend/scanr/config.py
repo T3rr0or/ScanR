@@ -138,6 +138,33 @@ class Settings(BaseSettings):
         # Compose passes an unset variable through as "".
         return None if value is None or str(value).strip() == "" else value
 
+    # ── Email notifications (SMTP) ────────────────────────────────────────────
+    # Needed only for email notification channels. Slack and Teams channels
+    # post to incoming webhooks and need no server configuration.
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_username: str = ""
+    smtp_password: str = ""
+    smtp_from: str = ""
+    # starttls (port 587), ssl (port 465) or none (trusted relay on a LAN only)
+    smtp_security: str = "starttls"
+
+    @property
+    def smtp_enabled(self) -> bool:
+        return bool(self.smtp_host and self.smtp_from)
+
+    @property
+    def public_url(self) -> str:
+        """Where people open ScanR, for links in notifications."""
+        return (self.cors_origins or ["http://localhost"])[0].rstrip("/")
+
+    @field_validator("smtp_security")
+    @classmethod
+    def _check_smtp_security(cls, v: str) -> str:
+        if v not in {"starttls", "ssl", "none"}:
+            raise ValueError("SMTP_SECURITY must be starttls, ssl or none")
+        return v
+
     # ── Single sign-on (OpenID Connect) ───────────────────────────────────────
     # Enabled when issuer, client id and client secret are all set. Works with
     # Microsoft Entra ID, Google, Okta, Keycloak, Authentik and other OIDC
@@ -166,8 +193,7 @@ class Settings(BaseSettings):
     def oidc_callback_url(self) -> str:
         if self.oidc_redirect_uri:
             return self.oidc_redirect_uri
-        origin = (self.cors_origins or ["http://localhost"])[0].rstrip("/")
-        return f"{origin}/api/v1/auth/oidc/callback"
+        return f"{self.public_url}/api/v1/auth/oidc/callback"
 
     @property
     def oidc_domain_list(self) -> set[str]:
