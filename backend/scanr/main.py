@@ -62,9 +62,12 @@ async def lifespan(app: FastAPI):
     # Resolve the scan denylist in the background so the first scan creation
     # does not pay for Docker DNS timeouts on names this network cannot see.
     warmup = asyncio.create_task(warm_denylist_cache(settings.scan_denylist))
+    from scanr.core.threat_feeds import refresh_loop
+    feeds = asyncio.create_task(refresh_loop())
     logger.info("ScanR ready")
     yield
     warmup.cancel()
+    feeds.cancel()
     await close_redis()
     logger.info("ScanR shutting down")
 

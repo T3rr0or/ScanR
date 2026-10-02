@@ -365,11 +365,15 @@ async def start_update(
 
 @router.get("/cve-status")
 async def cve_status(current_user: User = Depends(get_current_user)):
+    from scanr.plugins.cve import epss
     from scanr.plugins.cve.nvd_loader import get_last_updated, get_kev_cve_ids, DB_PATH
+    epss_status = epss.status()
     return {
         "last_updated": get_last_updated(),
         "nvd_db_exists": DB_PATH.exists(),
         "kev_count": len(get_kev_cve_ids()),
+        "epss_count": epss_status["count"],
+        "epss_score_date": epss_status["score_date"],
     }
 
 
@@ -378,12 +382,18 @@ async def cve_refresh(
     background_tasks: BackgroundTasks,
     current_user: User = Depends(require_admin_scope("system:manage")),
 ):
-    """Trigger a background refresh of NVD feeds and CISA KEV catalog."""
-    def _refresh():
+    """Trigger a background refresh of NVD, CISA KEV and EPSS, then re-rank findings."""
+    async def _refresh():
+        from scanr.core.priority_service import rescore
+        from scanr.db.session import AsyncSessionLocal
+        from scanr.plugins.cve import kev_cache
         from scanr.plugins.cve.nvd_loader import download_feeds
         logger.info("CVE feed refresh started by admin")
-        download_feeds()
-        logger.info("CVE feed refresh complete")
+        await asyncio.to_thread(download_feeds)
+        kev_cache.invalidate()
+        async with AsyncSessionLocal() as db:
+            scored = await rescore(db)
+        logger.info("CVE feed refresh complete; re-ranked %d findings", scored)
 
     background_tasks.add_task(_refresh)
     return {"status": "refresh_started"}

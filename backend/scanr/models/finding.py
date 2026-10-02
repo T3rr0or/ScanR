@@ -11,7 +11,7 @@ if TYPE_CHECKING:
     from .scan import Scan
     from .ticket_link import TicketLink
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, String, Text
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, String, Text, false
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base, TimestampMixin, new_uuid
@@ -43,6 +43,14 @@ class Finding(Base, TimestampMixin):
     cvss_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     cvss_vector: Mapped[str | None] = mapped_column(String(255), nullable=True)
     vpr_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # "Fix first" ranking, see scanr/core/priority.py. Recomputed when the
+    # daily EPSS/KEV feeds refresh, when ScanR validates the finding and when
+    # the host's tags change.
+    priority_score: Mapped[float | None] = mapped_column(Float, nullable=True, index=True)
+    priority_reasons: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON list[str]
+    epss_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    epss_percentile: Mapped[float | None] = mapped_column(Float, nullable=True)
+    is_kev: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false(), nullable=False)
     cve_ids: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON list
 
     port_number: Mapped[int | None] = mapped_column(nullable=True)

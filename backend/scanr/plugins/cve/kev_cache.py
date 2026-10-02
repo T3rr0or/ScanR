@@ -42,3 +42,10 @@ def get_kev_cve_ids_cached() -> frozenset[str]:
 async def aget_kev_cve_ids() -> frozenset[str]:
     """Async variant — offloads a blocking cache-miss sqlite read to a thread."""
     return await asyncio.to_thread(get_kev_cve_ids_cached)
+
+
+def invalidate() -> None:
+    """Forget the cached id set, e.g. right after the catalog was re-downloaded."""
+    global _cache
+    with _lock:
+        _cache = None

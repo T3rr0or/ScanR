@@ -8,6 +8,7 @@ import type { Finding } from '@/api/findings'
 import { StatusPill, SevTag } from '@/components/ui'
 import FindingDetailPanel from '@/components/FindingDetailPanel'
 import SortableTh from '@/components/SortableTh'
+import { PriorityBadge } from '@/components/Priority'
 import { useSortableFindings } from '@/hooks/useSortableFindings'
 
 interface Props {
@@ -154,7 +155,7 @@ export default function HostDetail({ host, findings = [], onClose }: Props) {
                       <SortableTh label="Sev" sortKey="severity" active={sortKey} dir={sortDir} onSort={toggleSort} />
                       <SortableTh label="Title" sortKey="title" active={sortKey} dir={sortDir} onSort={toggleSort} />
                       <SortableTh label="Port" sortKey="port" active={sortKey} dir={sortDir} onSort={toggleSort} />
-                      <SortableTh label="VPR" sortKey="vpr" active={sortKey} dir={sortDir} onSort={toggleSort} />
+                      <SortableTh label="Priority" sortKey="priority" active={sortKey} dir={sortDir} onSort={toggleSort} />
                       <SortableTh label="CVSS" sortKey="cvss" active={sortKey} dir={sortDir} onSort={toggleSort} />
                       <SortableTh label="Status" sortKey="status" active={sortKey} dir={sortDir} onSort={toggleSort} />
                     </tr>
@@ -166,9 +167,7 @@ export default function HostDetail({ host, findings = [], onClose }: Props) {
                         <td style={{ fontSize: 12, color: 'var(--text-0)' }}>{f.title}</td>
                         <td className="mono dimmer" style={{ fontSize: 11 }}>{f.port_number ? `${f.port_number}/${f.protocol}` : '—'}</td>
                         <td>
-                          {f.vpr_score != null ? (
-                            <span className="mono" style={{ fontSize: 11, fontWeight: 700, color: f.vpr_score >= 8 ? 'var(--sev-critical)' : f.vpr_score >= 5 ? 'var(--sev-high)' : 'var(--sev-medium)', background: `${f.vpr_score >= 8 ? 'var(--sev-critical)' : 'var(--sev-medium)'}20`, padding: '1px 5px', borderRadius: 3 }}>{f.vpr_score.toFixed(1)}</span>
-                          ) : <span className="dimmer" style={{ fontSize: 11 }}>—</span>}
+                          <PriorityBadge score={f.priority_score} kev={f.is_kev} reasons={f.priority_reasons} />
                         </td>
                         <td className="mono dimmer" style={{ fontSize: 11 }}>{f.cvss_score?.toFixed(1) ?? '—'}</td>
                         <td><span className={`pill pill-${f.remediation_status === 'resolved' ? 'completed' : f.false_positive ? 'cancelled' : 'pending'}`} style={{ fontSize: 10 }}>{f.false_positive ? 'FP' : f.remediation_status}</span></td>

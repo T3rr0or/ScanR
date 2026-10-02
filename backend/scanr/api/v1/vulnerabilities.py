@@ -24,6 +24,9 @@ class VulnerabilityItem(BaseModel):
     last_seen_at: str | None
     max_cvss: float | None
     max_vpr: float | None
+    max_priority: float | None = None
+    max_epss: float | None = None
+    kev: bool = False
 
 
 @router.get("", response_model=list[VulnerabilityItem])
@@ -68,12 +71,15 @@ async def list_vulnerabilities(
             func.max(Finding.created_at).label("last_seen_at"),
             func.max(Finding.cvss_score).label("max_cvss"),
             func.max(Finding.vpr_score).label("max_vpr"),
+            func.max(Finding.priority_score).label("max_priority"),
+            func.max(Finding.epss_score).label("max_epss"),
+            func.max(case((Finding.is_kev == True, 1), else_=0)).label("kev"),  # noqa: E712
         )
         .join(Scan, Finding.scan_id == Scan.id)
         .join(host_subq, host_subq.c.plugin_id == Finding.plugin_id)
         .where(*filters)
         .group_by(Finding.plugin_id, Finding.title, Finding.severity, host_subq.c.host_count)
-        .order_by(func.max(Finding.vpr_score).desc().nulls_last(), func.count(Finding.id).desc())
+        .order_by(func.max(Finding.priority_score).desc().nulls_last(), func.count(Finding.id).desc())
         .limit(limit)
         .offset(offset)
     )
@@ -92,6 +98,9 @@ async def list_vulnerabilities(
             last_seen_at=r.last_seen_at.isoformat() if r.last_seen_at else None,
             max_cvss=r.max_cvss,
             max_vpr=r.max_vpr,
+            max_priority=r.max_priority,
+            max_epss=r.max_epss,
+            kev=bool(r.kev),
         )
         for r in rows
     ]

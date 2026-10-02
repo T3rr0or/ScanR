@@ -98,6 +98,8 @@ services:
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      # Daily EPSS + CISA KEV download for fix-first ranking (API has egress).
+      THREAT_FEED_AUTO_REFRESH: ${THREAT_FEED_AUTO_REFRESH:-true}
       # Single sign-on (OpenID Connect); off unless issuer, client id and
       # secret are set. See .env.example.
       OIDC_ISSUER: ${OIDC_ISSUER:-}
