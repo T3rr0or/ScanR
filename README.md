@@ -487,6 +487,25 @@ Triage actions:
 - track remediation status
 - compare against previous scans to identify new/resolved findings
 
+### Trends
+
+**Results → Trends** shows how exposure changes week by week, for 4 weeks up
+to a year:
+
+- open critical, high, medium and low issues per week, as one small chart each;
+- how many open issues score *fix now* (80+) and how many are known exploited;
+- remediation targets per severity: how many are open, how many are past the
+  target, median and mean time to fix, and the share fixed within target;
+- the longest-overdue issues, and a week-by-week table with new and fixed
+  counts that downloads as CSV.
+
+ScanR stores a finding per scan, so trends count *issues*: the same finding on
+the same host and port across scans. An issue is fixed when a later scan ran
+the same check on that host and no longer found it (a scan that skipped the
+check does not count), or when it is marked resolved. Accepted risks leave the
+open count without counting as fixed. Targets default to CISA BOD 19-02 timings
+and are set with `REMEDIATION_SLA_DAYS=critical=15,high=30,medium=90,low=180`.
+
 ### Notifications
 
 Under **Settings → Notifications** each user can add channels that receive a
@@ -990,6 +1009,7 @@ keeps working alongside SSO.
 | `SMTP_USERNAME` / `SMTP_PASSWORD` | empty | SMTP login, if the server requires one |
 | `SMTP_FROM` | empty | Sender address; email channels are enabled when host and sender are set |
 | `SMTP_SECURITY` | `starttls` | `starttls`, `ssl` (port 465) or `none` (trusted LAN relay only) |
+| `REMEDIATION_SLA_DAYS` | `critical=15,high=30,medium=90,low=180` | Remediation targets (days from first detection) used on the Trends page |
 | `THREAT_FEED_AUTO_REFRESH` | `true` | Download EPSS and CISA KEV daily from the API container and re-rank findings |
 | `OIDC_ISSUER` | empty | OpenID Connect issuer URL; SSO is enabled when issuer, client id and secret are set |
 | `OIDC_CLIENT_ID` / `OIDC_CLIENT_SECRET` | empty | Client registered with the identity provider |

@@ -138,6 +138,20 @@ class Settings(BaseSettings):
         # Compose passes an unset variable through as "".
         return None if value is None or str(value).strip() == "" else value
 
+    # Remediation targets for the Trends page, in days from first detection.
+    # Defaults follow CISA BOD 19-02 (critical 15, high 30).
+    remediation_sla_days: str = "critical=15,high=30,medium=90,low=180"
+
+    @property
+    def sla_days(self) -> dict[str, int]:
+        return _parse_sla(self.remediation_sla_days)
+
+    @field_validator("remediation_sla_days")
+    @classmethod
+    def _check_sla(cls, v: str) -> str:
+        _parse_sla(v)
+        return v
+
     # ── Email notifications (SMTP) ────────────────────────────────────────────
     # Needed only for email notification channels. Slack and Teams channels
     # post to incoming webhooks and need no server configuration.
@@ -284,6 +298,21 @@ class Settings(BaseSettings):
                     'Generate one with: python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"'
                 )
         return self
+
+
+def _parse_sla(raw: str) -> dict[str, int]:
+    days = {"critical": 15, "high": 30, "medium": 90, "low": 180}
+    for part in raw.split(","):
+        if not part.strip():
+            continue
+        name, sep, value = part.partition("=")
+        name = name.strip().lower()
+        if not sep or name not in days or not value.strip().isdigit() or int(value) < 1:
+            raise ValueError(
+                "REMEDIATION_SLA_DAYS must look like critical=15,high=30,medium=90,low=180"
+            )
+        days[name] = int(value)
+    return days
 
 
 @lru_cache
