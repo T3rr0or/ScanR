@@ -29,10 +29,13 @@ from scanr.main import create_app  # noqa: E402
 limiter.enabled = False
 
 # Patch Redis with fakeredis so auth (jti revocation) tests work without a real Redis
+import fakeredis  # noqa: E402
 import fakeredis.aioredis as _fake_aioredis  # noqa: E402
 import scanr.api.v1.auth as _auth_module  # noqa: E402
 
-_FAKE_REDIS_SERVER = _fake_aioredis.FakeServer()
+# fakeredis 2.39 dropped the aioredis re-export; the top-level class works in
+# every supported version and is shared by the sync and async clients.
+_FAKE_REDIS_SERVER = fakeredis.FakeServer()
 
 
 def _fake_get_redis():
