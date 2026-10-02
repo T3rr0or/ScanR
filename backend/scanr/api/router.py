@@ -14,6 +14,7 @@ from .v1 import (
     findings,
     host_tags,
     integrations,
+    notifications,
     oidc,
     plugins,
     profile_suggest,
@@ -47,6 +48,7 @@ api_router.include_router(system.router)
 api_router.include_router(analytics.router)
 api_router.include_router(api_keys.router)
 api_router.include_router(webhooks.router)
+api_router.include_router(notifications.router)
 api_router.include_router(templates.router)
 api_router.include_router(exclusions.router)
 api_router.include_router(agents.router)

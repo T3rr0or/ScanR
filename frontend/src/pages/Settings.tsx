@@ -15,6 +15,7 @@ import api from "@/api/client";
 import { relTime } from "@/components/ui";
 import AutonomyModeInfo from "@/components/AutonomyModeInfo";
 import TwoFactorPanel from "@/components/TwoFactorPanel";
+import NotificationsSection from "@/components/NotificationsSection";
 import { useAuthStore } from "@/store/auth";
 import { integrationsApi } from "@/api/integrations";
 import { usersApi } from "@/api/users";
@@ -26,6 +27,7 @@ type Tab =
 	| "profile"
 	| "api-keys"
 	| "webhooks"
+	| "notifications"
 	| "cve"
 	| "ai"
 	| "integrations"
@@ -40,6 +42,7 @@ const TABS: {
 }[] = [
 	{ id: "profile", label: "Profile", description: "Identity and account access" },
 	{ id: "api-keys", label: "API keys", description: "Programmatic access and scopes" },
+	{ id: "notifications", label: "Notifications", description: "Scan summaries in Teams, Slack or email" },
 	{ id: "webhooks", label: "Webhooks", description: "Event delivery endpoints" },
 	{ id: "cve", label: "CVE database", description: "Vulnerability data and sync status" },
 	{ id: "ai", label: "AI providers", description: "Keys, models, and autonomy", adminOnly: true },
@@ -81,6 +84,7 @@ export default function Settings() {
 					<div className="settings-section-body">
 						{activeTab === "profile" && <ProfileSection />}
 						{activeTab === "api-keys" && <ApiKeysSection />}
+						{activeTab === "notifications" && <NotificationsSection />}
 						{activeTab === "webhooks" && <WebhooksSection />}
 						{activeTab === "cve" && <CveDatabaseSection />}
 						{activeTab === "ai" && role === "admin" && <AiSection />}
