@@ -11,6 +11,7 @@ the non-intrusive tool set without needing it.
 from __future__ import annotations
 
 import json
+import logging
 from typing import TYPE_CHECKING
 
 from sqlalchemy import select
@@ -24,6 +25,8 @@ from scanr.ai.agent.context import AgentContext
 from scanr.ai.agent.policy import AgentPolicy, Budget
 from scanr.core.scan_logger import ScanLogger
 from scanr.models import Finding, Host, Port
+
+logger = logging.getLogger(__name__)
 
 
 class DbAgentContext(AgentContext):
@@ -496,6 +499,13 @@ class DbAgentContext(AgentContext):
                 finding.validation_evidence = f"{result.summary}\n\n{result.evidence}"[:8000]
                 # A reproduced finding is by definition not a false positive.
                 finding.false_positive = False
+                try:
+                    from scanr.core.priority_service import rescore
+
+                    await self._db.commit()
+                    await rescore(self._db, Finding.id == finding.id)
+                except Exception:  # noqa: BLE001 - ranking is advisory
+                    logger.exception("Priority re-score failed for finding %s", finding.id)
                 await self._db.commit()
                 out["validated_finding"] = True
                 await self._log.info(

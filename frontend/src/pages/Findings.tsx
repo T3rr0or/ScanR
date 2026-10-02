@@ -4,6 +4,7 @@ import { findingsApi, type Finding } from '@/api/findings'
 import { scansApi } from '@/api/scans'
 import { SevTag, relTime } from '@/components/ui'
 import SortableTh from '@/components/SortableTh'
+import { PriorityBadge, PriorityExplanation } from '@/components/Priority'
 import { useSortableFindings } from '@/hooks/useSortableFindings'
 import { safeUrl } from "@/utils/safeUrl"
 import './Findings.css'
@@ -210,6 +211,12 @@ function FindingDrawer({
 
       {/* Scrollable body */}
       <div className="findings-detail-body" style={{ flex: 1, overflow: 'auto', padding: '14px' }}>
+
+        {finding.priority_score != null && (
+          <div style={{ marginBottom: 14 }}>
+            <PriorityExplanation score={finding.priority_score} reasons={finding.priority_reasons} epss={finding.epss_score} epssPercentile={finding.epss_percentile} kev={finding.is_kev} />
+          </div>
+        )}
 
         {/* Meta row */}
         <div
@@ -520,7 +527,9 @@ export default function Findings() {
   const PAGE_LIMIT = 500
   // Ask for one more than we display, so "there are more" is a fact rather than
   // an inference from a full page - which was wrong at exactly PAGE_LIMIT rows.
-  const apiParams: Record<string, string | number | boolean> = { limit: PAGE_LIMIT + 1 }
+  // Fetch the highest-priority rows first, so a capped page still holds the
+  // findings that matter most.
+  const apiParams: Record<string, string | number | boolean> = { limit: PAGE_LIMIT + 1, sort: 'priority' }
   if (severity) apiParams.severity = severity
   if (scanId) apiParams.scan_id = scanId
   if (complianceTag) apiParams.compliance_tag = complianceTag
@@ -652,7 +661,7 @@ export default function Findings() {
                 <SortableTh label="Title" sortKey="title" active={sortKey} dir={sortDir} onSort={toggleSort} />
                 <th>Host</th>
                 <SortableTh label="Port" sortKey="port" active={sortKey} dir={sortDir} onSort={toggleSort} />
-                <SortableTh label="VPR" sortKey="vpr" active={sortKey} dir={sortDir} onSort={toggleSort} />
+                <SortableTh label="Priority" sortKey="priority" active={sortKey} dir={sortDir} onSort={toggleSort} />
                 <SortableTh label="CVSS" sortKey="cvss" active={sortKey} dir={sortDir} onSort={toggleSort} />
                 <SortableTh label="Status" sortKey="status" active={sortKey} dir={sortDir} onSort={toggleSort} />
                 <th>Tags</th>
@@ -668,7 +677,7 @@ export default function Findings() {
                     <td className="findings-title-cell">{f.validated && <VerifiedTag method={f.validation_method} />}<span>{f.title}</span></td>
                     <td className="findings-mono">{f.host_ip ?? '-'}</td>
                     <td className="findings-mono">{f.port_number != null ? `${f.port_number}/${f.protocol}` : '-'}</td>
-                    <td className="findings-score">{f.vpr_score != null ? f.vpr_score.toFixed(1) : '-'}</td>
+                    <td className="findings-score"><PriorityBadge score={f.priority_score} kev={f.is_kev} reasons={f.priority_reasons} /></td>
                     <td className="findings-score">{f.cvss_score != null ? f.cvss_score.toFixed(1) : '-'}</td>
                     <td><span className={statusPillClass(f.remediation_status, f.false_positive)}>{statusLabel(f)}</span></td>
                     <td><ComplianceTags raw={f.compliance_tags} /></td>

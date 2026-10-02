@@ -487,6 +487,28 @@ Triage actions:
 - track remediation status
 - compare against previous scans to identify new/resolved findings
 
+### Fix-first priority
+
+Severity alone ranks a theoretical critical above a medium that attackers are
+exploiting today on an internet-facing server. Every finding therefore gets a
+**priority from 0 to 100**, shown with the reasons behind it:
+
+| Part | Points | Source |
+|---|---:|---|
+| Impact | 0-40 | CVSS x 4, or the severity when there is no CVSS |
+| Exploitation | 0-40 | Listed in [CISA KEV](https://www.cisa.gov/known-exploited-vulnerabilities-catalog) = 40; reproduced by ScanR = 35; otherwise 40 x sqrt([EPSS](https://www.first.org/epss/) probability); no data = 12 |
+| Exposure | 0-20 | Public IP address, or host tagged `crown-jewel` / `critical`; scaled by impact |
+
+80+ is *fix now*, 60+ *fix soon*, 40+ *plan*. Findings, Assets and
+Vulnerabilities sort by priority by default, the dashboard shows a **Fix first**
+list, and the API accepts `GET /api/v1/findings?sort=priority&min_priority=60`.
+CSV exports include the priority, EPSS score and KEV flag.
+
+The API downloads the EPSS and KEV feeds daily and re-ranks findings; tagging a
+host `crown-jewel` re-ranks its findings immediately. Air-gapped installs can set
+`THREAT_FEED_AUTO_REFRESH=false` and use **Settings → CVE database → Refresh**
+when a connection is available.
+
 ---
 
 ## Plugin Categories
@@ -944,6 +966,7 @@ keeps working alongside SSO.
 | `SELF_UPDATE_ENABLED` | `false` | Enables admin-only in-app update when using the self-update Compose override |
 | `SELF_UPDATE_COMMAND` | compose pull/up | Command run by the self-update action |
 | `SELF_UPDATE_WORKDIR` | `/opt/scanr` | Directory where the self-update command runs |
+| `THREAT_FEED_AUTO_REFRESH` | `true` | Download EPSS and CISA KEV daily from the API container and re-rank findings |
 | `OIDC_ISSUER` | empty | OpenID Connect issuer URL; SSO is enabled when issuer, client id and secret are set |
 | `OIDC_CLIENT_ID` / `OIDC_CLIENT_SECRET` | empty | Client registered with the identity provider |
 | `OIDC_REDIRECT_URI` | derived | Defaults to `<first ALLOWED_ORIGINS entry>/api/v1/auth/oidc/callback` |

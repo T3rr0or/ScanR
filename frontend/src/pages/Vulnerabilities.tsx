@@ -5,12 +5,13 @@ import { vulnerabilitiesApi, type VulnerabilityItem } from '@/api/vulnerabilitie
 import { findingsApi } from '@/api/findings'
 import { SevTag, relTime } from '@/components/ui'
 import FindingDetailPanel from '@/components/FindingDetailPanel'
+import { PriorityBadge } from '@/components/Priority'
 import './OperatorPages.css'
 
 const SEVERITIES = ['', 'critical', 'high', 'medium', 'low', 'info']
 const SEV_RANK: Record<string, number> = { critical: 5, high: 4, medium: 3, low: 2, info: 1 }
 
-type VulnSortKey = 'severity' | 'title' | 'hosts' | 'open' | 'vpr' | 'cvss' | 'first_seen' | 'last_seen'
+type VulnSortKey = 'severity' | 'title' | 'hosts' | 'open' | 'priority' | 'cvss' | 'first_seen' | 'last_seen'
 
 
 function VTh({ label, sortKey, active, dir, onSort, style }: { label: string; sortKey: VulnSortKey; active: VulnSortKey; dir: 'asc' | 'desc'; onSort: (k: VulnSortKey) => void; style?: React.CSSProperties }) {
@@ -24,12 +25,6 @@ function VTh({ label, sortKey, active, dir, onSort, style }: { label: string; so
   )
 }
 
-function VprBadge({ score }: { score: number | null }) {
-  if (score == null) return <span className="dimmer" style={{ fontSize: 11 }}>n/a</span>
-  const color = score >= 8 ? 'var(--sev-critical)' : score >= 5 ? 'var(--sev-high)' : 'var(--sev-medium)'
-  return <span className="mono" style={{ fontSize: 11, fontWeight: 700, color, border: '1px solid var(--border)', padding: '1px 5px' }}>{score.toFixed(1)}</span>
-}
-
 function statusColor(s: string) {
   if (s === 'resolved') return 'var(--ok)'
   if (s === 'accepted_risk') return 'var(--sev-medium)'
@@ -41,7 +36,7 @@ export default function Vulnerabilities() {
   const [severity, setSeverity] = useState('')
   const [selected, setSelected] = useState<VulnerabilityItem | null>(null)
   const [detailFindingId, setDetailFindingId] = useState<string | null>(null)
-  const [vKey, setVKey] = useState<VulnSortKey>('open')
+  const [vKey, setVKey] = useState<VulnSortKey>('priority')
   const [vDir, setVDir] = useState<'asc' | 'desc'>('desc')
 
   function vToggle(k: VulnSortKey) {
@@ -72,7 +67,7 @@ export default function Vulnerabilities() {
         case 'title':      return m * a.title.localeCompare(b.title)
         case 'hosts':      return m * (a.host_count - b.host_count)
         case 'open':       return m * (a.open_count - b.open_count)
-        case 'vpr':        return m * ((a.max_vpr ?? -1) - (b.max_vpr ?? -1))
+        case 'priority':   return m * ((a.max_priority ?? -1) - (b.max_priority ?? -1))
         case 'cvss':       return m * ((a.max_cvss ?? -1) - (b.max_cvss ?? -1))
         case 'first_seen': return m * ((a.first_seen_at ?? '').localeCompare(b.first_seen_at ?? ''))
         case 'last_seen':  return m * ((a.last_seen_at ?? '').localeCompare(b.last_seen_at ?? ''))
@@ -123,7 +118,7 @@ export default function Vulnerabilities() {
                   <VTh label="Vulnerability" sortKey="title" active={vKey} dir={vDir} onSort={vToggle} />
                   <VTh label="Hosts" sortKey="hosts" active={vKey} dir={vDir} onSort={vToggle} style={{ textAlign: 'center' }} />
                   <VTh label="Open" sortKey="open" active={vKey} dir={vDir} onSort={vToggle} style={{ textAlign: 'center' }} />
-                  <VTh label="Max VPR" sortKey="vpr" active={vKey} dir={vDir} onSort={vToggle} />
+                  <VTh label="Priority" sortKey="priority" active={vKey} dir={vDir} onSort={vToggle} />
                   <VTh label="Max CVSS" sortKey="cvss" active={vKey} dir={vDir} onSort={vToggle} />
                   <VTh label="First seen" sortKey="first_seen" active={vKey} dir={vDir} onSort={vToggle} />
                   <VTh label="Last seen" sortKey="last_seen" active={vKey} dir={vDir} onSort={vToggle} />
@@ -147,7 +142,7 @@ export default function Vulnerabilities() {
                       <td style={{ textAlign: 'center' }}>
                         <span style={{ fontSize: 12, color: v.open_count > 0 ? 'var(--sev-high)' : 'var(--ok)' }}>{v.open_count}</span>
                       </td>
-                      <td><VprBadge score={v.max_vpr} /></td>
+                      <td><PriorityBadge score={v.max_priority} kev={v.kev} /></td>
                       <td className="mono dimmer" style={{ fontSize: 11 }}>{v.max_cvss?.toFixed(1) ?? 'n/a'}</td>
                       <td className="dimmer" style={{ fontSize: 11 }}>{v.first_seen_at ? relTime(v.first_seen_at) : 'n/a'}</td>
                       <td className="dimmer" style={{ fontSize: 11 }}>{v.last_seen_at ? relTime(v.last_seen_at) : 'n/a'}</td>

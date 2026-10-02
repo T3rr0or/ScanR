@@ -6,6 +6,8 @@ import { analyticsApi, type TimelinePoint } from '@/api/analytics'
 import { CHML, SeverityBar, StatusPill, relTime } from '@/components/ui'
 import { useScanConsole } from '@/hooks/useScanConsole'
 import ScanActivityHeatmap from '@/components/charts/ScanActivityHeatmap'
+import { findingsApi } from '@/api/findings'
+import { PriorityBadge, parseReasons } from '@/components/Priority'
 import './Dashboard.css'
 
 type Page = 'dashboard' | 'scans' | 'findings' | 'templates' | 'schedules' | 'agents' | 'credentials' | 'plugins' | 'reports' | 'settings'
@@ -46,6 +48,12 @@ export default function Dashboard({ onOpenScan, onNavigate }: {
     refetchInterval: 300_000,
   })
 
+  const { data: fixFirst = [] } = useQuery({
+    queryKey: ['findings', 'fix-first'],
+    queryFn: () => findingsApi.list({ sort: 'priority', remediation_status: 'open', false_positive: false, min_priority: 40, limit: 8 }),
+    refetchInterval: 60_000,
+  })
+
   const running = scans.filter(s => s.status === 'running')
   const recent = scans.slice(0, 6)
   const severity = [
@@ -64,6 +72,7 @@ export default function Dashboard({ onOpenScan, onNavigate }: {
     {stats?.scans_total === 0 && <div className="dashboard-start-note"><strong>No scans recorded.</strong><span>Use New scan to start host discovery and vulnerability checks.</span></div>}
     <div className="dashboard-primary-grid"><section className="dashboard-block"><div className="dashboard-block-head"><h2>Active scans</h2><span>{scansError ? 'unavailable' : `${running.length} running`}</span></div>{running.length > 0 ? <><LiveScan scan={running[0]} onOpen={() => onOpenScan?.(running[0].id)}/>{running.length > 1 && <div className="dashboard-more-running">+ {running.length-1} other active {running.length===2?'scan':'scans'}</div>}</> : <div className="dashboard-quiet">{scansError ? 'Scan status unavailable' : 'No active scans'}</div>}</section>
     <section className="dashboard-block dashboard-findings-block"><div className="dashboard-block-head"><h2>Findings</h2><button onClick={() => onNavigate?.('findings')}>View all <ArrowRight size={13}/></button></div><div className="dashboard-findings-total"><strong>{severityError ? '-' : findingTotal}</strong><span>across all scans</span></div>{!severityError && <SeverityBar c={severity[0].count} h={severity[1].count} m={severity[2].count} l={severity[3].count} i={severity[4].count}/>}<div className="dashboard-severity-list">{severity.map(item=><div key={item.key}><span className={`dashboard-severity-dot dashboard-severity-dot-${item.key}`}/><span>{item.label}</span><strong>{severityError ? '-' : item.count}</strong></div>)}</div></section></div>
+    {fixFirst.length > 0 && <section className="dashboard-block dashboard-fix-first"><div className="dashboard-block-head"><h2>Fix first</h2><button onClick={() => onNavigate?.('findings')}>All findings <ArrowRight size={13}/></button></div><ol className="dashboard-fix-list">{fixFirst.map(f => <li key={f.id}><PriorityBadge score={f.priority_score} kev={f.is_kev} reasons={f.priority_reasons}/><strong>{f.title}<small>{f.host_ip ?? '-'}{f.port_number != null ? `:${f.port_number}` : ''}</small></strong><span>{parseReasons(f.priority_reasons).slice(1).join(' · ')}</span></li>)}</ol></section>}
     <section className="dashboard-block dashboard-scans"><div className="dashboard-block-head"><h2>Recent scans</h2><button onClick={() => onNavigate?.('scans')}>All scans <ArrowRight size={13}/></button></div><div className="dashboard-scan-table-wrap"><table><thead><tr><th>Name / profile</th><th>Status</th><th>Hosts</th><th>Findings C/H/M/L</th><th>Started</th><th/></tr></thead><tbody>{recent.map(scan=><tr key={scan.id} onClick={()=>onOpenScan?.(scan.id)} tabIndex={0} onKeyDown={event=>{if(event.key==='Enter')onOpenScan?.(scan.id)}}><td><strong>{scan.name}</strong><small>{scan.profile}</small></td><td><StatusPill status={scan.status}/></td><td>{scan.hosts_up??0}<span> / {scan.hosts_total??0}</span></td><td><CHML c={scan.findings_critical} h={scan.findings_high} m={scan.findings_medium} l={scan.findings_low}/></td><td>{relTime(scan.created_at)}</td><td><ArrowRight size={14}/></td></tr>)}{recent.length===0&&<tr><td colSpan={6} className="dashboard-table-empty">{scansError ? 'Scan list unavailable' : 'No scans recorded'}</td></tr>}</tbody></table></div></section>
     <div className="dashboard-secondary-grid"><section className="dashboard-block"><div className="dashboard-block-head"><h2>Findings trend</h2><span>Last 30 days</span></div><div className="dashboard-timeline"><TimelineChart data={timeline}/></div></section><section className="dashboard-block"><div className="dashboard-block-head"><h2>Exposed hosts</h2><span>{topHosts.length} hosts</span></div>{topHosts.length===0?<div className="dashboard-quiet">No host findings yet</div>:<ol className="dashboard-host-list">{topHosts.slice(0,7).map((host,index)=><li key={host.id}><span>{String(index+1).padStart(2,'0')}</span><strong>{host.hostname??host.ip}<small>{host.ip}</small></strong><b>{host.finding_count}</b></li>)}</ol>}</section></div>
     {activityData.length>0&&<section className="dashboard-block dashboard-activity"><div className="dashboard-block-head"><h2>Scan activity</h2><span>Last 30 days</span></div><div><ScanActivityHeatmap data={activityData}/></div></section>}

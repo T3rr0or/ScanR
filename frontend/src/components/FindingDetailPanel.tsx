@@ -7,6 +7,7 @@ import { SevTag } from '@/components/ui'
 import type { Finding } from '@/api/findings'
 import RetestPanel from "@/components/RetestPanel"
 import TicketPanel from "@/components/TicketPanel"
+import { PriorityExplanation } from "@/components/Priority"
 import { safeUrl } from "@/utils/safeUrl"
 
 interface Props {
@@ -84,6 +85,8 @@ function PanelBody({ finding, onClose }: { finding: Finding; onClose: () => void
 
       {/* Scrollable body */}
       <div style={{ flex: 1, overflow: 'auto', padding: '16px', display: 'flex', flexDirection: 'column', gap: 18 }}>
+
+        <PriorityExplanation score={finding.priority_score} reasons={finding.priority_reasons} epss={finding.epss_score} epssPercentile={finding.epss_percentile} kev={finding.is_kev} />
 
         {/* Metadata row */}
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>

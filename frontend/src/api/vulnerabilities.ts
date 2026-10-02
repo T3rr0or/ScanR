@@ -11,6 +11,9 @@ export interface VulnerabilityItem {
   last_seen_at: string | null
   max_cvss: number | null
   max_vpr: number | null
+  max_priority: number | null
+  max_epss: number | null
+  kev: boolean
 }
 
 export interface VulnHost {

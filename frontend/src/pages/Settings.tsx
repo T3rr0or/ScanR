@@ -1153,6 +1153,24 @@ function CveDatabaseSection() {
 						{status?.kev_count ?? "–"}
 					</div>
 				</div>
+				<div>
+					<div
+						style={{ fontSize: 10, color: "var(--text-3)", marginBottom: 4 }}
+					>
+						EPSS Scores
+					</div>
+					<div
+						className="mono"
+						style={{ fontSize: 13, fontWeight: 600, color: "var(--text-0)" }}
+					>
+						{status?.epss_count ? status.epss_count.toLocaleString() : "–"}
+					</div>
+					{status?.epss_score_date && (
+						<div style={{ fontSize: 10, color: "var(--text-3)", marginTop: 2 }}>
+							scored {new Date(status.epss_score_date).toLocaleDateString()}
+						</div>
+					)}
+				</div>
 				<div style={{ gridColumn: "1 / -1" }}>
 					<div
 						style={{ fontSize: 10, color: "var(--text-3)", marginBottom: 4 }}

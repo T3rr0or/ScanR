@@ -3,10 +3,10 @@ import type { Finding } from '@/api/findings'
 
 const SEV_RANK: Record<string, number> = { critical: 5, high: 4, medium: 3, low: 2, info: 1 }
 
-export type FindingSortKey = 'severity' | 'title' | 'port' | 'vpr' | 'cvss' | 'status'
+export type FindingSortKey = 'priority' | 'severity' | 'title' | 'port' | 'vpr' | 'cvss' | 'status'
 
 export function useSortableFindings(findings: Finding[]) {
-  const [sortKey, setSortKey] = useState<FindingSortKey>('severity')
+  const [sortKey, setSortKey] = useState<FindingSortKey>('priority')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
 
   function toggleSort(key: FindingSortKey) {
@@ -22,6 +22,8 @@ export function useSortableFindings(findings: Finding[]) {
     const mult = sortDir === 'asc' ? 1 : -1
     return [...findings].sort((a, b) => {
       switch (sortKey) {
+        case 'priority':
+          return mult * ((a.priority_score ?? -1) - (b.priority_score ?? -1))
         case 'severity':
           return mult * ((SEV_RANK[a.severity] ?? 99) - (SEV_RANK[b.severity] ?? 99))
         case 'title':

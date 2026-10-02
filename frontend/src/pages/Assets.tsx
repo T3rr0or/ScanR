@@ -6,6 +6,7 @@ import type { Finding } from '@/api/findings'
 import { SevTag, CHML, relTime } from '@/components/ui'
 import FindingDetailPanel from '@/components/FindingDetailPanel'
 import SortableTh from '@/components/SortableTh'
+import { PriorityBadge } from '@/components/Priority'
 import { useSortableFindings } from '@/hooks/useSortableFindings'
 import './OperatorPages.css'
 
@@ -20,16 +21,6 @@ function AssetTh({ label, sortKey, active, dir, onSort }: { label: string; sortK
         {label}<span aria-hidden="true">{isActive ? (dir === 'asc' ? '▲' : '▼') : '⇅'}</span>
       </button>
     </th>
-  )
-}
-
-function VprBadge({ score }: { score: number | null }) {
-  if (score == null) return <span className="dimmer" style={{ fontSize: 11 }}>n/a</span>
-  const color = score >= 8 ? 'var(--sev-critical)' : score >= 5 ? 'var(--sev-high)' : 'var(--sev-medium)'
-  return (
-    <span className="mono" style={{ fontSize: 11, fontWeight: 700, color, border: '1px solid var(--border)', padding: '1px 5px' }}>
-      {score.toFixed(1)}
-    </span>
   )
 }
 
@@ -72,7 +63,7 @@ function FindingRow({ f, onClick }: { f: Finding; onClick: () => void }) {
       <td><SevTag severity={sev} /></td>
       <td style={{ fontSize: 12, color: 'var(--text-0)' }}>{f.title}</td>
       <td className="mono dimmer" style={{ fontSize: 11 }}>{f.port_number ? `${f.port_number}/${f.protocol}` : 'n/a'}</td>
-      <td><VprBadge score={f.vpr_score} /></td>
+      <td><PriorityBadge score={f.priority_score} kev={f.is_kev} reasons={f.priority_reasons} /></td>
       <td className="mono dimmer" style={{ fontSize: 11 }}>{f.cvss_score?.toFixed(1) ?? 'n/a'}</td>
       <td><span className={`pill pill-${f.remediation_status === 'resolved' ? 'completed' : f.false_positive ? 'cancelled' : 'pending'}`} style={{ fontSize: 10 }}>{f.false_positive ? 'FP' : f.remediation_status}</span></td>
     </tr>
@@ -142,7 +133,7 @@ function HostFindingsModal({
                   <SortableTh label="Sev" sortKey="severity" active={sortKey} dir={sortDir} onSort={toggleSort} />
                   <SortableTh label="Title" sortKey="title" active={sortKey} dir={sortDir} onSort={toggleSort} />
                   <SortableTh label="Port" sortKey="port" active={sortKey} dir={sortDir} onSort={toggleSort} />
-                  <SortableTh label="VPR" sortKey="vpr" active={sortKey} dir={sortDir} onSort={toggleSort} />
+                  <SortableTh label="Priority" sortKey="priority" active={sortKey} dir={sortDir} onSort={toggleSort} />
                   <SortableTh label="CVSS" sortKey="cvss" active={sortKey} dir={sortDir} onSort={toggleSort} />
                   <SortableTh label="Status" sortKey="status" active={sortKey} dir={sortDir} onSort={toggleSort} />
                 </tr>

@@ -35,6 +35,9 @@ async def list_findings(
     # Raised past 500 so a client showing a 500-row page can ask for 501 and know
     # whether a 501st exists, rather than inferring "there is more" from a full
     # page — which is wrong at exactly 500.
+    min_priority: float | None = Query(None, ge=0, le=100, description="Only findings at or above this fix-first score"),
+    sort: str = Query("newest", pattern="^(newest|priority)$",
+                      description="newest (default, cursor-paginated) or priority (fix-first, offset-paginated)"),
     limit: int = Query(200, le=1000),
     cursor: str | None = Query(None, description="Cursor from previous page: ISO timestamp,finding_id"),
     offset: int = Query(0, description="Deprecated: use cursor instead"),
@@ -46,8 +49,15 @@ async def list_findings(
         .outerjoin(Host, Finding.host_id == Host.id)
         .join(Scan, Finding.scan_id == Scan.id)
         .where(Scan.user_id == current_user.id)
-        .order_by(Finding.created_at.desc(), Finding.id.desc())
     )
+    if sort == "priority":
+        if cursor:
+            raise HTTPException(status_code=400, detail="cursor pagination is only supported with sort=newest")
+        q = q.order_by(Finding.priority_score.desc().nulls_last(), Finding.created_at.desc(), Finding.id.desc())
+    else:
+        q = q.order_by(Finding.created_at.desc(), Finding.id.desc())
+    if min_priority is not None:
+        q = q.where(Finding.priority_score >= min_priority)
     if scan_id:
         q = q.where(Finding.scan_id == scan_id)
     if host_id:
@@ -171,13 +181,15 @@ async def export_findings(
 
     buf = io.StringIO()
     writer = csv.writer(buf)
-    writer.writerow(["severity", "title", "host_ip", "plugin_id", "cvss_score", "port",
+    writer.writerow(["severity", "priority", "title", "host_ip", "plugin_id", "cvss_score", "epss", "cisa_kev", "port",
                      "false_positive", "validated", "validation_method", "remediation_status", "analyst_notes",
                      "description", "remediation"])
     for row in rows:
         f, ip = row[0], row[1]
         writer.writerow([spreadsheet_safe_cell(value) for value in [
-            f.severity, f.title, ip or "", f.plugin_id, f.cvss_score or "",
+            f.severity, f.priority_score if f.priority_score is not None else "",
+            f.title, ip or "", f.plugin_id, f.cvss_score or "",
+            f.epss_score if f.epss_score is not None else "", "yes" if f.is_kev else "",
             f"{f.port_number}/{f.protocol}" if f.port_number else "",
             "yes" if f.false_positive else "",
             "yes" if f.validated else "", f.validation_method or "",

@@ -20,6 +20,11 @@ class FindingRead(BaseModel):
     cvss_score: float | None
     cvss_vector: str | None
     vpr_score: float | None = None
+    priority_score: float | None = None
+    priority_reasons: str | None = None  # JSON list[str]
+    epss_score: float | None = None
+    epss_percentile: float | None = None
+    is_kev: bool = False
     cve_ids: str | None
     first_seen_scan_id: str | None = None
     last_seen_scan_id: str | None = None

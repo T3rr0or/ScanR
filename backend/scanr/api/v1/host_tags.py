@@ -27,6 +27,15 @@ class HostTag(Base):
 router = APIRouter(prefix="/host-tags", tags=["host-tags"])
 
 
+async def _rescore_if_priority_tag(db: AsyncSession, user_id: str, ip: str, tag: str) -> None:
+    """Crown-jewel tags raise a host's findings in the fix-first ranking."""
+    from scanr.core.priority import CRITICAL_ASSET_TAGS
+    from scanr.core.priority_service import rescore_host
+
+    if tag in CRITICAL_ASSET_TAGS:
+        await rescore_host(db, user_id, ip)
+
+
 @router.get("")
 async def list_tags(
     ip: str = Query(..., description="Host IP address"),
@@ -74,6 +83,7 @@ async def add_tag(
     if not existing.scalar_one_or_none():
         db.add(HostTag(id=new_uuid(), user_id=current_user.id, ip=ip, tag=tag))
         await db.commit()
+        await _rescore_if_priority_tag(db, current_user.id, ip, tag)
     return {"ip": ip, "tag": tag}
 
 
@@ -89,3 +99,4 @@ async def remove_tag(
         delete(HostTag).where(HostTag.user_id == current_user.id, HostTag.ip == ip, HostTag.tag == tag.strip().lower())
     )
     await db.commit()
+    await _rescore_if_priority_tag(db, current_user.id, ip, tag.strip().lower())

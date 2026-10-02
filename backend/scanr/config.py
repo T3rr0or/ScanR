@@ -124,6 +124,10 @@ class Settings(BaseSettings):
     # NVD CVE feed cache
     nvd_cache_dir: Path = Path("./nvd_cache")
 
+    # Download the EPSS and CISA KEV feeds daily and re-rank findings. Turn off
+    # for air-gapped installs; a manual CVE refresh still updates both.
+    threat_feed_auto_refresh: bool = True
+
     # PEM bundle of extra CAs trusted for authenticated LDAP (e.g. an internal
     # AD CS root). Certificates are always validated; this only adds trust.
     ldap_ca_file: Path | None = None

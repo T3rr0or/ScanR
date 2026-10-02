@@ -5,6 +5,9 @@ export interface Finding {
   plugin_id: string; severity: string; title: string
   description: string | null; evidence: string | null
   remediation: string | null; cvss_score: number | null; vpr_score: number | null
+  /** Fix-first ranking 0-100; reasons is a JSON list of strings. */
+  priority_score: number | null; priority_reasons: string | null
+  epss_score: number | null; epss_percentile: number | null; is_kev: boolean
   cvss_vector: string | null; cve_ids: string | null
   first_seen_scan_id: string | null; last_seen_scan_id: string | null
   port_number: number | null; protocol: string | null

@@ -127,6 +127,12 @@ def download_feeds() -> None:
     _fetch_nvd2_year_range(2024, 2026)
 
     download_cisa_kev()
+    try:
+        from scanr.plugins.cve import epss
+
+        epss.download_epss()
+    except Exception as exc:
+        logger.warning("Failed to download EPSS scores: %s", exc)
     LAST_UPDATED_PATH.write_text(__import__("datetime").datetime.utcnow().isoformat())
 
 

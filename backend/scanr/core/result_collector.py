@@ -106,6 +106,15 @@ class ResultCollector:
                 analyst_notes=prior.analyst_notes if prior else None,
                 triaged_by=prior.triaged_by if prior else None,
             )
+            try:
+                from scanr.core.priority_service import score_rows
+
+                host_ip = await self._host_ip(host_id) if host_id else None
+                await score_rows(self.db, [(finding, host_ip, self._user_id or "")])
+            except Exception:
+                # Ranking is advisory; never lose a finding over it. The API's
+                # feed refresher scores anything left unscored.
+                logger.exception("Priority scoring failed for %s", data.title)
             self.db.add(finding)
 
             # Update scan stats (cached to avoid N+1 queries)
