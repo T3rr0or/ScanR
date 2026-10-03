@@ -15,6 +15,7 @@ from scanr.api.v1 import auth as auth_api
 from scanr.auth import oidc
 from scanr.auth.password import hash_password
 from scanr.config import get_settings
+from scanr.core import audit
 from scanr.core.limiter import limiter
 from scanr.db import get_db
 from scanr.models.base import new_uuid
@@ -154,6 +155,7 @@ async def oidc_callback(
     except oidc.OIDCError as exc:
         await db.rollback()
         logger.warning("SSO login refused (%s): %s", exc.code, exc)
+        await audit.record(request, "auth.sso_refused", status_code=303, details={"reason": exc.code, "detail": str(exc)[:200]})
         return _redirect_to_login(sso_error=exc.code)
 
     response = _redirect_to_login(sso="success")
@@ -162,4 +164,5 @@ async def oidc_callback(
     # own second factor is not asked for; the provider enforces its policy.
     await auth_api.start_session(db, response, user)
     logger.info("Successful SSO login: user=%s", user.email)
+    await audit.record(request, "auth.login", user=user, status_code=303, details={"method": "sso"})
     return response

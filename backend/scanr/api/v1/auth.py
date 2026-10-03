@@ -13,6 +13,7 @@ from scanr.auth.jwt_handler import create_mfa_token
 from scanr.auth.mfa import verify_second_factor
 from scanr.auth.password import dummy_verify, hash_password, needs_rehash
 from scanr.config import get_settings
+from scanr.core import audit
 from scanr.db import get_db
 from scanr.core.limiter import limiter
 from scanr.models import User
@@ -182,7 +183,11 @@ async def login(
     result = await db.execute(select(User).where(User.email == body.email.lower().strip(), User.is_active == True))
     user = result.scalar_one_or_none()
 
-    _raise_if_locked(user, now, ip)
+    try:
+        _raise_if_locked(user, now, ip)
+    except HTTPException:
+        await audit.record(request, "auth.login_locked", email=body.email.lower().strip(), status_code=429)
+        raise
 
     if not user:
         # Spend the same bcrypt time as a real verify: returning early here is a
@@ -193,6 +198,8 @@ async def login(
         logger.warning("Failed login attempt from ip=%s email=%s", ip, body.email)
         if user:
             await _record_failed_login(db, user, now)
+        await audit.record(request, "auth.login_failed", email=body.email.lower().strip(), status_code=401,
+                           details={"reason": "password"})
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
 
     # Transparently upgrade bcrypt cost factor on successful login
@@ -210,6 +217,7 @@ async def login(
         return LoginResponse(mfa_required=True, mfa_token=create_mfa_token(user.id, generation))
 
     logger.info("Successful login: user=%s ip=%s", user.email, ip)
+    await audit.record(request, "auth.login", user=user, status_code=200, details={"method": "password"})
     return LoginResponse(access_token=await start_session(db, response, user))
 
 
@@ -247,6 +255,8 @@ async def login_mfa(
     if not await verify_second_factor(db, user, body.code):
         logger.warning("Failed second factor from ip=%s email=%s", ip, user.email)
         await _record_failed_login(db, user, now)
+        await audit.record(request, "auth.login_failed", email=user.email, status_code=401,
+                           details={"reason": "second factor"})
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid authentication code")
 
     # One challenge, one session: a captured challenge plus a later code must
@@ -263,6 +273,7 @@ async def login_mfa(
         raise expired
 
     logger.info("Successful login with second factor: user=%s ip=%s", user.email, ip)
+    await audit.record(request, "auth.login", user=user, status_code=200, details={"method": "password+totp"})
     return TokenResponse(access_token=await start_session(db, response, user))
 
 

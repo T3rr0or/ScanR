@@ -261,6 +261,8 @@ def test_viewer_gate_covers_every_write_scope():
         "scans:read", "findings:read", "reports:read", "credentials:read",
         "plugins:read", "agents:read", "api_keys:read", "webhooks:read",
         "wordlists:read", "host_tags:read",
+        # Admin-only by role as well (require_admin_scope); read-only by design.
+        "audit:read",
     }, "viewer-permitted scope set changed — confirm the new scope is read-only"
 
     # No exceptions left: spending LLM budget and spawning report jobs are now

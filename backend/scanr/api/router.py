@@ -3,6 +3,7 @@ from fastapi import APIRouter
 from .v1 import (
     agent_jobs,
     agents,
+    audit,
     ai,
     analytics,
     api_keys,
@@ -33,6 +34,7 @@ from .websocket import router as ws_router
 
 api_router = APIRouter(prefix="/api/v1")
 api_router.include_router(auth.router)
+api_router.include_router(audit.router)
 api_router.include_router(oidc.router)
 api_router.include_router(ai.router)
 api_router.include_router(profile_suggest.router)

@@ -16,6 +16,7 @@ import { relTime } from "@/components/ui";
 import AutonomyModeInfo from "@/components/AutonomyModeInfo";
 import TwoFactorPanel from "@/components/TwoFactorPanel";
 import NotificationsSection from "@/components/NotificationsSection";
+import AuditLogSection from "@/components/AuditLogSection";
 import { useAuthStore } from "@/store/auth";
 import { integrationsApi } from "@/api/integrations";
 import { usersApi } from "@/api/users";
@@ -32,6 +33,7 @@ type Tab =
 	| "ai"
 	| "integrations"
 	| "users"
+	| "audit"
 	| "system";
 
 const TABS: {
@@ -49,6 +51,7 @@ const TABS: {
 	{ id: "integrations", label: "Integrations", description: "Connected service credentials", adminOnly: true },
 	{ id: "system", label: "System", description: "Runtime health and updates", adminOnly: true },
 	{ id: "users", label: "Users", description: "People, roles, and access", adminOnly: true },
+	{ id: "audit", label: "Audit log", description: "Who did what, when and from where", adminOnly: true },
 ];
 
 export default function Settings() {
@@ -91,6 +94,7 @@ export default function Settings() {
 						{activeTab === "integrations" && role === "admin" && <IntegrationsSection />}
 						{activeTab === "system" && role === "admin" && <SystemSection />}
 						{activeTab === "users" && role === "admin" && <UserManagementSection />}
+						{activeTab === "audit" && role === "admin" && <AuditLogSection />}
 					</div>
 				</main>
 			</div>
@@ -1296,6 +1300,11 @@ const ALL_SCOPES = [
 		value: "integrations:manage",
 		label: "Integrations – manage (admin)",
 		desc: "Read and change global integration configuration",
+	},
+	{
+		value: "audit:read",
+		label: "Audit log – read (admin)",
+		desc: "Read and export the audit trail",
 	},
 	{
 		value: "system:manage",

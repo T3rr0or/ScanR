@@ -100,6 +100,8 @@ def create_app() -> FastAPI:
     # signature — this is the wiring pattern from slowapi's own docs.
     app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)  # type: ignore[arg-type]
     app.add_middleware(SlowAPIMiddleware)
+    from scanr.core.audit import AuditMiddleware
+    app.add_middleware(AuditMiddleware)
     app.add_middleware(SecurityHeadersMiddleware)
     app.add_middleware(
         CORSMiddleware,

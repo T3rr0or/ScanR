@@ -945,6 +945,21 @@ and their recovery codes, an admin can use **Reset 2FA** under **Settings →
 Users**. The `scanr login` CLI command prompts for the code too; API keys are
 unaffected.
 
+### Audit log
+
+Administrators find a complete audit trail under **Settings → Audit log**:
+every change made through the web app or API (scans, findings, users, 2FA,
+credentials, API keys, settings), every sign-in attempt including failures and
+SSO, and every bulk export or report download. Each entry records who (and
+whether through an API key), when, from which IP address, what was affected and
+whether it was allowed or denied. Filter by user, action or outcome and export
+to CSV for auditors.
+
+Entries are append-only: there is no API to edit or delete them, and they keep
+the user's email even after the account is deleted. Request bodies are never
+stored, so passwords, API keys and scan credentials cannot leak into the log.
+API keys need the `audit:read` scope (administrators only) to read it.
+
 ### Single sign-on (OpenID Connect)
 
 ScanR can delegate sign-in to Microsoft Entra ID, Google Workspace, Okta,
