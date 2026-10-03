@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import datetime, timezone
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
@@ -14,6 +15,7 @@ from scanr.db import get_db
 from scanr.deps import ensure_admin, ensure_scopes, require_scope
 from scanr.models import Host, Scan, ScanStatus, Target, Finding
 from scanr.models.base import new_uuid
+from scanr.models.target import TargetType
 from scanr.models.user import User
 from scanr.schemas import ScanCreate, ScanRead, ScanSummary
 from scanr.schemas.profile import validate_profile_json
@@ -171,6 +173,16 @@ async def _transition_status(
     )
     await db.commit()
     return result.rowcount == 1
+
+
+def _refuse_imported(scan: Scan) -> None:
+    from scanr.importers.store import IMPORTED_PROFILE
+
+    if scan.profile == IMPORTED_PROFILE:
+        raise HTTPException(
+            status_code=409,
+            detail="This scan holds imported results; create a new ScanR scan to test these hosts.",
+        )
 
 
 async def _get_own_scan(scan_id: str, user_id: str, db: AsyncSession) -> Scan:
@@ -434,6 +446,7 @@ async def launch_scan(
     current_user: User = Depends(require_scope("scans:write")),
 ):
     scan = await _get_own_scan(scan_id, current_user.id, db)
+    _refuse_imported(scan)
 
     # Atomic transition: a single conditional UPDATE makes only one concurrent
     # launch win. A check-then-set would let two parallel requests both
@@ -576,6 +589,7 @@ async def rerun_scan(
 ):
     """Clone a completed scan and launch it immediately with the same config."""
     source = await _get_own_scan(scan_id, current_user.id, db)
+    _refuse_imported(source)
     if source.status not in (ScanStatus.completed, ScanStatus.failed, ScanStatus.cancelled):
         raise HTTPException(status_code=409, detail=f"Cannot rerun scan in status '{source.status}'")
 
@@ -714,6 +728,83 @@ async def clone_scan(
     return result.scalar_one()
 
 
+_MAX_IMPORT_BYTES = 50 * 1024 * 1024  # 50 MB cap on imported report bodies
+_IMPORT_FORMATS = Literal["auto", "nessus", "nmap", "nuclei", "burp", "zap"]
+
+
+class _ImportBody(BaseModel):
+    report: str = Field(max_length=_MAX_IMPORT_BYTES)  # file contents
+    format: _IMPORT_FORMATS = "auto"
+
+
+class _ImportAsScanBody(_ImportBody):
+    name: str = Field(min_length=1, max_length=255)
+    description: str | None = Field(None, max_length=2000)
+
+
+def _parse_import(body: _ImportBody):
+    from scanr.importers.parsers import ImportFormatError, parse
+
+    if len(body.report.encode("utf-8", errors="ignore")) > _MAX_IMPORT_BYTES:
+        raise HTTPException(status_code=413, detail="Report too large (max 50 MB)")
+    try:
+        return parse(body.report, body.format)
+    except safe_xml.XmlSecurityError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except ImportFormatError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+async def _store_import(db: AsyncSession, scan: Scan, result, user_id: str) -> dict:
+    from dataclasses import asdict
+
+    from scanr.importers.store import store
+
+    try:
+        summary = await store(db, scan, result, user_id)
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        logger.exception("Import into scan %s failed", scan.id)
+        raise HTTPException(status_code=500, detail="Failed to import findings")
+    return {"scan_id": scan.id, **asdict(summary)}
+
+
+@router.post("/import", status_code=status.HTTP_201_CREATED)
+async def import_as_new_scan(
+    body: _ImportAsScanBody,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_scope("scans:write")),
+):
+    """Create a scan from another tool's results (Nessus, Nmap, Nuclei, Burp, ZAP)."""
+    from scanr.importers.store import IMPORTED_PROFILE
+
+    result = _parse_import(body)
+    now = datetime.now(timezone.utc)
+    scan = Scan(
+        id=new_uuid(), name=body.name, description=body.description, user_id=current_user.id,
+        status=ScanStatus.completed, profile=IMPORTED_PROFILE,
+        profile_json=json.dumps({"imported_from": result.source}),
+        started_at=now, finished_at=now,
+    )
+    db.add(scan)
+    for address in list(result.hosts)[:5000]:
+        db.add(Target(id=new_uuid(), scan_id=scan.id, value=address[:255],
+                      type=TargetType.ip if _is_ip(address) else TargetType.hostname))
+    await db.flush()
+    return await _store_import(db, scan, result, current_user.id)
+
+
+def _is_ip(value: str) -> bool:
+    import ipaddress
+
+    try:
+        ipaddress.ip_address(value)
+        return True
+    except ValueError:
+        return False
+
+
 @router.post("/{scan_id}/import", status_code=status.HTTP_201_CREATED)
 async def import_findings(
     scan_id: str,
@@ -721,74 +812,12 @@ async def import_findings(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_scope("scans:write")),
 ):
-    """Import findings from Burp Suite XML or ZAP JSON report."""
+    """Add another tool's results to an existing scan. Re-importing is idempotent."""
     scan = await _get_own_scan(scan_id, current_user.id, db)
     if scan.status not in (ScanStatus.completed, ScanStatus.failed, ScanStatus.pending):
         raise HTTPException(status_code=409, detail=f"Cannot import to scan in status '{scan.status}'")
-
-    if len(body.report.encode("utf-8", errors="ignore")) > _MAX_IMPORT_BYTES:
-        raise HTTPException(status_code=413, detail="Report too large (max 50 MB)")
-
-    imported = 0
-    try:
-        root = safe_xml.fromstring(body.report)
-    except safe_xml.XmlSecurityError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid XML report")
-
-    # Burp Suite XML format
-    for item in root.findall(".//item"):
-        title = (item.findtext("type") or item.findtext("issue") or "Imported Finding").strip()
-        sev_str = (item.find(".//severity").text if item.find(".//severity") is not None else "Medium").capitalize()
-        sev_map = {"High": "high", "Medium": "medium", "Low": "low", "Information": "info", "Certain": "critical"}
-        severity = sev_map.get(sev_str, "medium")
-        description = item.findtext("issueDetail") or item.findtext("issueBackground") or title
-
-        # Extract request/response evidence
-        evidence_parts = []
-        for req_el in item.findall(".//request"):
-            if req_el.text:
-                evidence_parts.append(f"=== REQUEST ===\n{req_el.text.strip()}")
-        for resp_el in item.findall(".//response"):
-            if resp_el.text:
-                evidence_parts.append(f"\n\n=== RESPONSE ===\n{resp_el.text.strip()}")
-        evidence = "\n".join(evidence_parts) if evidence_parts else None
-
-        # Extract host from request
-        finding = Finding(
-            id=new_uuid(),
-            scan_id=scan_id,
-            plugin_id="import.burp",
-            severity=severity,
-            title=title[:512],
-            description=description,
-            evidence=evidence,
-        )
-        db.add(finding)
-        imported += 1
-
-        # Increment counter
-        sev_col = f"findings_{severity}"
-        if hasattr(scan, sev_col):
-            setattr(scan, sev_col, (getattr(scan, sev_col) or 0) + 1)
-
-    if imported == 0:
-        raise HTTPException(status_code=400, detail="No findings found in report")
-
-    try:
-        await db.commit()
-    except Exception:
-        await db.rollback()
-        raise HTTPException(status_code=500, detail="Failed to import findings")
-    return {"imported": imported}
-
-
-_MAX_IMPORT_BYTES = 50 * 1024 * 1024  # 50 MB cap on imported report bodies
-
-
-class _ImportBody(BaseModel):
-    report: str = Field(max_length=_MAX_IMPORT_BYTES)  # XML/JSON report body
+    result = _parse_import(body)
+    return await _store_import(db, scan, result, current_user.id)
 
 
 @router.post("/{scan_id}/findings/manual", status_code=status.HTTP_201_CREATED)

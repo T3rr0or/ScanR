@@ -1,0 +1,26 @@
+<?xml version="1.0" ?>
+<NessusClientData_v2>
+<Report name="Internal" xmlns:cm="http://www.nessus.org/cm">
+<ReportHost name="10.10.1.5"><HostProperties>
+<tag name="host-ip">10.10.1.5</tag><tag name="host-fqdn">fs01.corp.example</tag><tag name="operating-system">Microsoft Windows Server 2019</tag>
+</HostProperties>
+<ReportItem port="445" svc_name="cifs" protocol="tcp" severity="4" pluginID="97833" pluginName="MS17-010: Security Update for Microsoft Windows SMB Server (ETERNALBLUE)" pluginFamily="Windows">
+<description>The remote Windows host is affected by multiple vulnerabilities.</description>
+<solution>Apply the patches in MS17-010.</solution>
+<plugin_output>Sent: 00000000 Received: c0000205</plugin_output>
+<cvss3_base_score>8.1</cvss3_base_score><cvss3_vector>CVSS:3.0/AV:N/AC:H/PR:N/UI:N/S:U/C:H/I:H/A:H</cvss3_vector>
+<cve>CVE-2017-0143</cve><cve>CVE-2017-0144</cve>
+<see_also>https://docs.microsoft.com/en-us/security-updates/SecurityBulletins/2017/ms17-010
+https://www.nessus.org/u?68fc8eff</see_also>
+</ReportItem>
+<ReportItem port="3389" svc_name="msrdp" protocol="tcp" severity="2" pluginID="18405" pluginName="Remote Desktop Protocol Server Man-in-the-Middle Weakness">
+<description>The remote version of RDP is vulnerable to a man-in-the-middle attack.</description>
+<solution>Force the use of SSL as a transport layer.</solution>
+<cvss_base_score>5.1</cvss_base_score>
+</ReportItem>
+<ReportItem port="0" svc_name="general" protocol="tcp" severity="0" pluginID="19506" pluginName="Nessus Scan Information">
+<description>Information about the scan.</description>
+</ReportItem>
+</ReportHost>
+</Report>
+</NessusClientData_v2>

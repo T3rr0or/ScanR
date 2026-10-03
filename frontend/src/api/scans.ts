@@ -123,3 +123,21 @@ export const scansApi = {
   latestDelta: (id: string) =>
     api.get<ScanDeltaResult>(`/scans/${id}/delta/latest`).then(r => r.data),
 }
+
+export type ImportFormat = 'auto' | 'nessus' | 'nmap' | 'nuclei' | 'burp' | 'zap'
+
+export interface ImportSummary {
+  scan_id: string
+  source: Exclude<ImportFormat, 'auto'>
+  hosts_added: number
+  ports_added: number
+  findings_added: number
+  duplicates_skipped: number
+}
+
+export const importsApi = {
+  asNewScan: (body: { name: string; report: string; format: ImportFormat }) =>
+    api.post<ImportSummary>('/scans/import', body, { timeout: 300_000 }).then(r => r.data),
+  intoScan: (scanId: string, body: { report: string; format: ImportFormat }) =>
+    api.post<ImportSummary>(`/scans/${scanId}/import`, body, { timeout: 300_000 }).then(r => r.data),
+}

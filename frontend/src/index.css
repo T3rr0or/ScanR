@@ -972,3 +972,18 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .login-console-note { margin-top: 16px; color: var(--text-3); font-size: 10px; }
 .login-console-footer { border-top: 1px solid var(--border); border-bottom: 0; }
 @media (max-width: 600px) { .login-console-header > span:last-child { display: none; } .login-console-form { padding: 20px; } .login-console-footer { padding: 16px 20px; } }
+
+/* Import results dialog */
+.import-modal { position: fixed; inset: 0; z-index: 70; display: flex; align-items: center; justify-content: center; padding: 24px; background: oklch(0.05 0.01 255 / 0.75); }
+.import-modal-card { width: min(520px, 100%); background: var(--bg-1); border: 1px solid var(--border); padding: 18px 20px; display: flex; flex-direction: column; gap: 12px; }
+.import-modal-card header { display: flex; align-items: center; justify-content: space-between; }
+.import-modal-card h2 { margin: 0; font-size: 15px; color: var(--text-0); }
+.import-modal-card form { display: flex; flex-direction: column; gap: 12px; }
+.import-modal-card p { margin: 0; font-size: 12px; line-height: 1.5; }
+.import-drop { display: flex; align-items: center; gap: 10px; padding: 18px 14px; border: 1px dashed rgba(255,255,255,.3); color: var(--text-1); font-size: 13px; cursor: pointer; }
+.import-drop:hover { border-color: var(--accent); }
+.import-drop input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.import-field { display: flex; flex-direction: column; gap: 5px; font-size: 11px; color: var(--text-2); }
+.import-error { color: var(--sev-high); }
+.import-done ul { margin: 8px 0; padding-left: 18px; font-size: 13px; color: var(--text-0); line-height: 1.7; }
+.import-actions { display: flex; justify-content: flex-end; gap: 8px; }

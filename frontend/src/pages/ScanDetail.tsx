@@ -156,6 +156,13 @@ export default function ScanDetail({ scanId, onBack }: Props) {
 		scan ? scanId : null,
 	);
 	const isActive = ["running", "pending"].includes(scan?.status ?? "");
+	// Imported results have no live console and cannot be re-run.
+	const isImported = scan?.profile === "imported";
+	const [openedImported, setOpenedImported] = useState(false);
+	if (isImported && !openedImported) {
+		setOpenedImported(true);
+		if (tab === "console") setTab("findings");
+	}
 	const isPending = scan?.status === "pending";
 	const chains = computeChains(findings);
 	// Stable across renders: NetworkTopology rebuilds its whole force layout
@@ -204,7 +211,7 @@ export default function ScanDetail({ scanId, onBack }: Props) {
 						{scan?.status === "running" && <button className="btn btn-sm" onClick={() => pauseMut.mutate()} disabled={pauseMut.isPending}>{pauseMut.isPending ? "Pausing…" : "Pause scan"}</button>}
 						{isActive && <button className="btn btn-danger btn-sm" onClick={() => cancelMut.mutate()} disabled={cancelMut.isPending}><StopCircle size={12} /> {cancelMut.isPending ? "Cancelling…" : "Cancel"}</button>}
 						{!isActive && scan?.status === "completed" && <button className="btn btn-sm" onClick={() => setShowDelta(true)}><GitCompare size={12} /> Compare</button>}
-						{!isActive && ["completed", "failed", "cancelled"].includes(scan?.status ?? "") && <button className="btn btn-sm" onClick={() => { if (confirm("Rerun this scan with the same config?")) rerunMut.mutate(); }} disabled={rerunMut.isPending}><RotateCcw size={12} /> {rerunMut.isPending ? "Rerunning…" : "Rerun"}</button>}
+						{!isActive && !isImported && ["completed", "failed", "cancelled"].includes(scan?.status ?? "") && <button className="btn btn-sm" onClick={() => { if (confirm("Rerun this scan with the same config?")) rerunMut.mutate(); }} disabled={rerunMut.isPending}><RotateCcw size={12} /> {rerunMut.isPending ? "Rerunning…" : "Rerun"}</button>}
 						<button className="btn btn-sm" onClick={() => refetch()}><RefreshCw size={12} /> Refresh</button>
 					</div>
 				</div>
