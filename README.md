@@ -517,6 +517,30 @@ check does not count), or when it is marked resolved. Accepted risks leave the
 open count without counting as fixed. Targets default to CISA BOD 19-02 timings
 and are set with `REMEDIATION_SLA_DAYS=critical=15,high=30,medium=90,low=180`.
 
+### Finding library and manual findings
+
+**Tools → Finding library** holds your team's reviewed write-ups: title,
+severity, CVSS, description, impact, remediation, references, CVEs and tags.
+ScanR ships 17 starter entries for common internal and external findings (SMB
+signing, LLMNR/NBT-NS, Kerberoasting, outdated TLS, SQL injection, …), which
+you can edit freely.
+
+- **Add finding** (on a scan's Findings tab) records something you found by
+  hand. Pick a library entry to pre-fill it, attach it to a host and port, and
+  add what you observed as evidence.
+- **Edit write-up** on any finding changes its severity, CVSS, description,
+  impact, remediation, evidence and references. **Use library entry…**
+  replaces the wording with a library entry.
+- **Automatic wording:** map an entry to scanner plugins (optionally only
+  when the title contains some text). New matching findings from ScanR or from
+  imports (`nessus.<pluginID>`, `nuclei.<template-id>`) get the library text.
+
+Applying an entry never changes a finding's title, because trends and triage
+history identify issues by it. The scanner's original description moves into
+the evidence, so no detail is lost. Library text is copied, so editing an entry
+later doesn't rewrite findings already reported. Export and import the library
+as JSON to share it between ScanR instances.
+
 ### Importing other tools' results
 
 **Scans → Import results** brings in output from:

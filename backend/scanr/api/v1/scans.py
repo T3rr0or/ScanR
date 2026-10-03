@@ -827,26 +827,70 @@ async def add_manual_finding(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_scope("scans:write")),
 ):
-    """Add a manually verified finding to a scan."""
+    """Add a manually verified finding, optionally written from a library entry
+    and attached to a host and port."""
+    from scanr.core import finding_library
+    from scanr.core.priority_service import score_rows
+    from scanr.models.finding_template import FindingTemplate
+
     scan = await _get_own_scan(scan_id, current_user.id, db)
     if scan.status not in (ScanStatus.completed, ScanStatus.failed, ScanStatus.pending):
         raise HTTPException(status_code=409, detail=f"Cannot add findings to scan in status '{scan.status}'")
 
+    template = None
+    if body.template_id:
+        template = await db.get(FindingTemplate, body.template_id)
+        if template is None:
+            raise HTTPException(status_code=404, detail="Library entry not found")
+    title = body.title or (template.title if template else None)
+    description = body.description or (template.description if template else None)
+    if not title or not description:
+        raise HTTPException(status_code=422, detail="A title and description are required (or choose a library entry)")
+    severity = body.severity or (template.severity if template else "medium")
+
+    host = None
+    if body.host:
+        host_value = body.host.strip()
+        host = (await db.execute(select(Host).where(Host.scan_id == scan_id, Host.ip == host_value[:45]))).scalar_one_or_none()
+        if host is None:
+            host = Host(id=new_uuid(), scan_id=scan_id, ip=host_value[:45], status="up",
+                        hostname=None if _is_ip(host_value) else host_value[:255])
+            db.add(host)
+            scan.hosts_total = (scan.hosts_total or 0) + 1
+            scan.hosts_up = (scan.hosts_up or 0) + 1
+
     finding = Finding(
         id=new_uuid(),
         scan_id=scan_id,
+        host_id=host.id if host else None,
         plugin_id="manual",
-        severity=body.severity,
-        title=body.title,
-        description=body.description,
+        severity=severity,
+        title=title,
+        description=description,
         evidence=body.evidence,
         remediation=body.remediation,
+        impact=body.impact,
+        cvss_score=body.cvss_score,
+        cvss_vector=body.cvss_vector,
+        port_number=body.port_number,
+        protocol=body.protocol if body.port_number else None,
+        references=json.dumps(body.references) if body.references else None,
         cve_ids=json.dumps(body.cve_ids) if body.cve_ids else None,
+        first_seen_scan_id=scan_id,
+        last_seen_scan_id=scan_id,
     )
+    if template is not None:
+        # Fill gaps from the library; anything the tester typed wins.
+        finding_library.apply(finding, template)
+        finding.description = body.description or template.description
+        finding.impact = body.impact or template.impact
+        finding.remediation = body.remediation or template.remediation
+        finding.evidence = body.evidence
     db.add(finding)
+    await db.flush()
+    await score_rows(db, [(finding, host.ip if host else None, current_user.id)])
 
-    # Increment scan counters
-    sev_col = f"findings_{body.severity}"
+    sev_col = f"findings_{severity}"
     if hasattr(scan, sev_col):
         setattr(scan, sev_col, (getattr(scan, sev_col) or 0) + 1)
 
@@ -859,12 +903,20 @@ async def add_manual_finding(
 
 
 class _ManualFindingCreate(BaseModel):
-    title: str = Field(min_length=1, max_length=512)
-    description: str = Field(min_length=1)
-    severity: Literal["critical", "high", "medium", "low", "info"] = "medium"
-    evidence: str | None = None
-    remediation: str | None = None
+    title: str | None = Field(None, min_length=1, max_length=512)
+    description: str | None = Field(None, min_length=1, max_length=50_000)
+    severity: Literal["critical", "high", "medium", "low", "info"] | None = None
+    evidence: str | None = Field(None, max_length=500_000)
+    remediation: str | None = Field(None, max_length=50_000)
+    impact: str | None = Field(None, max_length=50_000)
     cve_ids: list[str] | None = None
+    references: list[str] | None = Field(None, max_length=100)
+    cvss_score: float | None = Field(None, ge=0, le=10)
+    cvss_vector: str | None = Field(None, max_length=255)
+    host: str | None = Field(None, max_length=255, description="IP or hostname the finding applies to")
+    port_number: int | None = Field(None, ge=0, le=65535)
+    protocol: Literal["tcp", "udp"] = "tcp"
+    template_id: str | None = None
 
 
 @router.delete("/{scan_id}", status_code=status.HTTP_204_NO_CONTENT)

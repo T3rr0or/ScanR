@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import BaseModel
+from typing import Literal
+
+from pydantic import BaseModel, Field
 
 
 class FindingRead(BaseModel):
@@ -16,6 +18,8 @@ class FindingRead(BaseModel):
     description: str | None
     evidence: str | None
     remediation: str | None
+    impact: str | None = None
+    template_id: str | None = None
     references: str | None
     cvss_score: float | None
     cvss_vector: str | None
@@ -55,6 +59,16 @@ class FindingUpdate(BaseModel):
     false_positive: bool | None = None
     analyst_notes: str | None = None
     remediation_status: str | None = None
+    # Report wording. The title is deliberately not editable: trends, triage
+    # carry-forward and SARIF identify an issue by it.
+    severity: Literal["critical", "high", "medium", "low", "info"] | None = None
+    description: str | None = Field(None, max_length=50_000)
+    impact: str | None = Field(None, max_length=50_000)
+    remediation: str | None = Field(None, max_length=50_000)
+    evidence: str | None = Field(None, max_length=500_000)
+    cvss_score: float | None = Field(None, ge=0, le=10)
+    cvss_vector: str | None = Field(None, max_length=255)
+    references: list[str] | None = Field(None, max_length=100)
 
 
 class FindingBulkUpdate(BaseModel):

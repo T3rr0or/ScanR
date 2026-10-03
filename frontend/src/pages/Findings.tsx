@@ -5,6 +5,9 @@ import { scansApi } from '@/api/scans'
 import { SevTag, relTime } from '@/components/ui'
 import SortableTh from '@/components/SortableTh'
 import { PriorityBadge, PriorityExplanation } from '@/components/Priority'
+import FindingEditor from '@/components/FindingEditor'
+import { useAuthStore } from '@/store/auth'
+import { parseJwtRole } from '@/utils/jwt'
 import { useSortableFindings } from '@/hooks/useSortableFindings'
 import { safeUrl } from "@/utils/safeUrl"
 import './Findings.css'
@@ -147,6 +150,14 @@ function FindingDrawer({
     setNotes(finding.analyst_notes ?? '')
   }
 
+  const [editing, setEditing] = useState(false)
+  const [editingFor, setEditingFor] = useState(finding.id)
+  if (editingFor !== finding.id) {
+    setEditingFor(finding.id)
+    setEditing(false)
+  }
+  const canEdit = parseJwtRole(useAuthStore(s => s.token)) !== 'viewer'
+
   const [drawerErr, setDrawerErr] = useState<string | null>(null)
   const _onErr = (e: unknown) => setDrawerErr(e instanceof Error ? e.message : String(e))
 
@@ -204,6 +215,11 @@ function FindingDrawer({
             {finding.title}
           </div>
         </div>
+        {canEdit && !editing && (
+          <button className="btn btn-ghost btn-sm" onClick={() => setEditing(true)} style={{ flexShrink: 0, marginTop: 2 }}>
+            Edit write-up
+          </button>
+        )}
         <button className="btn btn-icon btn-ghost" aria-label="Close finding details" onClick={onClose} style={{ flexShrink: 0, marginTop: 2 }}>
           ×
         </button>
@@ -279,12 +295,24 @@ function FindingDrawer({
         {/* Lifecycle history */}
         <FindingLifecycle findingId={finding.id} />
 
+        {editing && <FindingEditor key={finding.id} finding={finding} onDone={() => setEditing(false)} />}
+
+        {!editing && <>
         {/* Description */}
         {finding.description && (
           <div style={{ marginBottom: 14 }}>
             <div className="label">Description</div>
             <p style={{ fontSize: 12.5, color: 'var(--text-1)', lineHeight: 1.6, whiteSpace: 'pre-wrap', margin: 0 }}>
               {finding.description}
+            </p>
+          </div>
+        )}
+
+        {finding.impact && (
+          <div style={{ marginBottom: 14 }}>
+            <div className="label">Impact</div>
+            <p style={{ fontSize: 12.5, color: 'var(--text-1)', lineHeight: 1.6, whiteSpace: 'pre-wrap', margin: 0 }}>
+              {finding.impact}
             </p>
           </div>
         )}
@@ -362,6 +390,7 @@ function FindingDrawer({
             </div>
           </div>
         )}
+        </>}
 
         {/* CVE IDs */}
         {cveIds.length > 0 && (
