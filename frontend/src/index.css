@@ -1024,3 +1024,22 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .evidence-drop { border: 1px dashed rgba(255,255,255,.22); padding: 10px 12px; font-size: 11px; color: var(--text-3); text-align: center; }
 .evidence-drop.is-dragging { border-color: var(--accent); color: var(--text-0); }
 .evidence-error { background: var(--sev-high); color: #fff; padding: 6px 10px; font-size: 12px; }
+
+/* Testing window editor and activity tab */
+.testing-window { display: flex; flex-direction: column; gap: 10px; border: 1px solid var(--border); padding: 12px; }
+.testing-window-toggle { display: flex; gap: 8px; align-items: center; font-size: 12.5px; color: var(--text-1); cursor: pointer; }
+.testing-window-days { display: flex; gap: 4px; flex-wrap: wrap; }
+.testing-window-days button { padding: 5px 10px; border: 1px solid var(--border); font-size: 12px; color: var(--text-2); background: transparent; }
+.testing-window-days button.is-active { background: var(--accent); border-color: var(--accent); color: #0a0a0a; font-weight: 600; }
+.testing-window-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.testing-window-row label { flex: 1 1 140px; display: flex; flex-direction: column; gap: 4px; font-size: 11px; color: var(--text-2); }
+.testing-window-note { margin: 0; font-size: 11px; color: var(--text-3); line-height: 1.5; }
+.testing-window-error { margin: 0; font-size: 12px; color: var(--sev-high); }
+.activity-tab { padding: 16px; display: flex; flex-direction: column; gap: 14px; overflow: auto; }
+.activity-summary { display: flex; gap: 24px; flex-wrap: wrap; }
+.activity-summary > div { display: flex; flex-direction: column; gap: 4px; font-size: 12px; }
+.activity-summary span { color: var(--text-3); font-size: 11px; }
+.activity-summary strong { display: inline-flex; gap: 6px; align-items: center; color: var(--text-0); }
+.activity-summary small { font-size: 11px; }
+.activity-tab .is-open { color: var(--ok); }
+.activity-tab .is-closed { color: var(--sev-high); }

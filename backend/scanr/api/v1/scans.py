@@ -175,6 +175,24 @@ async def _transition_status(
     return result.rowcount == 1
 
 
+def _refuse_outside_window(scan: Scan) -> None:
+    from scanr.core.testing_window import closed_message, from_profile
+
+    try:
+        window = from_profile(scan.profile_json)
+    except ValueError:
+        window = None
+    if window is not None and not window.is_open():
+        raise HTTPException(status_code=409, detail=closed_message(window))
+
+
+async def _activity(db: AsyncSession, scan_id: str, event: str, user: User, detail: str | None = None) -> None:
+    from scanr.core import activity_log
+
+    await activity_log.record(db, scan_id, event, actor=user.email, detail=detail)
+    await db.commit()
+
+
 def _refuse_imported(scan: Scan) -> None:
     from scanr.importers.store import IMPORTED_PROFILE
 
@@ -447,6 +465,7 @@ async def launch_scan(
 ):
     scan = await _get_own_scan(scan_id, current_user.id, db)
     _refuse_imported(scan)
+    _refuse_outside_window(scan)
 
     # Atomic transition: a single conditional UPDATE makes only one concurrent
     # launch win. A check-then-set would let two parallel requests both
@@ -494,7 +513,52 @@ async def cancel_scan(
 
     scan.status = ScanStatus.cancelled
     await db.commit()
+    await _activity(db, scan_id, "cancel_requested", current_user)
     return {"status": "cancelled"}
+
+
+class _ActivityEntry(BaseModel):
+    at: datetime
+    event: str
+    detail: str | None
+    source_ip: str | None
+    actor: str | None
+    hash: str
+
+    model_config = {"from_attributes": True}
+
+
+class _ActivityLog(BaseModel):
+    scan_id: str
+    testing_window: str | None
+    window_open_now: bool | None
+    verified: bool
+    entries: list[_ActivityEntry]
+
+
+@router.get("/{scan_id}/activity", response_model=_ActivityLog)
+async def scan_activity(
+    scan_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_scope("scans:read")),
+):
+    """When this scan sent traffic and from where, with an integrity check."""
+    from scanr.core import activity_log
+    from scanr.core.testing_window import from_profile
+
+    scan = await _get_own_scan(scan_id, current_user.id, db)
+    try:
+        window = from_profile(scan.profile_json)
+    except ValueError:
+        window = None
+    rows, verified = await activity_log.entries(db, scan_id)
+    return _ActivityLog(
+        scan_id=scan_id,
+        testing_window=window.describe() if window else None,
+        window_open_now=window.is_open() if window else None,
+        verified=verified,
+        entries=[_ActivityEntry.model_validate(r) for r in rows],
+    )
 
 
 @router.post("/{scan_id}/pause", status_code=status.HTTP_202_ACCEPTED)
@@ -508,6 +572,7 @@ async def pause_scan(
         scan_id, current_user.id, ScanStatus.running, ScanStatus.paused, db
     ):
         raise HTTPException(status_code=409, detail="Scan is not running")
+    await _activity(db, scan_id, "paused", current_user)
     return {"status": "paused"}
 
 
@@ -521,6 +586,7 @@ async def resume_scan(
         scan_id, current_user.id, ScanStatus.paused, ScanStatus.running, db
     ):
         raise HTTPException(status_code=409, detail="Scan is not paused")
+    await _activity(db, scan_id, "resumed", current_user)
     return {"status": "running"}
 
 
@@ -590,6 +656,7 @@ async def rerun_scan(
     """Clone a completed scan and launch it immediately with the same config."""
     source = await _get_own_scan(scan_id, current_user.id, db)
     _refuse_imported(source)
+    _refuse_outside_window(source)
     if source.status not in (ScanStatus.completed, ScanStatus.failed, ScanStatus.cancelled):
         raise HTTPException(status_code=409, detail=f"Cannot rerun scan in status '{source.status}'")
 

@@ -394,6 +394,15 @@ class ScanEngine:
             rate_limiter=rate_limiter,
             exclusion_policy=exclusion_policy,
         )
+        from scanr.core import activity_log
+        from scanr.core.testing_window import from_profile
+
+        try:
+            context.testing_window = from_profile(_pj if isinstance(_pj, dict) else None)
+        except ValueError as exc:
+            logger.warning("Scan %s has an invalid testing window, ignoring: %s", self.scan_id, exc)
+        first_target = next((t.value for t in getattr(scan, "targets", []) or []), None)
+        context.source_ip = activity_log.source_address(first_target)
 
         # Decrypt credentials if provided. Scans can have either one legacy
         # vault credential or multiple scan-scoped credentials from the UI.
@@ -582,6 +591,9 @@ class ScanEngine:
             await scan_log.info("All targets were excluded; no network traffic was sent", phase="engine")
             return
 
+        # First network traffic: respect the agreed testing window.
+        await context.hold_for_testing_window()
+        context.check_cancelled()
         await scan_log.phase_start(
             "discovery",
             f"Host discovery: probing {len(all_targets)} target(s) — profile={scan.profile}",

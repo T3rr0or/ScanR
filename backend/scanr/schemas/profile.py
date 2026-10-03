@@ -21,6 +21,7 @@ import json
 import re
 from typing import Literal
 
+from scanr.core.testing_window import TestingWindow
 from pydantic import BaseModel, Field, field_validator
 
 __all__ = [
@@ -149,6 +150,8 @@ class ProfileJson(BaseModel):
     enumeration: EnumerationConfig | None = None
     performance: PerformanceConfig | None = None
     brute_force: BruteForceConfig | None = None
+    # When the scan may send traffic; see scanr.core.testing_window.
+    testing_window: TestingWindow | None = None
 
     @field_validator("port_range")
     @classmethod

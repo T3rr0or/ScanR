@@ -30,6 +30,7 @@ import NetworkTopology from "@/components/NetworkTopology";
 import HostDetail from "@/components/HostDetail";
 import type { HostRead } from "@/api/hosts";
 import AddFindingModal from "@/components/AddFindingModal";
+import ActivityTab from "@/components/ActivityTab";
 import ImportResultsModal from "@/components/ImportResultsModal";
 import { useAuthStore } from "@/store/auth";
 import { parseJwtRole } from "@/utils/jwt";
@@ -53,6 +54,7 @@ interface Props {
 type Tab =
 	| "console"
 	| "findings"
+	| "activity"
 	| "hosts"
 	| "topology"
 	| "attack-paths"
@@ -247,6 +249,7 @@ export default function ScanDetail({ scanId, onBack }: Props) {
 				<TabBtn active={tab === "attack-paths"} onClick={() => setTab("attack-paths")} label="Attack paths" />
 				<TabBtn active={tab === "screenshots"} onClick={() => setTab("screenshots")} label="Screenshots" />
 				<TabBtn active={tab === "ai"} onClick={() => setTab("ai")} label="AI analysis" />
+				{!isImported && <TabBtn active={tab === "activity"} onClick={() => setTab("activity")} label="Activity" />}
 				{isPending && <TabBtn active={tab === "exclusions"} onClick={() => setTab("exclusions")} label="Exclusions" />}
 				{chains.length > 0 && <TabBtn active={tab === "chains"} onClick={() => setTab("chains")} label="Chains" count={chains.length} />}
 			</nav>
@@ -359,6 +362,7 @@ export default function ScanDetail({ scanId, onBack }: Props) {
 				)}
 				{tab === "screenshots" && <ScreenshotGallery scanId={scanId} />}
 				{tab === "exclusions" && <ExclusionsPanel scanId={scanId} />}
+				{tab === "activity" && <ActivityTab scanId={scanId} />}
 				{tab === "chains" && <ChainsPanel chains={chains} />}
 				{tab === "ai" && <AiTab scanId={scanId} findings={findings} autoScheduled={Boolean(scan?.ai_agent_enabled && isActive)} />}
 
