@@ -41,6 +41,7 @@ PLACEHOLDERS = {
     "f.affected (list) / affected_text / references (list) / cve_ids (list) / validated": "Per finding",
     "f.images (list of {image, caption})": "Evidence screenshots",
     "hosts (list of {ip, hostname, os, ports})": "Appendix data",
+    "testing.window / testing.verified / testing.activity (list of {time, event, source_ip, actor})": "When testing took place",
 }
 
 
@@ -175,6 +176,13 @@ def group_findings(findings: list, attachments: dict[str, list], include_info: b
     return entries
 
 
+_EVENT_LABELS = {
+    "started": "Scan started", "completed": "Scan completed", "failed": "Scan failed", "cancelled": "Scan cancelled",
+    "paused": "Paused by tester", "resumed": "Resumed by tester", "cancel_requested": "Cancelled by tester",
+    "window_closed": "Paused: testing window closed", "window_opened": "Resumed: testing window opened",
+}
+
+
 def build_context(tpl, data: dict[str, Any], options: dict[str, Any]) -> dict[str, Any]:
     from docx.shared import Mm
     from docxtpl import InlineImage, Listing, RichText
@@ -224,6 +232,19 @@ def build_context(tpl, data: dict[str, Any], options: dict[str, Any]) -> dict[st
             "kev": sum(1 for f in findings if f["kev"]),
         },
         "findings": findings,
+        "testing": {
+            "window": data.get("testing_window") or "Not restricted",
+            "verified": bool(data.get("activity_verified", True)),
+            "activity": [
+                {
+                    "time": a.at.strftime("%Y-%m-%d %H:%M:%S UTC"),
+                    "event": _EVENT_LABELS.get(a.event, a.event),
+                    "source_ip": a.source_ip or "",
+                    "actor": a.actor or "",
+                }
+                for a in data.get("activity", [])
+            ],
+        },
         "hosts": [
             {
                 "ip": h.ip,
@@ -258,6 +279,8 @@ def sample_context(tpl) -> dict[str, Any]:
         "summary": {"text": "Summary", "counts": {s: 1 for s in SEVERITY_ORDER}, "total": 1, "fix_now": 0, "kev": 0},
         "findings": [finding],
         "hosts": [{"ip": "10.0.0.1", "hostname": "host", "os": "Linux", "ports": "443/tcp https"}],
+        "testing": {"window": "Mon–Fri 09:00–17:00 (Europe/Amsterdam)", "verified": True,
+                    "activity": [{"time": "2026-01-01 09:00:00 UTC", "event": "Scan started", "source_ip": "203.0.113.5", "actor": ""}]},
     }
 
 
@@ -453,6 +476,22 @@ def build_default_template() -> bytes:
     cells[0].text, cells[1].text, cells[2].text, cells[3].text = "{{ h.ip }}", "{{ h.hostname }}", "{{ h.os }}", "{{ h.ports }}"
     hosts.add_row().cells[0].text = "{%tr endfor %}"
     widths(hosts, 3.0, 4.2, 4.0, 5.4)
+
+    doc.add_heading("Appendix B. Testing activity", level=1).paragraph_format.page_break_before = True
+    para("Agreed testing window: {{ testing.window }}")
+    para("{% if not testing.activity %}No scan activity was recorded for these results (for example, findings imported from another tool).{% elif testing.verified %}The activity record below is intact (integrity check passed).{% else %}Warning: the activity record failed its integrity check.{% endif %}")
+    activity = doc.add_table(rows=3, cols=4)
+    activity.style = "Table Grid"
+    for i, label in enumerate(("Time", "Event", "Source address", "By")):
+        cell = activity.rows[0].cells[i]
+        cell.text = label
+        cell.paragraphs[0].runs[0].bold = True
+        shade(cell, "E5E7EB")
+    activity.rows[1].cells[0].text = "{%tr for a in testing.activity %}"
+    cells = activity.rows[2].cells
+    cells[0].text, cells[1].text, cells[2].text, cells[3].text = "{{ a.time }}", "{{ a.event }}", "{{ a.source_ip }}", "{{ a.actor }}"
+    activity.add_row().cells[0].text = "{%tr endfor %}"
+    widths(activity, 4.2, 5.0, 4.0, 3.4)
 
     buffer = io.BytesIO()
     doc.save(buffer)

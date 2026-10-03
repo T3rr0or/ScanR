@@ -682,6 +682,27 @@ curl -X POST -H "X-API-Key: sk_..." -H 'Content-Type: application/json' \
 
 ---
 
+### Testing windows and activity log
+
+Engagements usually allow testing only at agreed times. Under **New scan →
+Context**, tick **Restrict when this scan may run** and choose the weekdays,
+hours, time zone and first/last testing day (a range like 22:00 until 06:00
+runs overnight). The window travels with the scan's settings into reruns,
+clones, templates and schedules. Outside the window:
+
+- **Launch**, **rerun** and **retest** are refused with the reason and the next
+  opening time;
+- **schedules** skip that run;
+- a **running scan pauses itself** before starting new work and resumes when
+  the window reopens. A check that is already running finishes.
+
+Each scan's **Activity** tab records when it started, paused, resumed and
+finished (by a tester or the window) and the source address. Set
+`SCANNER_SOURCE_IPS` to your public egress address so the record names it.
+Entries are chained with HMACs keyed from `VAULT_KEY`, so editing or deleting
+one shows **Record was altered**. Word reports include the window and this
+record as Appendix B.
+
 ### Word reports with your own template
 
 Choose **Word** on the Reports page to get an editable `.docx` report: a cover
@@ -1115,6 +1136,7 @@ keeps working alongside SSO.
 | `SMTP_FROM` | empty | Sender address; email channels are enabled when host and sender are set |
 | `SMTP_SECURITY` | `starttls` | `starttls`, `ssl` (port 465) or `none` (trusted LAN relay only) |
 | `REMEDIATION_SLA_DAYS` | `critical=15,high=30,medium=90,low=180` | Remediation targets (days from first detection) used on the Trends page |
+| `SCANNER_SOURCE_IPS` | empty | Public address(es) scans come from, stated in the activity log and reports |
 | `EVIDENCE_MAX_MB` | `20` | Largest evidence file that can be attached to a finding |
 | `THREAT_FEED_AUTO_REFRESH` | `true` | Download EPSS and CISA KEV daily from the API container and re-rank findings |
 | `OIDC_ISSUER` | empty | OpenID Connect issuer URL; SSO is enabled when issuer, client id and secret are set |

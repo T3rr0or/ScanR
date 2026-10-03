@@ -122,6 +122,19 @@ async def _fire_schedule(sched, session, now: datetime) -> None:
 
     profile_data = json.loads(sched.scan_profile_json) if sched.scan_profile_json else {}
 
+    from scanr.core.testing_window import closed_message, from_profile
+
+    try:
+        window = from_profile(profile_data)
+    except ValueError:
+        window = None
+    if window is not None and not window.is_open(now):
+        logger.info("Schedule %s skipped: %s", sched.id, closed_message(window, now))
+        sched.last_run = now
+        sched.next_run = _calc_next_run(sched.cron_expr)
+        await session.commit()
+        return
+
     credential_id = profile_data.get("credential_id")
     if credential_id:
         res = await session.execute(

@@ -457,6 +457,17 @@ async def request_retest(
             detail="This finding is not attached to a host, so there is nothing to re-check.",
         )
 
+    # Retests send live traffic, so the scan's agreed testing window applies.
+    from scanr.core.testing_window import closed_message, from_profile
+
+    scan = await db.get(Scan, finding.scan_id)
+    try:
+        window = from_profile(scan.profile_json if scan else None)
+    except ValueError:
+        window = None
+    if window is not None and not window.is_open():
+        raise HTTPException(status_code=409, detail=closed_message(window))
+
     from scanr.core import plugin_manager
 
     if finding.plugin_id not in plugin_manager.get_all_plugin_classes():

@@ -15,6 +15,7 @@ from scanr.schemas.profile import is_safe_port_range
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
+    from scanr.core.testing_window import TestingWindow
     from scanr.core.scope_policy import ExclusionPolicy
 
 
@@ -122,6 +123,10 @@ class ScanContext:
     _paused: bool = field(default=False)
     _pause_event: asyncio.Event = field(default_factory=asyncio.Event)
 
+    # Agreed testing window (scanr.core.testing_window); None = any time.
+    testing_window: "TestingWindow | None" = None
+    source_ip: str | None = None
+
     def request_pause(self) -> None:
         self._paused = True
 
@@ -164,6 +169,46 @@ class ScanContext:
         while self._paused and not self.cancelled:
             await asyncio.sleep(2.0)
             await self.refresh_control_state()
+        await self.hold_for_testing_window()
+
+    async def hold_for_testing_window(self, poll_seconds: float = 30.0) -> None:
+        """Stop starting new work while the agreed testing window is closed.
+
+        The scan is marked paused with the reason, the activity log records it,
+        and it resumes on its own when the window reopens. Work already in
+        flight (a running plugin) finishes; nothing new starts.
+        """
+        window = self.testing_window
+        if window is None or window.is_open() or self.cancelled:
+            return
+        from sqlalchemy import update as _update
+
+        from scanr.core import activity_log
+        from scanr.core.testing_window import closed_message
+
+        message = closed_message(window)
+        async with self.db_lock:
+            await self.db.execute(
+                _update(Scan).where(Scan.id == self.scan_id, Scan.status == ScanStatus.running)
+                .values(status=ScanStatus.paused, error_message=f"Paused: {message}")
+            )
+            await activity_log.record(self.db, self.scan_id, "window_closed", detail=message, source_ip=self.source_ip)
+            await self.db.commit()
+        await self.log.warn(f"Testing window closed; holding. {message}", phase="engine")
+        while not window.is_open():
+            await asyncio.sleep(poll_seconds)
+            await self.refresh_control_state()
+            if self.cancelled:
+                return
+        async with self.db_lock:
+            await self.db.execute(
+                _update(Scan).where(Scan.id == self.scan_id, Scan.status == ScanStatus.paused)
+                .values(status=ScanStatus.running, error_message=None)
+            )
+            await activity_log.record(self.db, self.scan_id, "window_opened", source_ip=self.source_ip)
+            await self.db.commit()
+        self.request_resume()
+        await self.log.info("Testing window open again; resuming.", phase="engine")
 
     def request_cancel(self) -> None:
         self.cancelled = True

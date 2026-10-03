@@ -140,7 +140,16 @@ class ReportEngine:
                 raise ValueError("The selected Word template no longer exists")
             template_path = docx_renderer.template_dir() / f"{template.id}.docx"
         options = json.loads(report.options) if report.options else {}
-        data = {**context, "attachments": attachments}
+        from scanr.core import activity_log
+        from scanr.core.testing_window import from_profile
+
+        activity, verified = await activity_log.entries(self.db, report.scan_id)
+        try:
+            window = from_profile(context["scan"].profile_json)
+        except ValueError:
+            window = None
+        data = {**context, "attachments": attachments, "activity": activity, "activity_verified": verified,
+                "testing_window": window.describe() if window else None}
         out_path = settings.reports_dir / f"{report.id}.docx"
         return await asyncio.to_thread(docx_renderer.render, data, options, template_path, out_path)
 

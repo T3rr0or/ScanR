@@ -121,6 +121,11 @@ class Settings(BaseSettings):
     # Reports output directory
     reports_dir: Path = Path("./reports")
 
+    # Public address(es) scan traffic leaves from, stated in the testing
+    # activity log and reports (for example a NAT gateway). Empty = the local
+    # address the scanner sees, marked "(local)".
+    scanner_source_ips: str = ""
+
     # Evidence files attached to findings (screenshots, requests, logs).
     evidence_dir: Path = Path("./evidence")
     evidence_max_mb: int = 20

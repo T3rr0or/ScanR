@@ -58,6 +58,7 @@ async def test_create_docx_report_and_generate_it(client, auth_headers, db, stor
     assert "Internal test" in text and "ACME" in text and "Prepared by: Tester" in text
     assert "F-01  MS17-010" in text and "Exploited with Metasploit" in text
     assert "Nessus Scan Information" not in text  # informational hidden by default
+    assert "Appendix B. Testing activity" in text and "No scan activity was recorded" in text
     assert len(doc.inline_shapes) == 1
     overview = doc.tables[1]
     assert overview.rows[1].cells[2].text == "CRITICAL"

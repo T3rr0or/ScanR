@@ -211,6 +211,16 @@ async def _run_scan_async(task, scan_id: str) -> dict:
             scan.started_at = now
             scan.last_heartbeat = now
             scan.status = ScanStatus.running
+            from sqlalchemy import select as _select
+
+            from scanr.core import activity_log
+            from scanr.models import Target
+
+            first_target = (await db.execute(
+                _select(Target.value).where(Target.scan_id == scan_id).limit(1)
+            )).scalar_one_or_none()
+            source_ip = activity_log.source_address(first_target)
+            await activity_log.record(db, scan_id, "started", source_ip=source_ip)
             await db.commit()
 
             # If the scan opted into AI, the engine drives the agent at the
@@ -244,6 +254,13 @@ async def _run_scan_async(task, scan_id: str) -> dict:
                 except (asyncio.CancelledError, Exception):
                     pass
                 scan.finished_at = datetime.now(tz=timezone.utc)
+                try:
+                    # .value: str() of a str-Enum is "ScanStatus.failed" on Python 3.11+.
+                    final = getattr(scan.status, "value", scan.status)
+                    await activity_log.record(db, scan_id, str(final), source_ip=source_ip,
+                                              detail=scan.error_message)
+                except Exception:
+                    logger.exception("Could not record end of activity for scan %s", scan_id)
                 await db.commit()
 
             # Fire webhooks. A user-cancelled scan is neither completed nor

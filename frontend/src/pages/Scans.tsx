@@ -3,6 +3,8 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Plus, Download, Search, Play, Zap, SlidersHorizontal, X, FileText, AlertTriangle, Check, Upload } from 'lucide-react'
 import { scansApi, type ScanCreate, type ScanCredentialIn } from '@/api/scans'
 import ImportResultsModal from '@/components/ImportResultsModal'
+import { apiErrorMessage } from '@/utils/apiError'
+import TestingWindowEditor, { type TestingWindowValue } from '@/components/TestingWindowEditor'
 import { templatesApi, type ScanTemplate } from '@/api/templates'
 import { wordlistsApi } from '@/api/wordlists'
 import { aiApi, configuredProviders, effectiveModelFor, providerLabel } from '@/api/ai'
@@ -247,7 +249,8 @@ export default function Scans({ onOpenScan, openNewScan, onNewScanOpened }: Prop
   const [search, setSearch]           = useState('')
 
   const [mutError, setMutError] = useState<string | null>(null)
-  const _onErr = (e: unknown) => setMutError(e instanceof Error ? e.message : String(e))
+  // The server's explanation (e.g. "Outside the agreed testing window…"), not axios's status line.
+  const _onErr = (e: unknown) => setMutError(apiErrorMessage(e))
 
   const { data: scans = [], dataUpdatedAt, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['scans', page],
@@ -359,8 +362,9 @@ export default function Scans({ onOpenScan, openNewScan, onNewScanOpened }: Prop
         <NewScanModal
           onClose={() => setShowForm(false)}
           onSaveAsDraft={body => createMut.mutate(body)}
-          onCreateAndLaunch={body => createAndLaunchMut.mutate(body)}
+          onCreateAndLaunch={body => { setMutError(null); createAndLaunchMut.mutate(body) }}
           loading={createMut.isPending || createAndLaunchMut.isPending}
+          error={mutError}
         />
       )}
 
@@ -526,6 +530,7 @@ function NewScanModal({
   onSaveAsDraft,
   onCreateAndLaunch,
   loading,
+  error,
   editMode = false,
   initialScan,
 }: {
@@ -534,6 +539,8 @@ function NewScanModal({
   onCreateAndLaunch?: (body: ScanCreate) => void
   onCreated?: (scanId: string, exclusions: string[]) => void
   loading: boolean
+  /** Shown inside the dialog: the page banner is hidden behind it. */
+  error?: string | null
   editMode?: boolean
   initialScan?: { id: string; name: string; targets?: string[]; profile_json?: string | null }
 }) {
@@ -549,6 +556,9 @@ function NewScanModal({
   const [credentials, setCredentials] = useState<InlineCredential[]>([])
   const [exclusions, setExclusions] = useState('')
   const [showAdvanced, setShowAdvanced] = useState(false)
+  const [testingWindow, setTestingWindow] = useState<TestingWindowValue | null>(
+    (parseProfileJson(initialScan?.profile_json)?.testing_window as TestingWindowValue | undefined) ?? null
+  )
 
   const [profileConfig, setProfileConfig] = useState<ProfileConfig>(
     initialScan?.profile_json ? jsonToConfig(parseProfileJson(initialScan.profile_json)) : defaultProfileConfig()
@@ -618,6 +628,7 @@ function NewScanModal({
     setSelectedApiTemplate(t)
     setSelectedDesignTemplate(t.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, ''))
     setBaseProfileJson(t.profile_json ?? {})
+    setTestingWindow(((t.profile_json ?? {}) as Record<string, unknown>).testing_window as TestingWindowValue | undefined ?? null)
     setProfileConfig(jsonToConfig(t.profile_json))
     if (!name) setName(t.name)
   }
@@ -757,6 +768,8 @@ function NewScanModal({
       vault_name: c.vaultName || undefined,
     }))
     const pj: Record<string, unknown> = { ...baseProfileJson, ...configToJson(profileConfig) }
+    if (testingWindow) pj.testing_window = testingWindow
+    else delete pj.testing_window
     if (bruteForce.enabled) {
       pj.brute_force = {
         enabled: true,
@@ -796,6 +809,7 @@ function NewScanModal({
   }
 
   const canSubmit = Boolean(name.trim() && targets.trim() && !loading && targetPreview.lines.every(line => line.type !== 'invalid'))
+    && (testingWindow === null || testingWindow.days.length > 0)
 
   return (
     <div
@@ -924,6 +938,7 @@ function NewScanModal({
                   ))}
                 </div>
               </div>
+              <TestingWindowEditor value={testingWindow} onChange={setTestingWindow} />
             </>
           )}
 
@@ -1306,6 +1321,11 @@ function NewScanModal({
           gap: 8,
           justifyContent: 'flex-end',
         }}>
+          {error && (
+            <div role="alert" style={{ flex: 1, alignSelf: 'center', padding: '7px 10px', background: 'var(--sev-high)', color: '#fff', fontSize: 12, lineHeight: 1.45 }}>
+              {error}
+            </div>
+          )}
           <button className="btn" onClick={onClose}>Cancel</button>
           {step > 1 && (
             <button className="btn" onClick={() => setStep(s => Math.max(1, s - 1))}>Back</button>
