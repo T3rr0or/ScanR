@@ -20,6 +20,7 @@ from .schedule import Schedule
 from .audit_event import AuditEvent
 from .finding_attachment import FindingAttachment
 from .finding_template import FindingTemplate
+from .report_template import ReportTemplate
 from .notification_channel import NotificationChannel
 from .screenshot import Screenshot
 from .service import Service
@@ -66,6 +67,7 @@ __all__ = [
     "AuditEvent",
     "FindingTemplate",
     "FindingAttachment",
+    "ReportTemplate",
     "AiResult",
     "AiAgentRun",
     "APIKey",

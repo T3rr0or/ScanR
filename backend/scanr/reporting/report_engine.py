@@ -103,6 +103,8 @@ class ReportEngine:
             case "sarif":
                 from scanr.reporting.sarif_renderer import render_sarif
                 out = await render_sarif(context, report_id)
+            case "docx":
+                out = await self._render_docx(report, context)
             case "bloodhound":
                 from scanr.reporting.bloodhound_renderer import render_bloodhound_json
                 output_path = settings.reports_dir / f"{report_id}.json"
@@ -112,6 +114,35 @@ class ReportEngine:
 
         logger.info("Report %s generated: %s", report_id, out)
         return out
+
+    async def _render_docx(self, report: Report, context: dict[str, Any]) -> Path:
+        import asyncio
+        import json
+
+        from scanr.models.finding_attachment import FindingAttachment
+        from scanr.models.report_template import ReportTemplate
+        from scanr.reporting import docx_renderer
+
+        finding_ids = [f.id for f in context["findings"]]
+        attachments: dict[str, list] = defaultdict(list)
+        if finding_ids:
+            rows = await self.db.execute(
+                select(FindingAttachment)
+                .where(FindingAttachment.finding_id.in_(finding_ids))
+                .order_by(FindingAttachment.created_at)
+            )
+            for attachment in rows.scalars():
+                attachments[attachment.finding_id].append(attachment)
+        template_path = None
+        if report.template_id:
+            template = await self.db.get(ReportTemplate, report.template_id)
+            if template is None:
+                raise ValueError("The selected Word template no longer exists")
+            template_path = docx_renderer.template_dir() / f"{template.id}.docx"
+        options = json.loads(report.options) if report.options else {}
+        data = {**context, "attachments": attachments}
+        out_path = settings.reports_dir / f"{report.id}.docx"
+        return await asyncio.to_thread(docx_renderer.render, data, options, template_path, out_path)
 
     def _group_by_severity(self, findings) -> dict:
         groups: dict[str, list] = {

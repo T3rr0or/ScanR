@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from .scan import Scan
 
-from sqlalchemy import ForeignKey, String
+from sqlalchemy import Text, ForeignKey, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base, TimestampMixin, new_uuid
@@ -19,6 +19,7 @@ class ReportFormat(str, Enum):
     csv = "csv"
     sarif = "sarif"
     bloodhound = "bloodhound"
+    docx = "docx"
 
 
 class Report(Base, TimestampMixin):
@@ -30,5 +31,8 @@ class Report(Base, TimestampMixin):
     file_path: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     status: Mapped[str] = mapped_column(String(20), default="pending", nullable=False)
     error_message: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    # Word reports: title, client, author, classification, include_info.
+    options: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON object
+    template_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
 
     scan: Mapped["Scan"] = relationship(back_populates="reports")
