@@ -43,11 +43,18 @@ ALL_SCOPES = frozenset({
     "wordlists:write",
     "host_tags:read",
     "host_tags:write",
+    "audit:read",
     "*",
 })
 
 AUTH_METHOD_API_KEY = "api_key"
 AUTH_METHOD_SESSION = "session"
+
+
+def _remember_identity(request: Request, user: User) -> None:
+    """Expose the caller to scanr.core.audit.AuditMiddleware."""
+    request.state.user_id = user.id
+    request.state.user_email = user.email
 
 # Scopes retained only so existing API keys keep working, mapped to the scopes
 # that replaced them. 'reports:export' used to gate report creation *and*
@@ -152,6 +159,7 @@ async def get_current_user(
         if user:
             request.state.scopes = scopes
             request.state.auth_method = AUTH_METHOD_API_KEY
+            _remember_identity(request, user)
             return user
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API key")
 
@@ -161,6 +169,7 @@ async def get_current_user(
         if user:
             request.state.scopes = scopes
             request.state.auth_method = AUTH_METHOD_API_KEY
+            _remember_identity(request, user)
             return user
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API key")
 
@@ -188,6 +197,7 @@ async def get_current_user(
     # privileged endpoints.
     request.state.scopes = ["*"]
     request.state.auth_method = AUTH_METHOD_SESSION
+    _remember_identity(request, user)
     return user
 
 
