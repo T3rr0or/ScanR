@@ -541,6 +541,19 @@ the evidence, so no detail is lost. Library text is copied, so editing an entry
 later doesn't rewrite findings already reported. Export and import the library
 as JSON to share it between ScanR instances.
 
+### Evidence files
+
+Every finding has an **Evidence files** section: paste a screenshot straight
+from the clipboard (Ctrl+V), drop files on it, or use **Attach**. Add a caption
+for the report. Accepted are PNG, JPEG, GIF, WebP, PDF and UTF-8 text such as
+saved HTTP requests, tool output or HAR files, up to `EVIDENCE_MAX_MB` (20 MB)
+each and 50 per finding.
+
+Files are typed by their content, not their name, and text (including HTML or
+SVG proof-of-concept pages) is always served as a plain-text download, so a
+browser never runs it. Evidence is stored in the `evidence_data` volume and
+removed automatically when its finding, scan or user is deleted.
+
 ### Importing other tools' results
 
 **Scans → Import results** brings in output from:
@@ -1081,6 +1094,7 @@ keeps working alongside SSO.
 | `SMTP_FROM` | empty | Sender address; email channels are enabled when host and sender are set |
 | `SMTP_SECURITY` | `starttls` | `starttls`, `ssl` (port 465) or `none` (trusted LAN relay only) |
 | `REMEDIATION_SLA_DAYS` | `critical=15,high=30,medium=90,low=180` | Remediation targets (days from first detection) used on the Trends page |
+| `EVIDENCE_MAX_MB` | `20` | Largest evidence file that can be attached to a finding |
 | `THREAT_FEED_AUTO_REFRESH` | `true` | Download EPSS and CISA KEV daily from the API container and re-rank findings |
 | `OIDC_ISSUER` | empty | OpenID Connect issuer URL; SSO is enabled when issuer, client id and secret are set |
 | `OIDC_CLIENT_ID` / `OIDC_CLIENT_SECRET` | empty | Client registered with the identity provider |

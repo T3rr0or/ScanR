@@ -8,6 +8,7 @@ import type { Finding } from '@/api/findings'
 import RetestPanel from "@/components/RetestPanel"
 import TicketPanel from "@/components/TicketPanel"
 import { PriorityExplanation } from "@/components/Priority"
+import EvidencePanel from "@/components/EvidencePanel"
 import { safeUrl } from "@/utils/safeUrl"
 
 interface Props {
@@ -107,6 +108,8 @@ function PanelBody({ finding, onClose }: { finding: Finding; onClose: () => void
             </p>
           </Section>
         )}
+
+        <EvidencePanel findingId={finding.id} canEdit={false} />
 
         {finding.impact && (
           <Section label="Impact">
