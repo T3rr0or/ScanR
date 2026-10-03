@@ -5,6 +5,7 @@ export interface Finding {
   plugin_id: string; severity: string; title: string
   description: string | null; evidence: string | null
   remediation: string | null; cvss_score: number | null; vpr_score: number | null
+  impact: string | null; template_id: string | null
   /** Fix-first ranking 0-100; reasons is a JSON list of strings. */
   priority_score: number | null; priority_reasons: string | null
   epss_score: number | null; epss_percentile: number | null; is_kev: boolean
@@ -28,6 +29,34 @@ export interface Finding {
   created_at: string
 }
 
+/** Report wording a tester may edit. The title is fixed: it identifies the issue across scans. */
+export interface FindingTextEdit {
+  severity?: string
+  description?: string
+  impact?: string
+  remediation?: string
+  evidence?: string
+  cvss_score?: number
+  cvss_vector?: string
+  references?: string[]
+}
+
+export interface ManualFindingInput {
+  template_id?: string
+  title?: string
+  severity?: string
+  description?: string
+  impact?: string
+  remediation?: string
+  evidence?: string
+  cvss_score?: number
+  cvss_vector?: string
+  references?: string[]
+  host?: string
+  port_number?: number
+  protocol?: 'tcp' | 'udp'
+}
+
 export type RetestVerdict = 'resolved' | 'still_present' | 'inconclusive'
 export type RetestStatus = 'pending' | 'running' | 'completed' | 'failed'
 
@@ -47,8 +76,12 @@ export const findingsApi = {
   list: (params?: Record<string, string | number | boolean>) =>
     api.get<Finding[]>('/findings', { params }).then(r => r.data),
   get: (id: string) => api.get<Finding>(`/findings/${id}`).then(r => r.data),
-  update: (id: string, body: Partial<Pick<Finding, 'false_positive' | 'analyst_notes' | 'remediation_status'>>) =>
+  update: (id: string, body: Partial<Pick<Finding, 'false_positive' | 'analyst_notes' | 'remediation_status'>> & FindingTextEdit) =>
     api.patch<Finding>(`/findings/${id}`, body).then(r => r.data),
+  applyTemplate: (id: string, template_id: string, use_severity: boolean) =>
+    api.post<Finding>(`/findings/${id}/apply-template`, { template_id, use_severity }).then(r => r.data),
+  createManual: (scanId: string, body: ManualFindingInput) =>
+    api.post<{ id: string }>(`/scans/${scanId}/findings/manual`, body).then(r => r.data),
   bulkUpdate: (ids: string[], body: { false_positive?: boolean; remediation_status?: string; analyst_notes?: string }) =>
     api.post<{ updated: number }>('/findings/bulk', { ids, ...body }).then(r => r.data),
   history: (id: string) => api.get<FindingHistoryEntry[]>(`/findings/${id}/history`).then(r => r.data),

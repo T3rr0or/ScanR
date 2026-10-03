@@ -38,6 +38,11 @@ class Finding(Base, TimestampMixin):
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     evidence: Mapped[str | None] = mapped_column(Text, nullable=True)
     remediation: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Business impact, for reports. Usually filled from the finding library.
+    impact: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Library entry whose text this finding uses (no FK: deleting an entry
+    # must not touch reported findings).
+    template_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     references: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON list of URLs
 
     cvss_score: Mapped[float | None] = mapped_column(Float, nullable=True)

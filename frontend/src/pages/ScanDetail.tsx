@@ -29,6 +29,10 @@ import AttackPaths from "@/components/AttackPaths";
 import NetworkTopology from "@/components/NetworkTopology";
 import HostDetail from "@/components/HostDetail";
 import type { HostRead } from "@/api/hosts";
+import AddFindingModal from "@/components/AddFindingModal";
+import ImportResultsModal from "@/components/ImportResultsModal";
+import { useAuthStore } from "@/store/auth";
+import { parseJwtRole } from "@/utils/jwt";
 import AgentPanel from "@/components/AgentPanel";
 import AssistPanel from "@/components/AssistPanel";
 import {
@@ -158,6 +162,8 @@ export default function ScanDetail({ scanId, onBack }: Props) {
 	const isActive = ["running", "pending"].includes(scan?.status ?? "");
 	// Imported results have no live console and cannot be re-run.
 	const isImported = scan?.profile === "imported";
+	const canAddFindings = parseJwtRole(useAuthStore((s) => s.token)) !== "viewer"
+		&& ["completed", "failed", "pending"].includes(scan?.status ?? "");
 	const [openedImported, setOpenedImported] = useState(false);
 	if (isImported && !openedImported) {
 		setOpenedImported(true);
@@ -288,6 +294,8 @@ export default function ScanDetail({ scanId, onBack }: Props) {
 						findings={findings}
 						scanId={scanId}
 						onGoToHost={goToHost}
+						canAdd={canAddFindings}
+						hostIps={hosts.map((h) => h.ip)}
 					/>
 				)}
 				{tab === "hosts" && (
@@ -416,12 +424,18 @@ function FindingsTab({
 	findings,
 	scanId,
 	onGoToHost,
+	canAdd,
+	hostIps,
 }: {
 	findings: Finding[];
 	scanId: string;
 	onGoToHost: (ip: string) => void;
+	canAdd: boolean;
+	hostIps: string[];
 }) {
 	const qc = useQueryClient();
+	const [adding, setAdding] = useState(false);
+	const [importing, setImporting] = useState(false);
 	const [selected, setSelected] = useState<Set<string>>(new Set());
 	const [detailFinding, setDetailFinding] = useState<Finding | null>(null);
 	const [sevFilter, setSevFilter] = useState<string>("all");
@@ -484,9 +498,19 @@ function FindingsTab({
 					justifyContent: "center",
 					color: "var(--text-3)",
 					fontSize: 12.5,
+					flexDirection: "column",
+					gap: 12,
 				}}
 			>
 				No findings recorded
+				{canAdd && (
+					<span style={{ display: "inline-flex", gap: 6 }}>
+						<button className="btn btn-sm" onClick={() => setImporting(true)}>Import results</button>
+						<button className="btn btn-primary btn-sm" onClick={() => setAdding(true)}>+ Add finding</button>
+					</span>
+				)}
+				{adding && <AddFindingModal scanId={scanId} hosts={hostIps} onClose={() => setAdding(false)} />}
+				{importing && <ImportResultsModal scanId={scanId} onClose={() => setImporting(false)} />}
 			</div>
 		);
 	}
@@ -515,6 +539,14 @@ function FindingsTab({
 						background: "var(--bg-1)",
 					}}
 				>
+					{canAdd && (
+						<span style={{ order: 99, marginLeft: "auto", display: "inline-flex", gap: 6 }}>
+							<button className="btn btn-sm" onClick={() => setImporting(true)}>Import results</button>
+							<button className="btn btn-primary btn-sm" onClick={() => setAdding(true)}>+ Add finding</button>
+						</span>
+					)}
+					{adding && <AddFindingModal scanId={scanId} hosts={hostIps} onClose={() => setAdding(false)} />}
+					{importing && <ImportResultsModal scanId={scanId} onClose={() => setImporting(false)} />}
 					{["all", "critical", "high", "medium", "low", "info"].map((s) => {
 						const n = sevCounts[s] ?? 0;
 						return (

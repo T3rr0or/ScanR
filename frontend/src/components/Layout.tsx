@@ -8,7 +8,7 @@ import api from "@/api/client";
 
 type PageId = "dashboard" | "scans" | "findings" | "assets" | "vulnerabilities" | "trends" |
   "templates" | "schedules" | "agents" | "credentials" | "wordlists" |
-  "plugins" | "reports" | "settings";
+  "plugins" | "reports" | "settings" | "library";
 
 type PageProps = {
   onOpenScan?: (id: string) => void;
@@ -28,6 +28,7 @@ const Schedules = lazy(() => import("@/pages/Schedules")) as ComponentType<PageP
 const Credentials = lazy(() => import("@/pages/Credentials")) as ComponentType<PageProps>;
 const Plugins = lazy(() => import("@/pages/Plugins")) as ComponentType<PageProps>;
 const Templates = lazy(() => import("@/pages/Templates")) as ComponentType<PageProps>;
+const Library = lazy(() => import("@/pages/Library")) as ComponentType<PageProps>;
 const Wordlists = lazy(() => import("@/pages/Wordlists")) as ComponentType<PageProps>;
 const Reports = lazy(() => import("@/pages/Reports")) as ComponentType<PageProps>;
 const SettingsPage = lazy(() => import("@/pages/Settings")) as ComponentType<PageProps>;
@@ -37,7 +38,7 @@ const PAGES: Record<PageId, ComponentType<PageProps>> = {
   dashboard: Dashboard, scans: Scans, findings: Findings, assets: Assets,
   vulnerabilities: Vulnerabilities, trends: Trends, agents: Agents, schedules: Schedules,
   credentials: Credentials, plugins: Plugins, templates: Templates,
-  wordlists: Wordlists, reports: Reports, settings: SettingsPage,
+  wordlists: Wordlists, reports: Reports, settings: SettingsPage, library: Library,
 };
 
 const SECTIONS: { label: string; pages: { id: PageId; label: string }[] }[] = [
@@ -52,6 +53,7 @@ const SECTIONS: { label: string; pages: { id: PageId; label: string }[] }[] = [
   ] },
   { label: "Tools", pages: [
     { id: "plugins", label: "Plugins" }, { id: "templates", label: "Templates" },
+    { id: "library", label: "Finding library" },
     { id: "wordlists", label: "Wordlists" },
   ] },
   { label: "Reports", pages: [{ id: "reports", label: "Reports" }] },

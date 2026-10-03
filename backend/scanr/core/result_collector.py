@@ -62,6 +62,8 @@ class ResultCollector:
         self._host_ip_cache: dict[str, str | None] = {}
         # Dedup within a single scan run: (host_id, plugin_id, title, port_number)
         self._seen_findings: set[tuple] = set()
+        # Library entries mapped to scanner plugins, loaded on first finding.
+        self._library: list | None = None
 
     async def add_finding(self, host_id: str | None, data: FindingData) -> None:
         dedup_key = (host_id, data.plugin_id, data.title, data.port_number)
@@ -106,6 +108,14 @@ class ResultCollector:
                 analyst_notes=prior.analyst_notes if prior else None,
                 triaged_by=prior.triaged_by if prior else None,
             )
+            try:
+                from scanr.core import finding_library
+
+                if self._library is None:
+                    self._library = await finding_library.load_mappable(self.db)
+                finding_library.auto_apply(self._library, finding)
+            except Exception:
+                logger.exception("Finding library lookup failed for %s", data.title)
             try:
                 from scanr.core.priority_service import score_rows
 

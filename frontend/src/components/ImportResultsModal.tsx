@@ -41,6 +41,7 @@ export default function ImportResultsModal({ scanId, onClose, onImported }: {
       setError(null)
       qc.invalidateQueries({ queryKey: ['scans'] })
       qc.invalidateQueries({ queryKey: ['findings'] })
+      qc.invalidateQueries({ queryKey: ['scan'] })
     },
     onError: (e: unknown) => setError(e instanceof Error && !('isAxiosError' in e) ? e.message : apiErrorMessage(e)),
   })

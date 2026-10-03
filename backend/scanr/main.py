@@ -58,6 +58,8 @@ async def lifespan(app: FastAPI):
         await seed_admin(db)
         await seed_plugins(db)
         await seed_templates(db)
+        from scanr.core.finding_library import seed as seed_finding_library
+        await seed_finding_library(db)
         await _seed_builtin_wordlists(db)
     # Resolve the scan denylist in the background so the first scan creation
     # does not pay for Docker DNS timeouts on names this network cannot see.

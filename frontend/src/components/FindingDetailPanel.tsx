@@ -108,6 +108,14 @@ function PanelBody({ finding, onClose }: { finding: Finding; onClose: () => void
           </Section>
         )}
 
+        {finding.impact && (
+          <Section label="Impact">
+            <p style={{ fontSize: 12, color: 'var(--text-1)', lineHeight: 1.7, margin: 0, whiteSpace: 'pre-wrap' }}>
+              {finding.impact}
+            </p>
+          </Section>
+        )}
+
         {finding.evidence && (
           <Section label="Evidence">
             <pre style={{

@@ -15,6 +15,7 @@ from .v1 import (
     findings,
     host_tags,
     integrations,
+    library,
     notifications,
     oidc,
     plugins,
@@ -41,6 +42,7 @@ api_router.include_router(profile_suggest.router)
 api_router.include_router(scans.router)
 api_router.include_router(attack_paths.router)
 api_router.include_router(findings.router)
+api_router.include_router(library.router)
 api_router.include_router(plugins.router)
 api_router.include_router(credentials.router)
 api_router.include_router(reports.router)

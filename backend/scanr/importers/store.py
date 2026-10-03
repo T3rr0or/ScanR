@@ -92,6 +92,9 @@ async def store(db: AsyncSession, scan: Scan, result: ImportResult, user_id: str
             .where(Finding.scan_id == scan.id)
         )).all()
     )
+    from scanr.core import finding_library
+
+    library = await finding_library.load_mappable(db)
     new_rows: list[tuple[Finding, str | None, str]] = []
     for item in result.findings:
         host = host_for(item.address)
@@ -110,6 +113,7 @@ async def store(db: AsyncSession, scan: Scan, result: ImportResult, user_id: str
             port_number=item.port, protocol=(item.protocol or "")[:5] or None,
             first_seen_scan_id=scan.id, last_seen_scan_id=scan.id,
         )
+        finding_library.auto_apply(library, finding)
         db.add(finding)
         new_rows.append((finding, host.ip if host else None, user_id))
         summary.findings_added += 1

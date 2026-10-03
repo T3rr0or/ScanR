@@ -4,6 +4,7 @@ import re
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -251,7 +252,72 @@ async def update_finding(
         if body.remediation_status != "open":
             finding.triaged_at = datetime.now(timezone.utc)
             finding.triaged_by = current_user.email
+    await _apply_text_edits(db, finding, body)
 
+    await db.commit()
+    await db.refresh(finding)
+    return finding
+
+
+async def _apply_text_edits(db: AsyncSession, finding: Finding, body: FindingUpdate) -> None:
+    import json
+
+    for field in ("description", "impact", "remediation", "evidence", "cvss_vector"):
+        value = getattr(body, field)
+        if value is not None:
+            setattr(finding, field, value or None)
+    if body.cvss_score is not None:
+        finding.cvss_score = body.cvss_score
+    if body.references is not None:
+        finding.references = json.dumps([r.strip() for r in body.references if r.strip()]) or None
+    if body.severity is not None and body.severity != finding.severity:
+        scan = await db.get(Scan, finding.scan_id)
+        if scan is not None:
+            old_col, new_col = f"findings_{finding.severity}", f"findings_{body.severity}"
+            if hasattr(scan, old_col):
+                setattr(scan, old_col, max(0, (getattr(scan, old_col) or 0) - 1))
+            if hasattr(scan, new_col):
+                setattr(scan, new_col, (getattr(scan, new_col) or 0) + 1)
+        finding.severity = body.severity
+    if body.severity is not None or body.cvss_score is not None:
+        from scanr.core.priority_service import rescore
+
+        await db.flush()
+        await rescore(db, Finding.id == finding.id)
+
+
+class _ApplyTemplate(BaseModel):
+    template_id: str
+    use_severity: bool = False
+
+
+@router.post("/{finding_id}/apply-template", response_model=FindingRead)
+async def apply_template(
+    finding_id: str,
+    body: _ApplyTemplate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_scope("findings:triage")),
+):
+    """Replace the finding's wording with a library entry's (title is kept)."""
+    from scanr.core import finding_library
+    from scanr.models.finding_template import FindingTemplate
+
+    finding = (await db.execute(
+        select(Finding).join(Scan, Finding.scan_id == Scan.id)
+        .where(Finding.id == finding_id, Scan.user_id == current_user.id)
+    )).scalar_one_or_none()
+    if not finding:
+        raise HTTPException(status_code=404, detail="Finding not found")
+    template = await db.get(FindingTemplate, body.template_id)
+    if template is None:
+        raise HTTPException(status_code=404, detail="Library entry not found")
+    if body.use_severity and template.severity != finding.severity:
+        await _apply_text_edits(db, finding, FindingUpdate(severity=template.severity))  # type: ignore[arg-type]
+    finding_library.apply(finding, template)
+    from scanr.core.priority_service import rescore
+
+    await db.flush()
+    await rescore(db, Finding.id == finding.id)
     await db.commit()
     await db.refresh(finding)
     return finding
