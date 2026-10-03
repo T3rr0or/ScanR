@@ -84,3 +84,12 @@
 }
 @media (max-width: 560px) { .report-generator { grid-template-columns: 1fr; } .report-generator .operator-primary { grid-column: auto; } }
 @media (prefers-reduced-motion: reduce) { .operator-page *, .operator-modal * { animation: none !important; transition: none !important; } }
+
+/* Word report options and template management */
+.reports-page .report-docx-options { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; align-items: end; margin-top: 12px; }
+.reports-page .report-check { display: flex; gap: 8px; align-items: center; font-size: 12px; color: var(--text-1); padding-bottom: 8px; }
+.reports-page .report-help { margin: 0 0 10px; color: var(--text-3); font-size: 12px; line-height: 1.6; max-width: 900px; }
+.reports-page .report-placeholders { margin-bottom: 12px; }
+.reports-page .report-placeholders td { font-size: 11px; white-space: normal; }
+.reports-page .report-upload { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 10px; }
+.reports-page .report-upload .input { width: auto; flex: 1 1 260px; }

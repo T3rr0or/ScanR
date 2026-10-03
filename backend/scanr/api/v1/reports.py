@@ -61,11 +61,26 @@ async def create_report(
     if not result.scalar_one_or_none():
         raise HTTPException(status_code=404, detail="Scan not found")
 
+    options = None
+    if body.format == "docx":
+        import json
+
+        if body.template_id:
+            from scanr.models.report_template import ReportTemplate
+
+            if await db.get(ReportTemplate, body.template_id) is None:
+                raise HTTPException(status_code=404, detail="Word template not found")
+        options = json.dumps({k: v for k, v in {
+            "title": body.title, "client": body.client, "author": body.author,
+            "classification": body.classification, "include_info": body.include_info,
+        }.items() if v not in (None, "")})
     report = Report(
         id=new_uuid(),
         scan_id=body.scan_id,
         format=body.format,
         status="pending",
+        options=options,
+        template_id=body.template_id if body.format == "docx" else None,
     )
     db.add(report)
     await db.commit()

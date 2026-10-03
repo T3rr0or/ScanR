@@ -682,6 +682,27 @@ curl -X POST -H "X-API-Key: sk_..." -H 'Content-Type: application/json' \
 
 ---
 
+### Word reports with your own template
+
+Choose **Word** on the Reports page to get an editable `.docx` report: a cover
+page, executive summary with severity counts, scope, a findings overview, one
+page per finding (severity, CVSS, fix-first priority, affected hosts,
+description, impact, recommendation, evidence text, evidence screenshots with
+their captions and references) and a hosts appendix. The same issue on several
+hosts becomes one finding with all affected hosts listed. Findings are ordered
+by fix-first priority, and informational findings are left out unless you
+include them. Report title, client, author and classification are set when
+generating.
+
+**House style:** download the built-in template under **Reports → Word
+templates**, change logo, fonts, colours, cover and boilerplate in Word, and
+upload it (administrators). Placeholders such as `{{ report.client }}`,
+`{%p for f in findings %}` and `{{r f.severity_rt }}` follow
+[docxtpl](https://docxtpl.readthedocs.io/) syntax; **Show placeholders** lists
+every field. Uploaded templates are test-rendered before they are accepted,
+rendered in a Jinja sandbox so a template cannot run code, and checked for macros
+and XML entity tricks.
+
 ## AI features
 
 ScanR can use an LLM to augment a scan. AI is **off unless you configure a

@@ -22,6 +22,7 @@ from .v1 import (
     plugins,
     profile_suggest,
     reports,
+    report_templates,
     schedules,
     scans,
     screenshots,
@@ -48,6 +49,7 @@ api_router.include_router(library.router)
 api_router.include_router(plugins.router)
 api_router.include_router(credentials.router)
 api_router.include_router(reports.router)
+api_router.include_router(report_templates.router)
 api_router.include_router(schedules.router)
 api_router.include_router(screenshots.router)
 api_router.include_router(system.router)
