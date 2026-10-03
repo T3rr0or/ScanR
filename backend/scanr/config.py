@@ -121,6 +121,10 @@ class Settings(BaseSettings):
     # Reports output directory
     reports_dir: Path = Path("./reports")
 
+    # Evidence files attached to findings (screenshots, requests, logs).
+    evidence_dir: Path = Path("./evidence")
+    evidence_max_mb: int = 20
+
     # NVD CVE feed cache
     nvd_cache_dir: Path = Path("./nvd_cache")
 

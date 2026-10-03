@@ -66,10 +66,13 @@ async def lifespan(app: FastAPI):
     warmup = asyncio.create_task(warm_denylist_cache(settings.scan_denylist))
     from scanr.core.threat_feeds import refresh_loop
     feeds = asyncio.create_task(refresh_loop())
+    from scanr.core.maintenance import maintenance_loop
+    maintenance = asyncio.create_task(maintenance_loop())
     logger.info("ScanR ready")
     yield
     warmup.cancel()
     feeds.cancel()
+    maintenance.cancel()
     await close_redis()
     logger.info("ScanR shutting down")
 

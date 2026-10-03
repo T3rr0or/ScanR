@@ -6,6 +6,7 @@ import { SevTag, relTime } from '@/components/ui'
 import SortableTh from '@/components/SortableTh'
 import { PriorityBadge, PriorityExplanation } from '@/components/Priority'
 import FindingEditor from '@/components/FindingEditor'
+import EvidencePanel from '@/components/EvidencePanel'
 import { useAuthStore } from '@/store/auth'
 import { parseJwtRole } from '@/utils/jwt'
 import { useSortableFindings } from '@/hooks/useSortableFindings'
@@ -339,6 +340,8 @@ function FindingDrawer({
             </pre>
           </div>
         )}
+
+        <EvidencePanel findingId={finding.id} canEdit={canEdit} />
 
         {/* Validation - how ScanR proved it, so the reader doesn't have to */}
         {finding.validated && (

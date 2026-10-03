@@ -100,6 +100,8 @@ services:
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
       # Daily EPSS + CISA KEV download for fix-first ranking (API has egress).
       THREAT_FEED_AUTO_REFRESH: ${THREAT_FEED_AUTO_REFRESH:-true}
+      EVIDENCE_DIR: /app/evidence
+      EVIDENCE_MAX_MB: ${EVIDENCE_MAX_MB:-20}
       REMEDIATION_SLA_DAYS: ${REMEDIATION_SLA_DAYS:-critical=15,high=30,medium=90,low=180}
       # Email notification channels (optional); see .env.example.
       SMTP_HOST: ${SMTP_HOST:-}
@@ -123,6 +125,7 @@ services:
       - reports_data:/app/reports
       - nvd_data:/app/nvd_cache
       - wordlists_data:/app/wordlists
+      - evidence_data:/app/evidence
     # Bind to localhost by default — the frontend nginx proxies /api and /ws.
     # Set SCANR_API_BIND=0.0.0.0 in .env only if you need direct API access.
     ports:
@@ -286,6 +289,7 @@ services:
         condition: service_healthy
     environment:
       PROCESS_ROLE: control-worker
+      EVIDENCE_DIR: /app/evidence
       DATABASE_URL: postgresql+asyncpg://scanr:${POSTGRES_PASSWORD}@postgres/scanr
       REDIS_URL: redis://redis:6379/0
       CELERY_BROKER_URL: redis://redis:6379/0
@@ -295,6 +299,8 @@ services:
       AI_AGENT_HEARTBEAT_TIMEOUT: ${AI_AGENT_HEARTBEAT_TIMEOUT:-900}
     volumes:
       - reports_data:/app/reports
+      # Read by report generation to embed evidence screenshots.
+      - evidence_data:/app/evidence:ro
     networks:
       - data
     command:
@@ -460,6 +466,7 @@ volumes:
   redis_data:
   postgres_data:
   reports_data:
+  evidence_data:
   nvd_data:
   wordlists_data:
 

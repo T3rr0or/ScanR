@@ -58,7 +58,7 @@ COPY alembic/ ./alembic/
 COPY alembic.ini .
 
 # Built-in wordlists
-RUN mkdir -p /app/wordlists/builtin
+RUN mkdir -p /app/wordlists/builtin /app/evidence
 COPY scanr/wordlists/builtin/ /app/wordlists/builtin/
 COPY docker-entrypoint.sh /usr/local/bin/scanr-entrypoint
 
