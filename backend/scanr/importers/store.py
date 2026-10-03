@@ -87,7 +87,7 @@ async def store(db: AsyncSession, scan: Scan, result: ImportResult, user_id: str
     await db.flush()
 
     existing: set[tuple[str | None, str, str, int | None]] = set(
-        tuple(row) for row in (await db.execute(
+        (row[0], row[1], row[2], row[3]) for row in (await db.execute(
             select(Finding.host_id, Finding.plugin_id, Finding.title, Finding.port_number)
             .where(Finding.scan_id == scan.id)
         )).all()
