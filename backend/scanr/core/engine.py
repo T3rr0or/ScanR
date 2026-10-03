@@ -401,7 +401,11 @@ class ScanEngine:
             context.testing_window = from_profile(_pj if isinstance(_pj, dict) else None)
         except ValueError as exc:
             logger.warning("Scan %s has an invalid testing window, ignoring: %s", self.scan_id, exc)
-        first_target = next((t.value for t in getattr(scan, "targets", []) or []), None)
+        # An explicit query: lazy-loading scan.targets here would do I/O outside
+        # the async greenlet and abort the scan.
+        first_target = (await self.db.execute(
+            select(Target.value).where(Target.scan_id == self.scan_id).limit(1)
+        )).scalar_one_or_none()
         context.source_ip = activity_log.source_address(first_target)
 
         # Decrypt credentials if provided. Scans can have either one legacy

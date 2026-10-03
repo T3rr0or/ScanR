@@ -255,7 +255,9 @@ async def _run_scan_async(task, scan_id: str) -> dict:
                     pass
                 scan.finished_at = datetime.now(tz=timezone.utc)
                 try:
-                    await activity_log.record(db, scan_id, str(scan.status), source_ip=source_ip,
+                    # .value: str() of a str-Enum is "ScanStatus.failed" on Python 3.11+.
+                    final = getattr(scan.status, "value", scan.status)
+                    await activity_log.record(db, scan_id, str(final), source_ip=source_ip,
                                               detail=scan.error_message)
                 except Exception:
                     logger.exception("Could not record end of activity for scan %s", scan_id)
