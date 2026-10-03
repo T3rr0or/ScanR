@@ -517,6 +517,27 @@ check does not count), or when it is marked resolved. Accepted risks leave the
 open count without counting as fixed. Targets default to CISA BOD 19-02 timings
 and are set with `REMEDIATION_SLA_DAYS=critical=15,high=30,medium=90,low=180`.
 
+### Importing other tools' results
+
+**Scans → Import results** brings in output from:
+
+| Tool | File |
+|---|---|
+| Nessus | `.nessus` export (v2) |
+| Nmap | XML output (`nmap -oX scan.xml`) |
+| Nuclei | JSON lines (`nuclei -jsonl -o results.jsonl`) or a JSON array |
+| Burp Suite | Report → XML (issues), including base64-encoded requests |
+| OWASP ZAP | Traditional JSON report |
+
+The format is detected automatically. Imported hosts, open ports, services
+and findings (with CVSS, CVEs, references, evidence and remediation) are
+attached to hosts and ports like ScanR's own, so they get fix-first priority
+and appear in assets, trends and reports. Imports can create a new scan or be
+added to an existing one (`POST /api/v1/scans/{id}/import`); importing the same
+file twice adds nothing new. Imported scans cannot be re-run, since ScanR did not
+produce them. Files are limited to 50 MB, and XML with entity declarations is
+refused.
+
 ### Notifications
 
 Under **Settings → Notifications** each user can add channels that receive a

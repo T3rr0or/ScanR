@@ -1,0 +1,14 @@
+<?xml version="1.0"?>
+<issues burpVersion="2024.1">
+  <issue>
+    <serialNumber>1234</serialNumber><type>2097920</type>
+    <name>Cross-site scripting (reflected)</name>
+    <host ip="203.0.113.40">https://shop.example.com</host>
+    <path><![CDATA[/search]]></path><location><![CDATA[/search [q parameter]]]></location>
+    <severity>High</severity><confidence>Certain</confidence>
+    <issueBackground><![CDATA[Reflected XSS arises when...]]></issueBackground>
+    <remediationBackground><![CDATA[Encode output.]]></remediationBackground>
+    <issueDetail><![CDATA[The value of the q request parameter is copied into the HTML document.]]></issueDetail>
+    <requestresponse><request method="GET" base64="true"><![CDATA[R0VUIC9zZWFyY2g/cT0lM0NzY3JpcHQlM0UgSFRUUC8xLjENCkhvc3Q6IHNob3AuZXhhbXBsZS5jb20NCg0K]]></request></requestresponse>
+  </issue>
+</issues>

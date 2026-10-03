@@ -1,11 +1,8 @@
 import { useState, useMemo, useEffect, useRef, type Dispatch, type ReactNode, type SetStateAction } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import {
-  Plus, Download, Search,
-  Play, Zap, SlidersHorizontal,
-  X, FileText, AlertTriangle, Check,
-} from 'lucide-react'
+import { Plus, Download, Search, Play, Zap, SlidersHorizontal, X, FileText, AlertTriangle, Check, Upload } from 'lucide-react'
 import { scansApi, type ScanCreate, type ScanCredentialIn } from '@/api/scans'
+import ImportResultsModal from '@/components/ImportResultsModal'
 import { templatesApi, type ScanTemplate } from '@/api/templates'
 import { wordlistsApi } from '@/api/wordlists'
 import { aiApi, configuredProviders, effectiveModelFor, providerLabel } from '@/api/ai'
@@ -236,6 +233,7 @@ export default function Scans({ onOpenScan, openNewScan, onNewScanOpened }: Prop
   // the action in the first place.
   const isViewer = isViewerToken(useAuthStore(s => s.token))
   const [showForm, setShowForm]       = useState(false)
+  const [showImport, setShowImport]   = useState(false)
   useEffect(() => {
     if (!openNewScan) return
     setShowForm(true)
@@ -382,6 +380,8 @@ export default function Scans({ onOpenScan, openNewScan, onNewScanOpened }: Prop
         )
       })()}
 
+      {showImport && <ImportResultsModal onClose={() => setShowImport(false)} onImported={summary => onOpenScan?.(summary.scan_id)} />}
+
       {/* ── Rerun / Edit & Rerun modal ── */}
       {rerunScan && (
         <NewScanModal
@@ -418,6 +418,7 @@ export default function Scans({ onOpenScan, openNewScan, onNewScanOpened }: Prop
             a.click()
             window.setTimeout(() => URL.revokeObjectURL(url), 0)
           }}><Download size={14} /> Export CSV</button>
+          {!isViewer && <button type="button" className="scans-button" onClick={() => setShowImport(true)}><Upload size={14} /> Import results</button>}
           {!isViewer && <button type="button" className="scans-button scans-button-primary" onClick={() => setShowForm(true)}><Plus size={15} /> New Scan</button>}
         </div>
       </header>

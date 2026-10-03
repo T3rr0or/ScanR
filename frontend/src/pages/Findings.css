@@ -53,6 +53,9 @@
 .findings-checkbox-cell { width: 30px; padding-left: 0 !important; padding-right: 4px !important; }
 .findings-checkbox-cell input { accent-color: var(--find-accent); cursor: pointer; }
 .findings-title-cell { max-width: 330px; min-width: 240px; font-weight: 700; line-height: 1.35; }
+/* Beats .tbl tbody td { white-space: nowrap }: long titles wrap instead of
+   running over the Host column. */
+.findings-table tbody td.findings-title-cell { white-space: normal; overflow-wrap: anywhere; }
 .findings-title-cell > span:last-child { display: block; }
 .findings-title-cell > span:first-child:not(:last-child) { margin-bottom: 4px; }
 .findings-mono, .findings-score { font-family: var(--font-mono); color: #bdbdbd; font-size: 12px; }
